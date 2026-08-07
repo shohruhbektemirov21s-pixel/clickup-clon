@@ -3,7 +3,7 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models.functions import Lower
 
-from apps.core.enums import PRIORITY_ORDER, Priority, WatcherSource
+from apps.core.enums import PRIORITY_ORDER, ActivityVerb, Priority, WatcherSource
 from apps.core.models import (
     HEX_COLOR,
     PositionedModel,
@@ -185,6 +185,38 @@ class TaskWatcher(UUIDModel):
             models.UniqueConstraint(fields=["task", "user"], name="uniq_task_watcher"),
         ]
         indexes = [models.Index(fields=["user"], name="idx_watcher_user")]
+
+
+class TaskActivity(UUIDModel, TimeStampedModel):
+    """Immutable audit trail of what happened to a task, and when.
+
+    Rows are written from apps.tasks.services only (never from views) and are
+    read back through GET tasks/{id}/activity/. Never updated, never deleted
+    except by the task's own cascade.
+    """
+
+    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name="activities")
+    actor = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,  # history outlives the user
+        null=True,
+        blank=True,
+        related_name="task_activities",
+    )
+    verb = models.CharField(max_length=16, choices=ActivityVerb.choices, db_index=True)
+    from_value = models.CharField(max_length=255, null=True, blank=True)
+    to_value = models.CharField(max_length=255, null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "task_activities"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["task", "-created_at"], name="idx_activity_task_recent"),
+        ]
+
+    def __str__(self):
+        return f"{self.verb} @ {self.created_at:%Y-%m-%d %H:%M}"
 
 
 class TaskTag(UUIDModel):

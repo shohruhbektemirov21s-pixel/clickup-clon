@@ -8,6 +8,11 @@ urlpatterns = [
     path("tasks/<uuid:task_id>/move/", views.TaskMoveView.as_view(), name="task-move"),
     path("tasks/<uuid:task_id>/watch/", views.TaskWatchView.as_view(), name="task-watch"),
     path(
+        "tasks/<uuid:task_id>/activity/",
+        views.TaskActivityView.as_view(),
+        name="task-activity",
+    ),
+    path(
         "workspaces/<uuid:workspace_id>/tasks/",
         views.WorkspaceTasksView.as_view(),
         name="workspace-tasks",

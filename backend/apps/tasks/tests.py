@@ -3,7 +3,7 @@ import random
 import pytest
 
 from apps.core.ordering import _guard, evenly_spaced, midstring
-from apps.tasks.models import Task
+from apps.tasks.models import Task, TaskActivity
 from apps.workspaces.models import TaskList
 from conftest import assert_error
 
@@ -389,6 +389,97 @@ def test_db_position_order_matches_python_sort(env, empty_list):
     rows = Task.objects.filter(list=empty_list).order_by("position")
     positions = [t.position for t in rows]
     assert positions == sorted(positions)
+
+
+# ------------------------------------------------------------- activity history
+
+
+def activity_url(task_id):
+    return task_url(task_id, "activity/")
+
+
+def test_activity_logged_on_create(env, empty_list):
+    (task,) = make_tasks(env, empty_list, ["Historic"])
+    body = env.member_client.get(activity_url(task["id"])).json()
+    assert body["count"] == 1
+    row = body["results"][0]
+    assert row["verb"] == "created"
+    assert row["to_value"] == "Historic"
+    assert row["actor"]["id"] == str(env.member.id)
+    assert row["metadata"]["status"] == env.statuses[0].name
+
+
+def test_activity_status_change_also_records_completed(env, empty_list):
+    (task,) = make_tasks(env, empty_list, ["Ship it"])
+    closed = env.statuses[2]
+    patched = env.member_client.patch(
+        task_url(task["id"]), {"status_id": str(closed.id)}, format="json"
+    )
+    assert patched.status_code == 200, patched.content
+
+    rows = env.member_client.get(activity_url(task["id"])).json()["results"]
+    by_verb = {r["verb"]: r for r in rows}
+    assert set(by_verb) == {"created", "status_changed", "completed"}
+
+    changed = by_verb["status_changed"]
+    assert changed["from_value"] == env.statuses[0].name
+    assert changed["to_value"] == closed.name
+    assert changed["actor"]["id"] == str(env.member.id)
+    assert changed["metadata"]["to_status_id"] == str(closed.id)
+    assert by_verb["completed"]["to_value"] == closed.name
+    # the created row is the oldest, so it sorts last
+    assert rows[-1]["verb"] == "created"
+
+
+def test_activity_endpoint_shape_and_ordering(env, empty_list):
+    (task,) = make_tasks(env, empty_list, ["Alpha"])
+    env.member_client.patch(task_url(task["id"]), {"title": "Beta"}, format="json")
+    env.member_client.patch(
+        task_url(task["id"]),
+        {"priority": "urgent", "assignee_ids": [str(env.guest.id)]},
+        format="json",
+    )
+
+    body = env.member_client.get(activity_url(task["id"])).json()
+    assert set(body.keys()) == {"count", "next", "previous", "results"}
+    verbs = [r["verb"] for r in body["results"]]
+    assert verbs[-1] == "created"
+    assert "renamed" in verbs and "priority_changed" in verbs and "assignee_added" in verbs
+
+    timestamps = [r["created_at"] for r in body["results"]]
+    assert timestamps == sorted(timestamps, reverse=True)  # newest first
+
+    row = body["results"][0]
+    assert set(row.keys()) == {
+        "id",
+        "verb",
+        "actor",
+        "from_value",
+        "to_value",
+        "metadata",
+        "created_at",
+    }
+    assert set(row["actor"].keys()) == {"id", "email", "full_name", "avatar", "avatar_color"}
+
+    renamed = next(r for r in body["results"] if r["verb"] == "renamed")
+    assert (renamed["from_value"], renamed["to_value"]) == ("Alpha", "Beta")
+    added = next(r for r in body["results"] if r["verb"] == "assignee_added")
+    assert added["to_value"] == env.guest.full_name
+
+
+def test_activity_non_member_gets_404(env, empty_list):
+    (task,) = make_tasks(env, empty_list, ["Private"])
+    denied = env.outsider_client.get(activity_url(task["id"]))
+    assert_error(denied, 404, "not_found")
+
+
+def test_activity_empty_for_untouched_task(env):
+    """Tasks that pre-date the history table return an empty list, not an error."""
+    task = Task.objects.filter(list=env.list).first()
+    TaskActivity.objects.filter(task=task).delete()
+    body = env.member_client.get(activity_url(task.id)).json()
+    assert body["count"] == 0
+    assert body["results"] == []
 
 
 # ------------------------------------------------------------- tags

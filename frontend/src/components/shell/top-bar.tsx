@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Check,
@@ -80,6 +79,7 @@ export function TopBar({
 function WorkspaceSwitcher({ workspaceId }: { workspaceId: string }) {
   const router = useRouter();
   const { data } = useWorkspaces();
+  const onLogout = useLogout();
   const workspaces = data?.results ?? [];
   const current = workspaces.find((w) => w.id === workspaceId);
 
@@ -120,6 +120,15 @@ function WorkspaceSwitcher({ workspaceId }: { workspaceId: string }) {
           <Settings className="size-4" />
           Ish maydoni sozlamalari
         </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => router.push("/settings/profile")}>
+          <UserIcon className="size-4" />
+          Profil
+        </DropdownMenuItem>
+        <DropdownMenuItem variant="destructive" onClick={onLogout}>
+          <LogOut className="size-4" />
+          Chiqish
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -142,6 +151,7 @@ function ThemeToggle() {
 }
 
 function UserMenu() {
+  const router = useRouter();
   const { data: me } = useMe();
   const onLogout = useLogout();
 
@@ -166,7 +176,11 @@ function UserMenu() {
           <span className="text-xs font-normal text-muted-foreground">{me?.email}</span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem render={<Link href="/settings/profile" />}>
+        {/* router.push rather than render={<Link/>}: a MenuItem renders a
+            <div>, so composing an <a> into it relies on the anchor's native
+            navigation surviving the menu close. An explicit push is
+            unambiguous. */}
+        <DropdownMenuItem onClick={() => router.push("/settings/profile")}>
           <UserIcon className="size-4" />
           Profil
         </DropdownMenuItem>

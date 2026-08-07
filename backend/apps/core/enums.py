@@ -57,3 +57,19 @@ class WatcherSource(models.TextChoices):
     AUTO_CREATOR = "auto_creator", "Auto (creator)"
     AUTO_ASSIGNEE = "auto_assignee", "Auto (assignee)"
     AUTO_COMMENT = "auto_comment", "Auto (commented)"
+
+
+class ActivityVerb(models.TextChoices):
+    """Task history vocabulary — closed set, see API_CONTRACT.md section 10.6."""
+
+    CREATED = "created", "Created"
+    STATUS_CHANGED = "status_changed", "Status changed"
+    ASSIGNEE_ADDED = "assignee_added", "Assignee added"
+    ASSIGNEE_REMOVED = "assignee_removed", "Assignee removed"
+    PRIORITY_CHANGED = "priority_changed", "Priority changed"
+    DUE_DATE_CHANGED = "due_date_changed", "Due date changed"
+    RENAMED = "renamed", "Renamed"
+    MOVED = "moved", "Moved"
+    COMPLETED = "completed", "Completed"
+    DELETED = "deleted", "Deleted"
+    RESTORED = "restored", "Restored"

@@ -11,8 +11,13 @@ from apps.core.enums import WorkspaceRole
 from apps.core.exceptions import Conflict
 from apps.tasks import services
 from apps.tasks.filters import apply_ordering, apply_task_filters, include_deleted_requested
-from apps.tasks.models import Tag, Task
-from apps.tasks.serializers import TagSerializer, TaskInputSerializer, TaskSerializer
+from apps.tasks.models import Tag, Task, TaskActivity
+from apps.tasks.serializers import (
+    TagSerializer,
+    TaskActivitySerializer,
+    TaskInputSerializer,
+    TaskSerializer,
+)
 from apps.workspaces.models import Space
 from apps.workspaces.views import get_list
 from config.pagination import StandardPagination
@@ -182,6 +187,19 @@ class TaskWatchView(APIView):
         task, _ = get_task(request.user, task_id)
         services.unwatch_task(task, request.user)
         return Response(status=http.HTTP_204_NO_CONTENT)
+
+
+class TaskActivityView(APIView):
+    """GET tasks/{id}/activity/ — the task's history, newest first."""
+
+    def get(self, request, task_id):
+        task, _ = get_task(request.user, task_id)  # any member who can read the task
+        activities = (
+            TaskActivity.objects.filter(task=task)
+            .select_related("actor")
+            .order_by("-created_at")
+        )
+        return paginate(request, activities, TaskActivitySerializer)
 
 
 class WorkspaceTasksView(APIView):

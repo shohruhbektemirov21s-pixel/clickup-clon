@@ -5,7 +5,7 @@ from rest_framework import serializers
 from apps.accounts.serializers import UserSummarySerializer
 from apps.core.enums import Priority
 from apps.core.sanitize import clean_html
-from apps.tasks.models import Tag, Task
+from apps.tasks.models import Tag, Task, TaskActivity
 
 MAX_DESCRIPTION_JSON_BYTES = 256 * 1024
 
@@ -80,6 +80,25 @@ class TaskSerializer(serializers.ModelSerializer):
         return TagSummarySerializer(
             [r.tag for r in rows], many=True, context=self.context
         ).data
+
+
+class TaskActivitySerializer(serializers.ModelSerializer):
+    """Read-only history row — see API_CONTRACT.md section 10.6."""
+
+    actor = UserSummarySerializer(read_only=True)
+
+    class Meta:
+        model = TaskActivity
+        fields = [
+            "id",
+            "verb",
+            "actor",
+            "from_value",
+            "to_value",
+            "metadata",
+            "created_at",
+        ]
+        read_only_fields = fields
 
 
 class TaskInputSerializer(serializers.Serializer):

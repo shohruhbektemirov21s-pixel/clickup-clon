@@ -8,17 +8,51 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from apps.core.enums import StatusType, WatcherSource
+from apps.accounts.models import User
+from apps.core.enums import ActivityVerb, StatusType, WatcherSource
 from apps.core.exceptions import Conflict, InvalidStatusForList, PositionConflict
 from apps.core.ordering import MAX_LEN_BEFORE_REBALANCE, evenly_spaced, midstring
 from apps.realtime import events
-from apps.tasks.models import Tag, Task, TaskAssignee, TaskTag, TaskWatcher
+from apps.tasks.models import Tag, Task, TaskActivity, TaskAssignee, TaskTag, TaskWatcher
 from apps.workspaces.models import Status, TaskList, WorkspaceMember
 from apps.workspaces.services import check_client_id, refresh_list_counts
 
 
 def _effective_set(task_list):
     return task_list.effective_status_set
+
+
+# ------------------------------------------------------------------ activity log
+
+
+def display_name(user) -> str | None:
+    """Human-readable snapshot of a user, frozen into the history row."""
+    if user is None:
+        return None
+    return user.full_name.strip() or user.email
+
+
+def _iso(value) -> str | None:
+    return value.isoformat() if value else None
+
+
+def activity(task, actor, verb, *, from_value=None, to_value=None, **metadata):
+    """Build (do NOT save) one history row; callers bulk_create the batch."""
+    return TaskActivity(
+        task=task,
+        actor=actor,
+        verb=verb,
+        from_value=from_value,
+        to_value=to_value,
+        metadata=metadata,
+    )
+
+
+def log_activities(rows):
+    """One INSERT for the whole batch — several verbs often fire together."""
+    if rows:
+        TaskActivity.objects.bulk_create(rows)
+    return rows
 
 
 def resolve_status(task_list, status_id):
@@ -72,10 +106,12 @@ def add_watcher(task, user, source):
 
 
 def _set_assignees(task, assignee_ids, actor):
+    """Returns (added, removed) User rows so the caller can log the history."""
     wanted = [uuid.UUID(str(a)) for a in assignee_ids]
     current = set(task.task_assignees.values_list("user_id", flat=True))
     to_add = [a for a in wanted if a not in current]
     to_remove = [c for c in current if c not in set(wanted)]
+    users = {u.id: u for u in User.objects.filter(id__in=set(to_add) | set(to_remove))}
     if to_remove:
         TaskAssignee.objects.filter(task=task, user_id__in=to_remove).delete()
     for user_id in to_add:
@@ -84,6 +120,34 @@ def _set_assignees(task, assignee_ids, actor):
         TaskWatcher.objects.get_or_create(
             task=task, user_id=user_id, defaults={"source": WatcherSource.AUTO_ASSIGNEE}
         )
+    added = [users[u] for u in to_add if u in users]
+    removed = [users[u] for u in to_remove if u in users]
+    return added, removed
+
+
+def _assignee_activities(task, actor, added, removed):
+    rows = []
+    for user in removed:
+        rows.append(
+            activity(
+                task,
+                actor,
+                ActivityVerb.ASSIGNEE_REMOVED,
+                from_value=display_name(user),
+                user_id=str(user.id),
+            )
+        )
+    for user in added:
+        rows.append(
+            activity(
+                task,
+                actor,
+                ActivityVerb.ASSIGNEE_ADDED,
+                to_value=display_name(user),
+                user_id=str(user.id),
+            )
+        )
+    return rows
 
 
 def refresh_tag_usage(tag_ids):
@@ -127,6 +191,25 @@ def _apply_completed_at(task, status):
             task.completed_at = timezone.now()
     else:
         task.completed_at = None
+
+
+def _status_activities(task, actor, previous, status):
+    """status_changed, plus a completed row when the task lands in a closed status."""
+    rows = [
+        activity(
+            task,
+            actor,
+            ActivityVerb.STATUS_CHANGED,
+            from_value=previous.name if previous else None,
+            to_value=status.name,
+            from_status_id=str(previous.id) if previous else None,
+            to_status_id=str(status.id),
+        )
+    ]
+    closed_before = previous is not None and previous.type == StatusType.CLOSED
+    if status.type == StatusType.CLOSED and not closed_before:
+        rows.append(activity(task, actor, ActivityVerb.COMPLETED, to_value=status.name))
+    return rows
 
 
 def _nudged_position(task, status, desired):
@@ -185,10 +268,24 @@ def create_task(task_list, data, actor, client_id=None) -> Task:
             time.sleep(random.uniform(0.005, 0.02))
 
     add_watcher(task, actor, WatcherSource.AUTO_CREATOR)
+    rows = [
+        activity(
+            task,
+            actor,
+            ActivityVerb.CREATED,
+            to_value=task.title,
+            status=status.name,
+            list_name=task_list.name,
+        )
+    ]
     if assignee_ids:
-        _set_assignees(task, assignee_ids, actor)
+        added, removed = _set_assignees(task, assignee_ids, actor)
+        rows += _assignee_activities(task, actor, added, removed)
     if tag_ids:
         _set_tags(task, tag_ids)
+    if status.type == StatusType.CLOSED:
+        rows.append(activity(task, actor, ActivityVerb.COMPLETED, to_value=status.name))
+    log_activities(rows)
 
     refresh_list_counts(task_list, actor=actor, client_id=client_id, emit=True)
     events.emit_task_event("task.created", task, actor=actor, client_id=client_id)
@@ -200,15 +297,18 @@ def update_task(task, data, actor, client_id=None) -> Task:
     task_list = task.list
     update_fields = {"updated_by", "updated_at"}
     status_changed = False
+    rows = []
 
     if "status_id" in data and data["status_id"] is not None:
         status = resolve_status(task_list, data["status_id"])
         if status.id != task.status_id:
+            previous = task.status
             task.status = status
             task.position = _nudged_position(task, status, task.position)
             _apply_completed_at(task, status)
             update_fields |= {"status", "position", "completed_at"}
             status_changed = True
+            rows += _status_activities(task, actor, previous, status)
 
     simple_fields = [
         "title",
@@ -220,20 +320,35 @@ def update_task(task, data, actor, client_id=None) -> Task:
         "time_estimate_minutes",
         "archived",
     ]
+    logged_fields = {
+        "title": (ActivityVerb.RENAMED, lambda v: v),
+        "priority": (ActivityVerb.PRIORITY_CHANGED, lambda v: v),
+        "due_date": (ActivityVerb.DUE_DATE_CHANGED, _iso),
+    }
     for field in simple_fields:
         if field in data:
+            before = getattr(task, field)
             setattr(task, field, data[field])
             update_fields.add(field)
+            if field in logged_fields and before != data[field]:
+                verb, render = logged_fields[field]
+                rows.append(
+                    activity(
+                        task, actor, verb, from_value=render(before), to_value=render(data[field])
+                    )
+                )
 
     if "assignee_ids" in data:
         _validate_assignees(task_list, data["assignee_ids"])
-        _set_assignees(task, data["assignee_ids"], actor)
+        added, removed = _set_assignees(task, data["assignee_ids"], actor)
+        rows += _assignee_activities(task, actor, added, removed)
     if "tag_ids" in data:
         _validate_tags(task_list, data["tag_ids"])
         _set_tags(task, data["tag_ids"])
 
     task.updated_by = actor
     task.save(update_fields=list(update_fields))
+    log_activities(rows)
 
     if status_changed or "archived" in data:
         refresh_list_counts(task_list, actor=actor, client_id=client_id, emit=True)
@@ -246,6 +361,7 @@ def soft_delete_task(task, actor, client_id=None):
     task.updated_by = actor
     task.save(update_fields=["updated_by", "updated_at"])
     task.delete()  # soft
+    log_activities([activity(task, actor, ActivityVerb.DELETED, from_value=task.title)])
     refresh_list_counts(task.list, actor=actor, client_id=client_id, emit=True)
     events.emit_task_deleted(task, actor=actor, client_id=client_id)
 
@@ -257,6 +373,7 @@ def restore_task(task, actor, client_id=None) -> Task:
     # restore may collide with a live task's position
     task.position = _nudged_position(task, task.status, task.position)
     task.save(update_fields=["deleted_at", "updated_by", "position", "updated_at"])
+    log_activities([activity(task, actor, ActivityVerb.RESTORED, to_value=task.title)])
     refresh_list_counts(task.list, actor=actor, client_id=client_id, emit=True)
     events.emit_task_event("task.updated", task, actor=actor, client_id=client_id)
     return task
@@ -308,6 +425,7 @@ def move_task(task, *, list_id, status_id, before_id, after_id, actor, client_id
     status = resolve_status(target_list, status_id)
 
     source_list = task.list
+    previous_status = task.status
     rebalanced = False
     for attempt in range(3):
         prev_pos = _neighbour_position(target_list.id, status.id, before_id, task.pk)
@@ -351,6 +469,23 @@ def move_task(task, *, list_id, status_id, before_id, after_id, actor, client_id
                 raise PositionConflict("Could not obtain a stable position after 3 attempts.")
             time.sleep(random.uniform(0.005, 0.02) * (attempt + 1))
             continue
+
+    rows = []
+    if source_list.id != target_list.id:
+        rows.append(
+            activity(
+                task,
+                actor,
+                ActivityVerb.MOVED,
+                from_value=source_list.name,
+                to_value=target_list.name,
+                from_list_id=str(source_list.id),
+                to_list_id=str(target_list.id),
+            )
+        )
+    if previous_status.id != status.id:
+        rows += _status_activities(task, actor, previous_status, status)
+    log_activities(rows)
 
     refresh_list_counts(target_list, actor=actor, client_id=client_id, emit=True)
     if source_list.id != target_list.id:

@@ -114,7 +114,6 @@ export function TreeNodeActions({
               size="icon-xs"
               className="opacity-0 group-hover:opacity-100 aria-expanded:opacity-100 data-[popup-open]:opacity-100"
               aria-label={`${name} — amallar`}
-              onClick={(e) => e.preventDefault()}
             />
           }
         >

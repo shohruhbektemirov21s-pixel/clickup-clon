@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from apps.tasks.models import Tag, Task
+from apps.tasks.models import Tag, Task, TaskActivity
 
 
 @admin.register(Task)
@@ -16,3 +16,10 @@ class TaskAdmin(admin.ModelAdmin):
 @admin.register(Tag)
 class TagAdmin(admin.ModelAdmin):
     list_display = ("name", "workspace", "usage_count")
+
+
+@admin.register(TaskActivity)
+class TaskActivityAdmin(admin.ModelAdmin):
+    list_display = ("task", "verb", "actor", "from_value", "to_value", "created_at")
+    list_filter = ("verb",)
+    readonly_fields = ("task", "actor", "verb", "from_value", "to_value", "metadata")
