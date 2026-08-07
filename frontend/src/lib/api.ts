@@ -67,7 +67,7 @@ async function toApiError(res: Response): Promise<ApiError> {
   return new ApiError(
     res.status,
     res.status >= 500 ? "server_error" : "bad_request",
-    `Request failed with status ${res.status}.`,
+    `So'rov bajarilmadi (status ${res.status}).`,
   );
 }
 

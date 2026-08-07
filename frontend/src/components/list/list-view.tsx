@@ -37,9 +37,9 @@ export function ListView({
   if (isError) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 p-12 text-center">
-        <p className="text-sm text-muted-foreground">Couldn&apos;t load tasks.</p>
+        <p className="text-sm text-muted-foreground">Vazifalarni yuklab bo&apos;lmadi.</p>
         <Button variant="outline" size="sm" onClick={() => refetch()}>
-          Retry
+          Qayta urinish
         </Button>
       </div>
     );
@@ -75,10 +75,10 @@ export function ListView({
 function EmptyState({ canEdit }: { canEdit: boolean }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
-      <p className="text-sm font-medium">No tasks here yet.</p>
+      <p className="text-sm font-medium">Hozircha vazifalar yo&apos;q.</p>
       {canEdit ? (
         <p className="text-sm text-muted-foreground">
-          Use “+ New task” under a status group to add one.
+          Holat guruhi ostidagi “+ Vazifa qo&apos;shish” tugmasidan foydalaning.
         </p>
       ) : null}
     </div>
@@ -133,7 +133,7 @@ function StatusGroup({
             className="ml-auto text-muted-foreground"
             onClick={() => setComposing(true)}
           >
-            <Plus className="size-3.5" /> New task
+            <Plus className="size-3.5" /> Vazifa qo&apos;shish
           </Button>
         ) : null}
       </div>
@@ -141,15 +141,15 @@ function StatusGroup({
       {!collapsed ? (
         <div className="mt-1 overflow-hidden rounded-lg border">
           <div className="grid grid-cols-[minmax(240px,1fr)_140px_110px_90px_140px_40px] items-center gap-2 border-b bg-muted/50 px-3 py-1.5 text-xs font-medium text-muted-foreground max-lg:grid-cols-[minmax(200px,1fr)_110px_90px]">
-            <span>Name</span>
-            <span>Assignees</span>
-            <span>Due date</span>
-            <span className="max-lg:hidden">Priority</span>
-            <span className="max-lg:hidden">Tags</span>
+            <span>Nomi</span>
+            <span>Mas&apos;ullar</span>
+            <span>Muddat</span>
+            <span className="max-lg:hidden">Muhimlik</span>
+            <span className="max-lg:hidden">Teglar</span>
             <span className="max-lg:hidden" />
           </div>
           {tasks.length === 0 && !composing ? (
-            <div className="px-3 py-2.5 text-xs text-muted-foreground">No tasks</div>
+            <div className="px-3 py-2.5 text-xs text-muted-foreground">Vazifalar yo&apos;q</div>
           ) : (
             tasks.map((task) => (
               <TaskRow
@@ -175,7 +175,7 @@ function StatusGroup({
                 className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs text-muted-foreground hover:bg-muted/50"
                 onClick={() => setComposing(true)}
               >
-                <Plus className="size-3.5" /> New task
+                <Plus className="size-3.5" /> Vazifa qo&apos;shish
               </button>
             )
           ) : null}
@@ -221,7 +221,7 @@ function TaskRow({
           trigger={
             <button
               className="shrink-0 rounded-full p-0.5 hover:bg-muted"
-              aria-label={`Status: ${status?.name ?? "unknown"}`}
+              aria-label={`Holat: ${status?.name ?? "noma'lum"}`}
             >
               <StatusDot status={status} />
             </button>
@@ -281,7 +281,7 @@ function TaskRow({
             variant="ghost"
             size="icon-xs"
             className="text-muted-foreground opacity-0 group-hover:opacity-100"
-            aria-label={`Delete ${task.title}`}
+            aria-label={`${task.title} vazifasini o'chirish`}
             onClick={() => deleteTask.mutate(task.id)}
           >
             <Trash2 />
@@ -317,7 +317,7 @@ function InlineComposer({
         autoFocus
         value={title}
         onChange={(e) => setTitle(e.target.value)}
-        placeholder="Task name…  (Enter to create, Esc to close)"
+        placeholder="Vazifa nomi…  (Enter — yaratish, Esc — yopish)"
         className="h-7 border-none bg-transparent px-1 shadow-none focus-visible:ring-0"
         onKeyDown={(e) => {
           if (e.key === "Enter") {

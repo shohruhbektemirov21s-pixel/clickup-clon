@@ -54,31 +54,31 @@ export function CreateEntityDialog({
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <DialogHeader>
             <DialogTitle>
-              {target.kind === "space" ? "Create a space" : "Create a list"}
+              {target.kind === "space" ? "Bo'lim yaratish" : "Ro'yxat yaratish"}
             </DialogTitle>
             <DialogDescription>
               {target.kind === "space"
-                ? "Spaces group folders and lists."
-                : "Lists hold your tasks."}
+                ? "Bo'limlar jildlar va ro'yxatlarni jamlaydi."
+                : "Ro'yxatlarda vazifalaringiz saqlanadi."}
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="entity-name">Name</Label>
+            <Label htmlFor="entity-name">Nomi</Label>
             <Input
               id="entity-name"
               autoFocus
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder={target.kind === "space" ? "Product" : "Sprint 1"}
+              placeholder={target.kind === "space" ? "Mahsulot" : "Sprint 1"}
               required
             />
           </div>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose}>
-              Cancel
+              Bekor qilish
             </Button>
             <Button type="submit" disabled={pending || !name.trim()}>
-              {pending ? "Creating…" : "Create"}
+              {pending ? "Yaratilmoqda…" : "Yaratish"}
             </Button>
           </DialogFooter>
         </form>

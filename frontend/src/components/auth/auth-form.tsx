@@ -19,7 +19,10 @@ interface FieldErrors {
 
 function extractErrors(err: unknown, fields: string[]): { banner?: string; fields: FieldErrors } {
   if (!isApiError(err)) {
-    return { banner: "Something went wrong. Check your connection and try again.", fields: {} };
+    return {
+      banner: "Nimadir xato ketdi. Internet aloqasini tekshirib, qayta urinib ko'ring.",
+      fields: {},
+    };
   }
   const fieldErrors: FieldErrors = {};
   for (const f of fields) {
@@ -28,10 +31,10 @@ function extractErrors(err: unknown, fields: string[]): { banner?: string; field
   }
   if (Object.keys(fieldErrors).length > 0) return { fields: fieldErrors };
   if (err.code === "authentication_failed") {
-    return { banner: "No active account with those credentials.", fields: {} };
+    return { banner: "Bunday email va parolga ega faol hisob topilmadi.", fields: {} };
   }
   if (err.code === "throttled") {
-    return { banner: "Too many attempts. Please wait a moment and try again.", fields: {} };
+    return { banner: "Urinishlar juda ko'p. Biroz kutib, qayta urinib ko'ring.", fields: {} };
   }
   return { banner: err.message, fields: {} };
 }
@@ -99,7 +102,7 @@ export function LoginForm() {
           type="email"
           autoFocus
           autoComplete="email"
-          placeholder="you@company.com"
+          placeholder="siz@kompaniya.uz"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
@@ -109,7 +112,7 @@ export function LoginForm() {
         <FieldError message={errors.email} />
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="password">Password</Label>
+        <Label htmlFor="password">Parol</Label>
         <Input
           id="password"
           type="password"
@@ -128,12 +131,12 @@ export function LoginForm() {
         </p>
       ) : null}
       <Button type="submit" disabled={pending} aria-busy={pending}>
-        {pending ? "Logging in…" : "Log in"}
+        {pending ? "Kirilmoqda…" : "Kirish"}
       </Button>
       <p className="text-center text-sm text-muted-foreground">
-        No account?{" "}
+        Hisobingiz yo&apos;qmi?{" "}
         <Link href="/register" className="font-medium text-primary hover:underline">
-          Sign up
+          Ro&apos;yxatdan o&apos;ting
         </Link>
       </p>
     </form>
@@ -181,12 +184,12 @@ export function RegisterForm() {
   return (
     <form onSubmit={onSubmit} className="flex w-full flex-col gap-4" noValidate>
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="full_name">Full name</Label>
+        <Label htmlFor="full_name">To&apos;liq ism</Label>
         <Input
           id="full_name"
           autoFocus
           autoComplete="name"
-          placeholder="Ada Lovelace"
+          placeholder="Alisher Navoiy"
           value={fullName}
           onChange={(e) => setFullName(e.target.value)}
           readOnly={pending}
@@ -200,7 +203,7 @@ export function RegisterForm() {
           id="reg_email"
           type="email"
           autoComplete="email"
-          placeholder="you@company.com"
+          placeholder="siz@kompaniya.uz"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
@@ -210,7 +213,7 @@ export function RegisterForm() {
         <FieldError message={errors.email} />
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="reg_password">Password</Label>
+        <Label htmlFor="reg_password">Parol</Label>
         <Input
           id="reg_password"
           type="password"
@@ -223,17 +226,17 @@ export function RegisterForm() {
           aria-invalid={!!errors.password}
         />
         <p className="text-xs text-muted-foreground">
-          At least 8 characters, not entirely numeric.
+          Kamida 8 ta belgi, faqat raqamlardan iborat bo&apos;lmasin.
         </p>
         <FieldError message={errors.password} />
       </div>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="workspace_name">
-          Workspace name <span className="text-muted-foreground">(optional)</span>
+          Ish maydoni nomi <span className="text-muted-foreground">(ixtiyoriy)</span>
         </Label>
         <Input
           id="workspace_name"
-          placeholder="Acme Inc."
+          placeholder="Acme MChJ"
           value={workspaceName}
           onChange={(e) => setWorkspaceName(e.target.value)}
           readOnly={pending}
@@ -247,12 +250,12 @@ export function RegisterForm() {
         </p>
       ) : null}
       <Button type="submit" disabled={pending} aria-busy={pending}>
-        {pending ? "Creating account…" : "Create account"}
+        {pending ? "Hisob yaratilmoqda…" : "Hisob yaratish"}
       </Button>
       <p className="text-center text-sm text-muted-foreground">
-        Already have an account?{" "}
+        Hisobingiz bormi?{" "}
         <Link href="/login" className="font-medium text-primary hover:underline">
-          Log in
+          Kirish
         </Link>
       </p>
     </form>

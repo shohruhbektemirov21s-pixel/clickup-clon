@@ -30,13 +30,13 @@ export function Sidebar({ workspaceId }: { workspaceId: string }) {
       <div className="flex-1 overflow-y-auto p-2">
         <div className="mb-1 flex items-center justify-between px-2 pt-1">
           <span className="text-xs font-semibold tracking-wide text-muted-foreground">
-            SPACES
+            BO&apos;LIMLAR
           </span>
           {canManage ? (
             <Button
               variant="ghost"
               size="icon-xs"
-              aria-label="New space"
+              aria-label="Yangi bo'lim"
               onClick={() => setCreateTarget({ kind: "space" })}
             >
               <Plus />
@@ -48,14 +48,14 @@ export function Sidebar({ workspaceId }: { workspaceId: string }) {
           <TreeSkeleton />
         ) : isError ? (
           <div className="px-2 py-4 text-sm text-muted-foreground">
-            Couldn&apos;t load your spaces.{" "}
+            Bo&apos;limlarni yuklab bo&apos;lmadi.{" "}
             <button className="text-primary hover:underline" onClick={() => refetch()}>
-              Retry
+              Qayta urinish
             </button>
           </div>
         ) : tree && tree.spaces.length === 0 ? (
           <div className="px-2 py-4 text-sm text-muted-foreground">
-            No spaces yet.
+            Hozircha bo&apos;limlar yo&apos;q.
             {canManage ? (
               <Button
                 variant="outline"
@@ -63,10 +63,12 @@ export function Sidebar({ workspaceId }: { workspaceId: string }) {
                 className="mt-2 w-full"
                 onClick={() => setCreateTarget({ kind: "space" })}
               >
-                Create a space
+                Bo&apos;lim yaratish
               </Button>
             ) : (
-              <p className="mt-1 text-xs">Ask an admin to create a space.</p>
+              <p className="mt-1 text-xs">
+                Bo&apos;lim yaratish uchun administratorga murojaat qiling.
+              </p>
             )}
           </div>
         ) : (
@@ -90,7 +92,7 @@ export function Sidebar({ workspaceId }: { workspaceId: string }) {
           className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <Settings className="size-4" />
-          Settings
+          Sozlamalar
         </Link>
       </div>
 
@@ -124,7 +126,7 @@ function SpaceNode({
         <button
           className="flex size-4 shrink-0 items-center justify-center text-muted-foreground"
           onClick={() => setExpanded((v) => !v)}
-          aria-label={expanded ? `Collapse ${space.name}` : `Expand ${space.name}`}
+          aria-label={expanded ? `${space.name} bo'limini yig'ish` : `${space.name} bo'limini ochish`}
           aria-expanded={expanded}
         >
           {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
@@ -139,7 +141,7 @@ function SpaceNode({
             variant="ghost"
             size="icon-xs"
             className="ml-auto opacity-0 group-hover:opacity-100"
-            aria-label={`New list in ${space.name}`}
+            aria-label={`${space.name} ichida yangi ro'yxat`}
             onClick={() => onCreateList(space.id, null)}
           >
             <Plus />
@@ -162,7 +164,9 @@ function SpaceNode({
             <ListNode key={list.id} workspaceId={workspaceId} list={list} depth={1} />
           ))}
           {space.folders.length === 0 && space.lists.length === 0 ? (
-            <p className="py-1 pl-8 text-xs text-muted-foreground">No lists here</p>
+            <p className="py-1 pl-8 text-xs text-muted-foreground">
+              Bu yerda ro&apos;yxatlar yo&apos;q
+            </p>
           ) : null}
         </div>
       ) : null}
@@ -191,7 +195,7 @@ function FolderNode({
         <button
           className="flex size-4 shrink-0 items-center justify-center text-muted-foreground"
           onClick={() => setExpanded((v) => !v)}
-          aria-label={expanded ? `Collapse ${folder.name}` : `Expand ${folder.name}`}
+          aria-label={expanded ? `${folder.name} jildini yig'ish` : `${folder.name} jildini ochish`}
           aria-expanded={expanded}
         >
           {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
@@ -203,7 +207,7 @@ function FolderNode({
             variant="ghost"
             size="icon-xs"
             className="ml-auto opacity-0 group-hover:opacity-100"
-            aria-label={`New list in ${folder.name}`}
+            aria-label={`${folder.name} ichida yangi ro'yxat`}
             onClick={() => onCreateList(spaceId, folder.id)}
           >
             <Plus />

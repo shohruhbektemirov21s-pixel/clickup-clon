@@ -89,9 +89,9 @@ function TaskPanelBody({
   if (isError || !task) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8">
-        <p className="text-sm text-muted-foreground">This task no longer exists.</p>
+        <p className="text-sm text-muted-foreground">Bu vazifa endi mavjud emas.</p>
         <Button variant="outline" size="sm" onClick={onClose}>
-          Close
+          Yopish
         </Button>
       </div>
     );
@@ -101,7 +101,7 @@ function TaskPanelBody({
     <div className="flex h-full flex-col overflow-hidden">
       <SheetHeader className="border-b px-6 py-4">
         <SheetTitle className="sr-only">{task.title}</SheetTitle>
-        <SheetDescription className="sr-only">Task details</SheetDescription>
+        <SheetDescription className="sr-only">Vazifa tafsilotlari</SheetDescription>
         <TitleEditor task={task} listId={listId} canEdit={canEdit} />
       </SheetHeader>
 
@@ -123,9 +123,11 @@ function TaskPanelBody({
       </div>
 
       <footer className="border-t px-6 py-2 text-xs text-muted-foreground">
-        Created {timeAgo(task.created_at)}
-        {task.created_by ? ` by ${task.created_by.full_name || task.created_by.email}` : ""} ·
-        Updated {timeAgo(task.updated_at)}
+        Yaratilgan: {timeAgo(task.created_at)}
+        {task.created_by
+          ? ` (${task.created_by.full_name || task.created_by.email})`
+          : ""}{" "}
+        · Yangilangan: {timeAgo(task.updated_at)}
       </footer>
     </div>
   );
@@ -173,7 +175,7 @@ function TitleEditor({
       }}
       rows={1}
       className="min-h-0 resize-none border-none p-0 text-lg font-semibold shadow-none focus-visible:ring-0"
-      aria-label="Task title"
+      aria-label="Vazifa nomi"
     />
   );
 }
@@ -216,13 +218,15 @@ function FieldGrid({
       }
       queryClient.invalidateQueries({ queryKey: keys.task(task.id) });
     } catch (err) {
-      toast.error(isApiError(err) ? err.message : "Couldn't update watching.");
+      toast.error(
+        isApiError(err) ? err.message : "Kuzatish holatini yangilab bo'lmadi.",
+      );
     }
   };
 
   return (
     <dl className="grid grid-cols-[110px_1fr] items-center gap-x-4 gap-y-2 px-6 py-4 text-sm">
-      <dt className="text-muted-foreground">Status</dt>
+      <dt className="text-muted-foreground">Holat</dt>
       <dd>
         <StatusPicker
           value={task.status_id}
@@ -232,7 +236,7 @@ function FieldGrid({
         />
       </dd>
 
-      <dt className="text-muted-foreground">Assignees</dt>
+      <dt className="text-muted-foreground">Mas&apos;ullar</dt>
       <dd>
         <AssigneePicker
           value={task.assignees}
@@ -242,7 +246,7 @@ function FieldGrid({
         />
       </dd>
 
-      <dt className="text-muted-foreground">Priority</dt>
+      <dt className="text-muted-foreground">Muhimlik</dt>
       <dd>
         <PriorityPicker
           value={task.priority}
@@ -252,7 +256,7 @@ function FieldGrid({
         />
       </dd>
 
-      <dt className="text-muted-foreground">Due date</dt>
+      <dt className="text-muted-foreground">Muddat</dt>
       <dd>
         <DueDatePicker
           value={task.due_date}
@@ -261,7 +265,7 @@ function FieldGrid({
         />
       </dd>
 
-      <dt className="text-muted-foreground">Tags</dt>
+      <dt className="text-muted-foreground">Teglar</dt>
       <dd>
         <TagPicker
           value={task.tags}
@@ -271,17 +275,17 @@ function FieldGrid({
         />
       </dd>
 
-      <dt className="text-muted-foreground">Watchers</dt>
+      <dt className="text-muted-foreground">Kuzatuvchilar</dt>
       <dd className="flex items-center gap-2">
         <AvatarStack users={task.watchers} max={4} />
         <Button variant="ghost" size="xs" onClick={toggleWatch} className="text-muted-foreground">
           {watching ? (
             <>
-              <EyeOff className="size-3.5" /> Unwatch
+              <EyeOff className="size-3.5" /> Kuzatishni to&apos;xtatish
             </>
           ) : (
             <>
-              <Eye className="size-3.5" /> Watch
+              <Eye className="size-3.5" /> Kuzatish
             </>
           )}
         </Button>
@@ -299,7 +303,7 @@ function FieldGrid({
                 onDeleted();
               }}
             >
-              <Trash2 className="size-3.5" /> Delete task
+              <Trash2 className="size-3.5" /> Vazifani o&apos;chirish
             </Button>
           </dd>
         </>
@@ -350,7 +354,7 @@ function DescriptionEditor({
   return (
     <div className="px-6 py-4">
       <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-        Description
+        Tavsif
       </h3>
       {editing ? (
         <Textarea
@@ -363,7 +367,7 @@ function DescriptionEditor({
             if (e.key === "Escape") setEditing(false);
           }}
           rows={5}
-          placeholder="Add a description…"
+          placeholder="Tavsif qo'shing…"
         />
       ) : text ? (
         <div
@@ -379,7 +383,7 @@ function DescriptionEditor({
           onClick={startEdit}
           disabled={!canEdit}
         >
-          {canEdit ? "Add a description…" : "No description."}
+          {canEdit ? "Tavsif qo'shing…" : "Tavsif yo'q."}
         </button>
       )}
     </div>

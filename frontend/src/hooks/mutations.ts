@@ -28,7 +28,7 @@ import type {
 
 function errorMessage(err: unknown): string {
   if (isApiError(err)) return err.message;
-  return "Something went wrong. Check your connection and try again.";
+  return "Nimadir xato ketdi. Internet aloqasini tekshirib, qayta urinib ko'ring.";
 }
 
 // ---------------------------------------------------------------------------
@@ -101,7 +101,7 @@ export function useUpdateTask(listId: string) {
         queryClient.setQueryData(keys.task(taskId), ctx.previousTask);
       }
       if (isApiError(err) && err.code === "invalid_status_for_list") {
-        toast.error("That status isn't available in this list.");
+        toast.error("Bu holat ushbu ro'yxatda mavjud emas.");
         queryClient.invalidateQueries({ queryKey: keys.statusSet(listId) });
       } else {
         toast.error(errorMessage(err));
@@ -188,8 +188,8 @@ export function useMoveTask(listId: string) {
       }
       if (isApiError(err) && err.code === "invalid_status_for_list") {
         queryClient.invalidateQueries({ queryKey: keys.statusSet(listId) });
-        toast.error("That status isn't available in this list.");
-        return;
+        toast.error("Bu holat ushbu ro'yxatda mavjud emas.");
+        return; // rollback already applied above
       }
       toast.error(errorMessage(err));
     },
@@ -274,7 +274,7 @@ export function useRenameWorkspace(workspaceId: string) {
       queryClient.setQueryData(keys.workspace(workspaceId), workspace);
       queryClient.invalidateQueries({ queryKey: keys.workspaces });
       queryClient.invalidateQueries({ queryKey: keys.tree(workspaceId) });
-      toast.success("Workspace updated");
+      toast.success("Ish maydoni yangilandi");
     },
     onError: (err) => toast.error(errorMessage(err)),
   });
@@ -314,7 +314,7 @@ export function useRemoveMember(workspaceId: string) {
             }
           : old,
       );
-      toast.success("Member removed");
+      toast.success("A'zo chiqarildi");
     },
     onError: (err) => toast.error(errorMessage(err)),
   });
@@ -327,11 +327,11 @@ export function useCreateInvitation(workspaceId: string) {
       api.post<Invitation>(`workspaces/${workspaceId}/invitations/`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: keys.invitations(workspaceId) });
-      toast.success("Invitation sent");
+      toast.success("Taklif yuborildi");
     },
     onError: (err) => {
       if (isApiError(err) && err.code === "conflict") {
-        toast.error("Already a member or already invited.");
+        toast.error("Bu foydalanuvchi allaqachon a'zo yoki taklif qilingan.");
         return;
       }
       toast.error(errorMessage(err));
@@ -345,7 +345,7 @@ export function useRevokeInvitation(workspaceId: string) {
     mutationFn: (invitationId: string) => api.delete(`invitations/${invitationId}/`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: keys.invitations(workspaceId) });
-      toast.success("Invitation revoked");
+      toast.success("Taklif bekor qilindi");
     },
     onError: (err) => toast.error(errorMessage(err)),
   });
@@ -358,7 +358,7 @@ export function useResendInvitation(workspaceId: string) {
       api.post<Invitation>(`invitations/${invitationId}/resend/`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: keys.invitations(workspaceId) });
-      toast.success("Invitation resent");
+      toast.success("Taklif qayta yuborildi");
     },
     onError: (err) => toast.error(errorMessage(err)),
   });

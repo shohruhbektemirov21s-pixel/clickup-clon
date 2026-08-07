@@ -44,7 +44,7 @@ export function TopBar({
         variant="ghost"
         size="icon-sm"
         onClick={onToggleSidebar}
-        aria-label="Toggle sidebar"
+        aria-label="Yon panelni ochish/yopish"
       >
         <Menu />
       </Button>
@@ -55,9 +55,9 @@ export function TopBar({
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search tasks, lists, spaces…"
+            placeholder="Qidirish..."
             className="h-8 pl-8"
-            aria-label="Search"
+            aria-label="Qidirish"
           />
         </div>
       </form>
@@ -86,11 +86,11 @@ function WorkspaceSwitcher({ workspaceId }: { workspaceId: string }) {
         >
           {initials(current?.name ?? "W")}
         </span>
-        <span className="truncate">{current?.name ?? "Workspace"}</span>
+        <span className="truncate">{current?.name ?? "Ish maydoni"}</span>
         <ChevronDown className="size-3.5 text-muted-foreground" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
-        <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
+        <DropdownMenuLabel>Ish maydonlari</DropdownMenuLabel>
         {workspaces.map((w) => (
           <DropdownMenuItem key={w.id} onClick={() => router.push(`/w/${w.id}`)}>
             <span
@@ -108,7 +108,7 @@ function WorkspaceSwitcher({ workspaceId }: { workspaceId: string }) {
           onClick={() => router.push(`/w/${workspaceId}/settings`)}
         >
           <Settings className="size-4" />
-          Workspace settings
+          Ish maydoni sozlamalari
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -121,7 +121,7 @@ function ThemeToggle() {
     <Button
       variant="ghost"
       size="icon-sm"
-      aria-label="Toggle theme"
+      aria-label="Mavzuni almashtirish"
       onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
     >
       {/* CSS-driven so SSR markup never mismatches the client theme */}
@@ -143,7 +143,7 @@ function UserMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={<Button variant="ghost" size="icon-sm" aria-label="Account menu" />}
+        render={<Button variant="ghost" size="icon-sm" aria-label="Hisob menyusi" />}
       >
         <Avatar className="size-7">
           {me?.avatar ? <AvatarImage src={me.avatar} alt="" /> : null}
@@ -163,12 +163,12 @@ function UserMenu() {
         <DropdownMenuSeparator />
         <DropdownMenuItem render={<Link href="/settings/profile" />}>
           <UserIcon className="size-4" />
-          Profile
+          Profil
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem variant="destructive" onClick={onLogout}>
           <LogOut className="size-4" />
-          Log out
+          Chiqish
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

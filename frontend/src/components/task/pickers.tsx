@@ -76,15 +76,15 @@ export function StatusPicker({
         {trigger ? null : (
           <>
             <StatusDot status={current} />
-            <span className="truncate text-xs">{current?.name ?? "Status"}</span>
+            <span className="truncate text-xs">{current?.name ?? "Holat"}</span>
           </>
         )}
       </PopoverTrigger>
       <PopoverContent className="w-52 p-0" align="start">
         <Command>
-          <CommandInput placeholder="Change status…" />
+          <CommandInput placeholder="Holatni o'zgartirish…" />
           <CommandList>
-            <CommandEmpty>No status found.</CommandEmpty>
+            <CommandEmpty>Holat topilmadi.</CommandEmpty>
             <CommandGroup>
               {statuses.map((status) => (
                 <CommandItem
@@ -121,7 +121,7 @@ export function PriorityFlag({ priority, className }: { priority: Priority; clas
         priority !== "none" && "fill-current",
         className,
       )}
-      aria-label={`Priority: ${PRIORITY_META[priority].label}`}
+      aria-label={`Muhimlik: ${PRIORITY_META[priority].label}`}
     />
   );
 }
@@ -146,7 +146,7 @@ export function PriorityPicker({
             variant="ghost"
             size="sm"
             className="h-7 gap-1.5 px-2 font-normal"
-            aria-label="Set priority"
+            aria-label="Muhimlikni tanlash"
           />
         }
       >
@@ -230,7 +230,7 @@ export function AssigneePicker({
             variant="ghost"
             size="sm"
             className="h-7 gap-1 px-1.5 font-normal"
-            aria-label="Assignees"
+            aria-label="Mas'ullar"
           />
         }
       >
@@ -243,9 +243,9 @@ export function AssigneePicker({
       </PopoverTrigger>
       <PopoverContent className="w-60 p-0" align="start">
         <Command>
-          <CommandInput placeholder="Assign people…" />
+          <CommandInput placeholder="Mas'ul tayinlash…" />
           <CommandList>
-            <CommandEmpty>No members found.</CommandEmpty>
+            <CommandEmpty>A&apos;zolar topilmadi.</CommandEmpty>
             <CommandGroup>
               {members.map((member) => (
                 <CommandItem
@@ -309,7 +309,7 @@ export function DueDatePicker({
               "h-7 gap-1.5 px-2 text-xs font-normal",
               isLate ? "text-danger" : "text-muted-foreground",
             )}
-            aria-label="Due date"
+            aria-label="Muddat"
           />
         }
       >
@@ -343,7 +343,7 @@ export function DueDatePicker({
                 onChange(null);
               }}
             >
-              <X className="size-3.5" /> Clear due date
+              <X className="size-3.5" /> Muddatni tozalash
             </Button>
           </div>
         ) : null}
@@ -418,7 +418,7 @@ export function TagPicker({
             variant="ghost"
             size="sm"
             className="h-7 gap-1 px-1.5 font-normal"
-            aria-label="Tags"
+            aria-label="Teglar"
           />
         }
       >
@@ -431,9 +431,9 @@ export function TagPicker({
       </PopoverTrigger>
       <PopoverContent className="w-56 p-0" align="start">
         <Command>
-          <CommandInput placeholder="Add tags…" />
+          <CommandInput placeholder="Teg qo'shish…" />
           <CommandList>
-            <CommandEmpty>No tags in this workspace.</CommandEmpty>
+            <CommandEmpty>Bu ish maydonida teglar yo&apos;q.</CommandEmpty>
             <CommandGroup>
               {tags.map((tag) => (
                 <CommandItem key={tag.id} value={tag.name} onSelect={() => toggle(tag.id)}>

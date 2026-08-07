@@ -1,4 +1,5 @@
 import { format, formatDistanceToNow, isPast, isToday } from "date-fns";
+import { uz } from "date-fns/locale";
 import type { Priority, StatusType } from "@/types/api";
 
 export function initials(name: string | null | undefined, email?: string): string {
@@ -11,8 +12,10 @@ export function initials(name: string | null | undefined, email?: string): strin
 export function formatDueDate(iso: string | null): string {
   if (!iso) return "";
   const d = new Date(iso);
-  if (isToday(d)) return "Today";
-  return format(d, d.getFullYear() === new Date().getFullYear() ? "MMM d" : "MMM d, yyyy");
+  if (isToday(d)) return "Bugun";
+  return format(d, d.getFullYear() === new Date().getFullYear() ? "d MMM" : "d MMM, yyyy", {
+    locale: uz,
+  });
 }
 
 export function isOverdue(iso: string | null, statusType?: StatusType): boolean {
@@ -23,17 +26,17 @@ export function isOverdue(iso: string | null, statusType?: StatusType): boolean 
 }
 
 export function timeAgo(iso: string): string {
-  return formatDistanceToNow(new Date(iso), { addSuffix: true });
+  return formatDistanceToNow(new Date(iso), { addSuffix: true, locale: uz });
 }
 
 export const PRIORITIES: Priority[] = ["urgent", "high", "normal", "low", "none"];
 
 export const PRIORITY_META: Record<Priority, { label: string; className: string }> = {
-  urgent: { label: "Urgent", className: "text-priority-urgent" },
-  high: { label: "High", className: "text-priority-high" },
-  normal: { label: "Normal", className: "text-priority-normal" },
-  low: { label: "Low", className: "text-priority-low" },
-  none: { label: "No priority", className: "text-priority-none" },
+  urgent: { label: "Juda muhim", className: "text-priority-urgent" },
+  high: { label: "Yuqori", className: "text-priority-high" },
+  normal: { label: "O'rtacha", className: "text-priority-normal" },
+  low: { label: "Past", className: "text-priority-low" },
+  none: { label: "Muhimlik yo'q", className: "text-priority-none" },
 };
 
 export const STATUS_TYPE_COLOR: Record<StatusType, string> = {

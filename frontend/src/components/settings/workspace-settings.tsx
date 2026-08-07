@@ -43,11 +43,12 @@ import {
 import { initials, timeAgo } from "@/lib/format";
 import type { InvitableRole, Member, Role } from "@/types/api";
 
+// Display labels only — API role values stay English.
 const ROLE_LABEL: Record<Role, string> = {
-  owner: "Owner",
+  owner: "Egasi",
   admin: "Admin",
-  member: "Member",
-  guest: "Guest",
+  member: "A'zo",
+  guest: "Mehmon",
 };
 
 export function WorkspaceSettings({ workspaceId }: { workspaceId: string }) {
@@ -68,14 +69,16 @@ export function WorkspaceSettings({ workspaceId }: { workspaceId: string }) {
   if (!workspace) {
     return (
       <div className="flex flex-1 items-center justify-center p-12 text-sm text-muted-foreground">
-        Workspace not found or you no longer have access.
+        Ish maydoni topilmadi yoki sizda endi ruxsat yo&apos;q.
       </div>
     );
   }
 
   return (
     <div className="mx-auto w-full max-w-3xl overflow-y-auto p-8">
-      <h1 className="mb-6 text-xl font-semibold">Workspace settings — {workspace.name}</h1>
+      <h1 className="mb-6 text-xl font-semibold">
+        Ish maydoni sozlamalari — {workspace.name}
+      </h1>
 
       <GeneralSection
         workspaceId={workspaceId}
@@ -113,7 +116,7 @@ function GeneralSection({
   return (
     <section className="mb-8">
       <h2 className="mb-3 text-sm font-semibold tracking-wide text-muted-foreground uppercase">
-        General
+        Umumiy
       </h2>
       <form
         className="flex max-w-md items-end gap-2"
@@ -124,7 +127,7 @@ function GeneralSection({
         }}
       >
         <div className="flex flex-1 flex-col gap-1.5">
-          <Label htmlFor="ws-rename">Workspace name</Label>
+          <Label htmlFor="ws-rename">Ish maydoni nomi</Label>
           <Input
             id="ws-rename"
             value={name}
@@ -136,12 +139,12 @@ function GeneralSection({
           type="submit"
           disabled={!canRename || rename.isPending || !name.trim() || name.trim() === currentName}
         >
-          {rename.isPending ? "Saving…" : "Save"}
+          {rename.isPending ? "Saqlanmoqda…" : "Saqlash"}
         </Button>
       </form>
       {!canRename ? (
         <p className="mt-1.5 text-xs text-muted-foreground">
-          Only the workspace owner can rename this workspace.
+          Ish maydoni nomini faqat egasi o&apos;zgartira oladi.
         </p>
       ) : null}
     </section>
@@ -177,7 +180,7 @@ function MembersSection({
   return (
     <section className="mb-8">
       <h2 className="mb-3 text-sm font-semibold tracking-wide text-muted-foreground uppercase">
-        Members {data ? `(${data.count})` : ""}
+        A&apos;zolar {data ? `(${data.count})` : ""}
       </h2>
       {isPending ? (
         <div className="space-y-2" aria-hidden>
@@ -186,15 +189,15 @@ function MembersSection({
           ))}
         </div>
       ) : isError ? (
-        <p className="text-sm text-danger">Couldn&apos;t load members.</p>
+        <p className="text-sm text-danger">A&apos;zolarni yuklab bo&apos;lmadi.</p>
       ) : (
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Name</TableHead>
+              <TableHead>Ism</TableHead>
               <TableHead>Email</TableHead>
-              <TableHead>Role</TableHead>
-              <TableHead>Joined</TableHead>
+              <TableHead>Rol</TableHead>
+              <TableHead>Qo&apos;shilgan</TableHead>
               <TableHead className="w-10" />
             </TableRow>
           </TableHeader>
@@ -216,7 +219,7 @@ function MembersSection({
                   <span className="font-medium">
                     {member.user.full_name || member.user.email}
                     {member.user.id === me?.id ? (
-                      <span className="ml-1 text-xs text-muted-foreground">(you)</span>
+                      <span className="ml-1 text-xs text-muted-foreground">(siz)</span>
                     ) : null}
                   </span>
                 </TableCell>
@@ -256,7 +259,7 @@ function MembersSection({
                       variant="ghost"
                       size="icon-xs"
                       className="text-danger"
-                      aria-label={`Remove ${member.user.email}`}
+                      aria-label={`${member.user.email} a'zoni chiqarish`}
                       onClick={() => removeMember.mutate(member.user.id)}
                     >
                       <Trash2 />
@@ -284,26 +287,26 @@ function InvitationsSection({ workspaceId }: { workspaceId: string }) {
     <section className="mb-8">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">
-          Pending invitations ({pending.length})
+          Kutilayotgan takliflar ({pending.length})
         </h2>
         <Button size="sm" onClick={() => setInviteOpen(true)}>
-          <MailPlus className="size-3.5" /> Invite
+          <MailPlus className="size-3.5" /> Taklif qilish
         </Button>
       </div>
       {isPending ? (
         <Skeleton className="h-16 w-full" aria-hidden />
       ) : pending.length === 0 ? (
         <p className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
-          No pending invitations.
+          Kutilayotgan takliflar yo&apos;q.
         </p>
       ) : (
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Email</TableHead>
-              <TableHead>Role</TableHead>
-              <TableHead>Invited by</TableHead>
-              <TableHead>Expires</TableHead>
+              <TableHead>Rol</TableHead>
+              <TableHead>Taklif qilgan</TableHead>
+              <TableHead>Muddati</TableHead>
               <TableHead className="w-20" />
             </TableRow>
           </TableHeader>
@@ -324,7 +327,7 @@ function InvitationsSection({ workspaceId }: { workspaceId: string }) {
                   <Button
                     variant="ghost"
                     size="icon-xs"
-                    aria-label="Resend invitation"
+                    aria-label="Taklifni qayta yuborish"
                     disabled={resend.isPending}
                     onClick={() => resend.mutate(invitation.id)}
                   >
@@ -334,7 +337,7 @@ function InvitationsSection({ workspaceId }: { workspaceId: string }) {
                     variant="ghost"
                     size="icon-xs"
                     className="text-danger"
-                    aria-label="Revoke invitation"
+                    aria-label="Taklifni bekor qilish"
                     disabled={revoke.isPending}
                     onClick={() => revoke.mutate(invitation.id)}
                   >
@@ -377,25 +380,25 @@ function InviteDialog({
       <DialogContent className="sm:max-w-sm">
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <DialogHeader>
-            <DialogTitle>Invite people</DialogTitle>
+            <DialogTitle>Odamlarni taklif qilish</DialogTitle>
             <DialogDescription>
-              They&apos;ll receive an email with a link to join this workspace.
+              Ularga ish maydoniga qo&apos;shilish havolasi emailda yuboriladi.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="invite-email">Email address</Label>
+            <Label htmlFor="invite-email">Email manzili</Label>
             <Input
               id="invite-email"
               type="email"
               autoFocus
-              placeholder="new.dev@acme.com"
+              placeholder="yangi.dev@kompaniya.uz"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label>Role</Label>
+            <Label>Rol</Label>
             <RadioGroup
               value={role}
               onValueChange={(v) => setRole(v as InvitableRole)}
@@ -408,15 +411,16 @@ function InviteDialog({
               ))}
             </RadioGroup>
             <p className="text-xs text-muted-foreground">
-              Guests can read and comment, but can&apos;t create lists.
+              Mehmonlar o&apos;qishi va komment yozishi mumkin, lekin ro&apos;yxat
+              yarata olmaydi.
             </p>
           </div>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose}>
-              Cancel
+              Bekor qilish
             </Button>
             <Button type="submit" disabled={createInvitation.isPending || !email.trim()}>
-              {createInvitation.isPending ? "Sending…" : "Send invite"}
+              {createInvitation.isPending ? "Yuborilmoqda…" : "Taklif yuborish"}
             </Button>
           </DialogFooter>
         </form>

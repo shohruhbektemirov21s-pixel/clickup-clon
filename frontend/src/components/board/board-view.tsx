@@ -143,9 +143,9 @@ export function BoardView({
   if (isError) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 p-12 text-center">
-        <p className="text-sm text-muted-foreground">Couldn&apos;t load the board.</p>
+        <p className="text-sm text-muted-foreground">Doskani yuklab bo&apos;lmadi.</p>
         <Button variant="outline" size="sm" onClick={() => refetch()}>
-          Retry
+          Qayta urinish
         </Button>
       </div>
     );
@@ -211,7 +211,7 @@ function BoardColumn({
             variant="ghost"
             size="icon-xs"
             className="ml-auto text-muted-foreground"
-            aria-label={`New task in ${status.name}`}
+            aria-label={`${status.name} ustuniga vazifa qo'shish`}
             onClick={() => setComposing(true)}
           >
             <Plus />
@@ -247,7 +247,7 @@ function BoardColumn({
         </SortableContext>
         {tasks.length === 0 && !composing ? (
           <div className="flex h-16 items-center justify-center rounded-lg border border-dashed border-primary/40 text-xs text-muted-foreground">
-            Drop a task here
+            Vazifani shu yerga tashlang
           </div>
         ) : null}
       </div>
@@ -360,7 +360,7 @@ function ColumnComposer({
         autoFocus
         value={title}
         onChange={(e) => setTitle(e.target.value)}
-        placeholder="Task name…"
+        placeholder="Vazifa nomi…"
         className="h-7 border-none px-1 shadow-none focus-visible:ring-0"
         onKeyDown={(e) => {
           if (e.key === "Enter") {

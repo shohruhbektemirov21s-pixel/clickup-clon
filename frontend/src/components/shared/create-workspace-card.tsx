@@ -27,7 +27,7 @@ export function CreateWorkspaceCard() {
       await queryClient.invalidateQueries({ queryKey: keys.workspaces });
       router.replace(`/w/${ws.id}`);
     } catch (err) {
-      toast.error(isApiError(err) ? err.message : "Couldn't create the workspace.");
+      toast.error(isApiError(err) ? err.message : "Ish maydonini yaratib bo'lmadi.");
       setPending(false);
     }
   };
@@ -38,23 +38,23 @@ export function CreateWorkspaceCard() {
         onSubmit={onSubmit}
         className="flex w-full max-w-[400px] flex-col gap-4 rounded-xl border bg-background p-10 shadow-lg"
       >
-        <h1 className="text-xl font-semibold">Create your first workspace</h1>
+        <h1 className="text-xl font-semibold">Birinchi ish maydoningizni yarating</h1>
         <p className="text-sm text-muted-foreground">
-          A workspace holds your spaces, lists and tasks.
+          Ish maydonida bo&apos;limlar, ro&apos;yxatlar va vazifalar saqlanadi.
         </p>
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="ws-name">Workspace name</Label>
+          <Label htmlFor="ws-name">Ish maydoni nomi</Label>
           <Input
             id="ws-name"
             autoFocus
-            placeholder="Acme Inc."
+            placeholder="Acme MChJ"
             value={name}
             onChange={(e) => setName(e.target.value)}
             required
           />
         </div>
         <Button type="submit" disabled={pending || !name.trim()}>
-          {pending ? "Creating…" : "Create workspace"}
+          {pending ? "Yaratilmoqda…" : "Ish maydonini yaratish"}
         </Button>
       </form>
     </main>

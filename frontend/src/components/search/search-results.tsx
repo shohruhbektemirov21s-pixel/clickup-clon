@@ -15,7 +15,7 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 p-12 text-center text-muted-foreground">
         <Search className="size-6" />
-        <p className="text-sm">Type at least 2 characters in the search bar.</p>
+        <p className="text-sm">Qidiruv maydoniga kamida 2 ta belgi kiriting.</p>
       </div>
     );
   }
@@ -23,7 +23,7 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
   return (
     <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto p-8">
       <h1 className="mb-4 text-lg font-semibold">
-        Results for “{q}” {data ? `(${data.count})` : ""}
+        “{q}” bo&apos;yicha natijalar {data ? `(${data.count})` : ""}
       </h1>
       {isPending ? (
         <div className="space-y-2" aria-hidden>
@@ -32,9 +32,9 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
           ))}
         </div>
       ) : isError ? (
-        <p className="text-sm text-danger">Search failed. Try again.</p>
+        <p className="text-sm text-danger">Qidiruv amalga oshmadi. Qayta urinib ko&apos;ring.</p>
       ) : data && data.results.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No results for “{q}”.</p>
+        <p className="text-sm text-muted-foreground">“{q}” bo&apos;yicha natija topilmadi.</p>
       ) : (
         <ul className="flex flex-col gap-1">
           {data?.results.map((result) => {
@@ -48,7 +48,7 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
                     >
                       <SquareCheck className="size-4 text-muted-foreground" />
                       <span className="truncate">{result.item.title}</span>
-                      <span className="ml-auto text-xs text-muted-foreground">Task</span>
+                      <span className="ml-auto text-xs text-muted-foreground">Vazifa</span>
                     </Link>
                   </li>
                 );
@@ -61,7 +61,7 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
                     >
                       <ListIcon className="size-4 text-muted-foreground" />
                       <span className="truncate">{result.item.name}</span>
-                      <span className="ml-auto text-xs text-muted-foreground">List</span>
+                      <span className="ml-auto text-xs text-muted-foreground">Ro&apos;yxat</span>
                     </Link>
                   </li>
                 );
@@ -73,7 +73,7 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
                   >
                     <FolderIcon className="size-4 text-muted-foreground" />
                     <span className="truncate">{result.item.name}</span>
-                    <span className="ml-auto text-xs text-muted-foreground">Folder</span>
+                    <span className="ml-auto text-xs text-muted-foreground">Jild</span>
                   </li>
                 );
               case "space":
@@ -87,7 +87,7 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
                       style={{ backgroundColor: result.item.color || "#7B68EE" }}
                     />
                     <span className="truncate">{result.item.name}</span>
-                    <span className="ml-auto text-xs text-muted-foreground">Space</span>
+                    <span className="ml-auto text-xs text-muted-foreground">Bo&apos;lim</span>
                   </li>
                 );
             }

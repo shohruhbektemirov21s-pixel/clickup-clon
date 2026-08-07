@@ -31,9 +31,10 @@ export function WorkspaceHome({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-2 p-16 text-center">
-      <h2 className="text-lg font-semibold">Welcome to your workspace</h2>
+      <h2 className="text-lg font-semibold">Ish maydoningizga xush kelibsiz</h2>
       <p className="max-w-sm text-sm text-muted-foreground">
-        Create a space and a list from the sidebar to start adding tasks.
+        Vazifa qo&apos;shishni boshlash uchun yon paneldan bo&apos;lim va
+        ro&apos;yxat yarating.
       </p>
     </div>
   );

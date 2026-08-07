@@ -73,10 +73,10 @@ export function ListPage({
         >
           <TabsList>
             <TabsTrigger value="list" className="gap-1.5">
-              <Rows3 className="size-3.5" /> List
+              <Rows3 className="size-3.5" /> Ro&apos;yxat
             </TabsTrigger>
             <TabsTrigger value="board" className="gap-1.5">
-              <Columns3 className="size-3.5" /> Board
+              <Columns3 className="size-3.5" /> Doska
             </TabsTrigger>
           </TabsList>
         </Tabs>
@@ -84,7 +84,7 @@ export function ListPage({
           <Badge
             variant="secondary"
             className="gap-1.5 font-normal text-muted-foreground"
-            title={`Realtime: ${connection}`}
+            title={`Real vaqt holati: ${connection}`}
           >
             <span
               className={cn(
@@ -96,10 +96,10 @@ export function ListPage({
               )}
             />
             {connection === "open"
-              ? "Live"
+              ? "Jonli"
               : connection === "offline"
-                ? "Offline"
-                : "Connecting…"}
+                ? "Oflayn"
+                : "Ulanmoqda…"}
           </Badge>
         </div>
       </div>

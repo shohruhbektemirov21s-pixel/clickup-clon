@@ -39,7 +39,7 @@ export function CommentsThread({ taskId }: { taskId: string }) {
   return (
     <div className="flex flex-col px-6 py-4">
       <h3 className="mb-3 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-        Comments {data ? `(${data.count})` : ""}
+        Kommentlar {data ? `(${data.count})` : ""}
       </h3>
 
       {isPending ? (
@@ -56,7 +56,7 @@ export function CommentsThread({ taskId }: { taskId: string }) {
         </div>
       ) : topLevel.length === 0 ? (
         <p className="mb-3 text-sm text-muted-foreground">
-          No comments yet. Start the conversation.
+          Hozircha kommentlar yo&apos;q. Suhbatni boshlang.
         </p>
       ) : (
         <ul className="flex flex-col gap-4">
@@ -138,18 +138,18 @@ function CommentItem({
           <span className="text-sm font-medium">
             {comment.author
               ? comment.author.full_name || comment.author.email
-              : "Deleted user"}
+              : "O'chirilgan foydalanuvchi"}
           </span>
           <span className="text-xs text-muted-foreground">
             {timeAgo(comment.created_at)}
-            {comment.is_edited ? " · edited" : ""}
+            {comment.is_edited ? " · tahrirlangan" : ""}
           </span>
           <span className="ml-auto flex opacity-0 transition-opacity group-hover:opacity-100">
             {onReply ? (
               <Button
                 variant="ghost"
                 size="icon-xs"
-                aria-label="Reply"
+                aria-label="Javob yozish"
                 onClick={onReply}
               >
                 <CornerDownRight />
@@ -159,7 +159,7 @@ function CommentItem({
               <Button
                 variant="ghost"
                 size="icon-xs"
-                aria-label="Edit comment"
+                aria-label="Kommentni tahrirlash"
                 onClick={() => {
                   setDraft(text);
                   setEditing(true);
@@ -172,7 +172,7 @@ function CommentItem({
               <Button
                 variant="ghost"
                 size="icon-xs"
-                aria-label="Delete comment"
+                aria-label="Kommentni o'chirish"
                 className="text-danger"
                 onClick={() => deleteComment.mutate(comment.id)}
               >
@@ -230,10 +230,12 @@ function Composer({
       {replyTo ? (
         <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
           <CornerDownRight className="size-3" />
-          Replying to{" "}
-          {replyTo.author ? replyTo.author.full_name || replyTo.author.email : "Deleted user"}
+          Javob:{" "}
+          {replyTo.author
+            ? replyTo.author.full_name || replyTo.author.email
+            : "O'chirilgan foydalanuvchi"}
           <button className="text-primary hover:underline" onClick={onClearReply}>
-            Cancel
+            Bekor qilish
           </button>
         </div>
       ) : null}
@@ -241,7 +243,7 @@ function Composer({
         <Textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="Write a comment…"
+          placeholder="Komment yozing..."
           rows={2}
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
@@ -252,7 +254,7 @@ function Composer({
         />
         <Button
           size="icon-sm"
-          aria-label="Send comment"
+          aria-label="Yuborish"
           disabled={!draft.trim() || createComment.isPending}
           onClick={send}
         >

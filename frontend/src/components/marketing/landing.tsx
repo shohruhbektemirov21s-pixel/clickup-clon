@@ -15,26 +15,25 @@ export function Landing() {
         </div>
         <nav className="flex items-center gap-2">
           <Button variant="ghost" render={<Link href="/login" />}>
-            Log in
+            Kirish
           </Button>
-          <Button render={<Link href="/register" />}>Sign up</Button>
+          <Button render={<Link href="/register" />}>Ro&apos;yxatdan o&apos;tish</Button>
         </nav>
       </header>
 
       <main className="flex flex-1 flex-col">
         <section className="mx-auto flex w-full max-w-3xl flex-col items-center gap-5 px-6 py-24 text-center">
           <h1 className="text-4xl leading-tight font-bold tracking-tight sm:text-5xl">
-            One app for tasks, lists
-            <br />
-            and <span className="text-primary">boards</span>.
+            Vazifalar, ro&apos;yxatlar va{" "}
+            <span className="text-primary">doskalar</span> — bitta ilovada.
           </h1>
           <p className="max-w-xl text-base text-muted-foreground">
-            Clickish keeps your team&apos;s work in one place — plan in List view,
-            move work forward on the Board, and see every change the moment it
-            happens.
+            Clickish jamoangiz ishini bir joyda jamlaydi — Ro&apos;yxat
+            ko&apos;rinishida rejalashtiring, Doskada ishni oldinga suring va har
+            bir o&apos;zgarishni shu zahoti ko&apos;ring.
           </p>
           <Button size="lg" className="mt-2 px-6" render={<Link href="/register" />}>
-            Get started — it&apos;s free
+            Boshlash — bepul
           </Button>
         </section>
 
@@ -42,25 +41,25 @@ export function Landing() {
           <div className="mx-auto grid w-full max-w-4xl gap-8 px-6 py-14 sm:grid-cols-3">
             <Feature
               icon={<Columns3 className="size-5 text-primary" />}
-              title="List & Board views"
-              text="Every list doubles as a Kanban board — switch with one click."
+              title="Ro'yxat va Doska ko'rinishlari"
+              text="Har bir ro'yxat ayni paytda Kanban doskasi hamdir — bir bosishda almashtiring."
             />
             <Feature
               icon={<Zap className="size-5 text-primary" />}
-              title="Real-time collaboration"
-              text="Edits, comments and moves appear instantly for everyone."
+              title="Real vaqtda hamkorlik"
+              text="Tahrirlar, kommentlar va ko'chirishlar hamma uchun bir zumda ko'rinadi."
             />
             <Feature
               icon={<MousePointer2 className="size-5 text-primary" />}
-              title="Drag & drop"
-              text="Reorder tasks and change status by dragging cards between columns."
+              title="Sudrab tashlash"
+              text="Vazifalarni sudrab tartiblang va kartalarni ustunlar orasida ko'chirib holatini o'zgartiring."
             />
           </div>
         </section>
       </main>
 
       <footer className="border-t px-6 py-4 text-center text-xs text-muted-foreground">
-        Clickish — a ClickUp-style demo. Built with Next.js &amp; Django.
+        Clickish — ClickUp uslubidagi demo. Next.js va Django asosida qurilgan.
       </footer>
     </div>
   );

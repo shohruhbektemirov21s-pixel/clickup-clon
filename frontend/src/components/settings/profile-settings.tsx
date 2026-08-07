@@ -40,9 +40,9 @@ export function ProfileSettings() {
       const updated = await api.patch<User>("me/", { full_name: fullName.trim() });
       queryClient.setQueryData(keys.me, updated);
       setUser(updated);
-      toast.success("Profile updated");
+      toast.success("Profil yangilandi");
     } catch (err) {
-      toast.error(isApiError(err) ? err.message : "Couldn't save your profile.");
+      toast.error(isApiError(err) ? err.message : "Profilni saqlab bo'lmadi.");
     } finally {
       setSaving(false);
     }
@@ -59,9 +59,9 @@ export function ProfileSettings() {
         href="/"
         className="mb-6 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
       >
-        <ArrowLeft className="size-4" /> Back to workspace
+        <ArrowLeft className="size-4" /> Ish maydoniga qaytish
       </Link>
-      <h1 className="mb-6 text-xl font-semibold">Your settings</h1>
+      <h1 className="mb-6 text-xl font-semibold">Sizning sozlamalaringiz</h1>
 
       {isPending || !me ? (
         <div className="space-y-3" aria-hidden>
@@ -81,7 +81,7 @@ export function ProfileSettings() {
             </AvatarFallback>
           </Avatar>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="full-name">Full name</Label>
+            <Label htmlFor="full-name">To&apos;liq ism</Label>
             <Input
               id="full-name"
               value={fullName}
@@ -92,15 +92,15 @@ export function ProfileSettings() {
             <Label htmlFor="profile-email">Email</Label>
             <Input id="profile-email" value={me.email} readOnly disabled />
             <p className="text-xs text-muted-foreground">
-              Email changes aren&apos;t supported in the MVP.
+              Emailni o&apos;zgartirish MVP versiyasida qo&apos;llab-quvvatlanmaydi.
             </p>
           </div>
           <div className="flex items-center justify-between pt-2">
             <Button type="submit" disabled={saving || !fullName.trim()}>
-              {saving ? "Saving…" : "Save"}
+              {saving ? "Saqlanmoqda…" : "Saqlash"}
             </Button>
             <Button type="button" variant="destructive" onClick={onLogout}>
-              Log out
+              Chiqish
             </Button>
           </div>
         </form>
