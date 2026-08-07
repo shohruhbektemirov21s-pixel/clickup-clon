@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ArrowLeft } from "lucide-react";
@@ -12,15 +11,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useMe } from "@/hooks/queries";
+import { useLogout } from "@/hooks/use-logout";
 import { api, isApiError } from "@/lib/api";
-import { logout } from "@/lib/auth";
 import { keys } from "@/lib/keys";
 import { initials } from "@/lib/format";
 import { useAuthStore } from "@/stores/auth-store";
 import type { User } from "@/types/api";
 
 export function ProfileSettings() {
-  const router = useRouter();
   const queryClient = useQueryClient();
   const { data: me, isPending } = useMe();
   const setUser = useAuthStore((s) => s.setUser);
@@ -48,10 +46,7 @@ export function ProfileSettings() {
     }
   };
 
-  const onLogout = async () => {
-    await logout();
-    router.replace("/login");
-  };
+  const onLogout = useLogout();
 
   return (
     <main className="mx-auto w-full max-w-lg p-8">

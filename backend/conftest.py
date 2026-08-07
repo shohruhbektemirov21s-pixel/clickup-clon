@@ -44,10 +44,10 @@ class Env:
         ]:
             WorkspaceMember.objects.create(workspace=self.workspace, user=user, role=role)
 
-        self.space = self.workspace.spaces.get(name="Team Space")
+        self.space = self.workspace.spaces.get(name="Jamoa bo'limi")
         self.status_set = self.space.status_set
         self.statuses = list(self.status_set.statuses.order_by("order"))
-        self.list = self.space.lists.get(name="Getting Started")
+        self.list = self.space.lists.get(name="Boshlash")
 
         self.owner_client = client_for(self.owner)
         self.admin_client = client_for(self.admin)

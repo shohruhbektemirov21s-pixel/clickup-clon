@@ -43,13 +43,7 @@ import {
 import { initials, timeAgo } from "@/lib/format";
 import type { InvitableRole, Member, Role } from "@/types/api";
 
-// Display labels only — API role values stay English.
-const ROLE_LABEL: Record<Role, string> = {
-  owner: "Egasi",
-  admin: "Admin",
-  member: "A'zo",
-  guest: "Mehmon",
-};
+import { ROLE_LABEL } from "@/lib/roles";
 
 export function WorkspaceSettings({ workspaceId }: { workspaceId: string }) {
   const { data: workspace, isPending } = useWorkspace(workspaceId);

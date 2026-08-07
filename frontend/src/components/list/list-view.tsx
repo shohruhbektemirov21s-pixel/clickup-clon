@@ -1,12 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { ChevronDown, ChevronRight, MessageSquare, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, MessageSquare, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useGroupedTasks, useMembers, useTags } from "@/hooks/queries";
-import { useCreateTask, useDeleteTask, useUpdateTask } from "@/hooks/mutations";
+import { useCreateTask, useUpdateTask } from "@/hooks/mutations";
+import { TaskActionsMenu } from "@/components/task/task-actions-menu";
 import {
   AssigneePicker,
   DueDatePicker,
@@ -203,7 +204,6 @@ function TaskRow({
   const { data: members } = useMembers(workspaceId);
   const { data: tags } = useTags(workspaceId);
   const updateTask = useUpdateTask(listId);
-  const deleteTask = useDeleteTask(listId);
   const status = statuses.find((s) => s.id === task.status_id);
   const closed = status?.type === "closed";
 
@@ -276,17 +276,13 @@ function TaskRow({
       </span>
 
       <span className="flex justify-end max-lg:hidden">
-        {canEdit ? (
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="text-muted-foreground opacity-0 group-hover:opacity-100"
-            aria-label={`${task.title} vazifasini o'chirish`}
-            onClick={() => deleteTask.mutate(task.id)}
-          >
-            <Trash2 />
-          </Button>
-        ) : null}
+        <TaskActionsMenu
+          listId={listId}
+          taskId={task.id}
+          taskTitle={task.title}
+          canDelete={canEdit}
+          className="opacity-0 group-hover:opacity-100 aria-expanded:opacity-100 data-[popup-open]:opacity-100"
+        />
       </span>
     </div>
   );

@@ -161,16 +161,20 @@ interface RequestOptions {
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = "GET", body, query, auth = true, signal } = options;
+  // multipart/form-data (me/avatar/) — the browser sets the boundary itself,
+  // so Content-Type must NOT be set and the body must not be serialised.
+  const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
 
   const exec = async (accessToken: string | null): Promise<Response> => {
     const headers: Record<string, string> = {};
-    if (body !== undefined) headers["Content-Type"] = "application/json";
+    if (body !== undefined && !isFormData) headers["Content-Type"] = "application/json";
     if (auth && accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
     if (MUTATING.has(method)) headers["X-Client-Id"] = getClientId();
     return fetch(buildUrl(path, query), {
       method,
       headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body:
+        body === undefined ? undefined : isFormData ? (body as FormData) : JSON.stringify(body),
       signal,
     });
   };
@@ -208,7 +212,11 @@ export const api = {
   put<T>(path: string, body?: unknown, options?: Omit<RequestOptions, "method" | "body">) {
     return request<T>(path, { ...options, method: "PUT", body });
   },
-  delete<T = void>(path: string, body?: unknown) {
-    return request<T>(path, { method: "DELETE", body });
+  delete<T = void>(
+    path: string,
+    body?: unknown,
+    options?: Omit<RequestOptions, "method" | "body">,
+  ) {
+    return request<T>(path, { ...options, method: "DELETE", body });
   },
 };

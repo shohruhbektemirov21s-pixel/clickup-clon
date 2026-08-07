@@ -23,7 +23,7 @@ def test_create_workspace_bootstraps_and_sets_my_role(env):
     assert body["member_count"] == 1
     assert body["slug"]
     space = Space.objects.get(workspace_id=body["id"])
-    assert space.name == "Team Space"
+    assert space.name == "Jamoa bo'limi"
     assert space.lists.get().tasks.count() == 3
 
 
@@ -69,9 +69,9 @@ def test_tree_shape(env):
     body = response.json()
     assert body["name"] == "Acme Inc."
     space = body["spaces"][0]
-    assert space["name"] == "Team Space"
+    assert space["name"] == "Jamoa bo'limi"
     assert space["folders"] == []
-    assert space["lists"][0]["name"] == "Getting Started"
+    assert space["lists"][0]["name"] == "Boshlash"
     assert space["lists"][0]["task_count"] == 3
     assert space["lists"][0]["open_task_count"] == 2  # one sample task is COMPLETE
 
@@ -237,9 +237,9 @@ def test_space_create_and_visibility(env):
     status_set = env.admin_client.get(f"/api/v1/spaces/{space_id}/status-set/")
     assert status_set.status_code == 200
     assert [s["name"] for s in status_set.json()["statuses"]] == [
-        "TO DO",
-        "IN PROGRESS",
-        "COMPLETE",
+        "BAJARILADI",
+        "JARAYONDA",
+        "BAJARILDI",
     ]
 
     # duplicate name (CI) -> 409
@@ -260,7 +260,7 @@ def test_space_delete_requires_confirm_name(env):
     )
     assert_error(bad, 400, "validation_error")
     ok = env.admin_client.delete(
-        f"/api/v1/spaces/{env.space.id}/", {"confirm_name": "Team Space"}, format="json"
+        f"/api/v1/spaces/{env.space.id}/", {"confirm_name": "Jamoa bo'limi"}, format="json"
     )
     assert ok.status_code == 204
 
@@ -300,7 +300,7 @@ def test_folder_crud_and_detach(env):
 
 def test_list_create_validation_and_scope_conflict(env):
     url = f"/api/v1/spaces/{env.space.id}/lists/"
-    dup = env.member_client.post(url, {"name": "getting started"}, format="json")
+    dup = env.member_client.post(url, {"name": "boshlash"}, format="json")
     assert_error(dup, 409, "conflict")
 
     other_space = env.admin_client.post(
@@ -334,7 +334,7 @@ def test_list_move_reorder_and_reparent(env):
     )
     assert moved.status_code == 200, moved.content
     listing = env.member_client.get(space_lists).json()["results"]
-    assert [x["name"] for x in listing] == ["Getting Started", "C", "B"]
+    assert [x["name"] for x in listing] == ["Boshlash", "C", "B"]
 
     # sending space_id is a validation error (OQ-2 ruling)
     bad = env.member_client.patch(
@@ -480,7 +480,7 @@ def test_search(env):
     assert one_char.status_code == 200
     assert one_char.json()["count"] == 0
 
-    found = env.member_client.get(url + "?q=Getting")
+    found = env.member_client.get(url + "?q=Boshlash")
     assert found.status_code == 200
     types = {item["type"] for item in found.json()["results"]}
     assert "list" in types

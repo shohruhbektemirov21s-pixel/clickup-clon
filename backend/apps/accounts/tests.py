@@ -42,12 +42,12 @@ def test_register_with_workspace_name_bootstraps(api):
     assert response.status_code == 201
     workspace = Workspace.objects.get(name="Acme")
     space = workspace.spaces.get()
-    assert space.name == "Team Space"
+    assert space.name == "Jamoa bo'limi"
     statuses = list(space.status_set.statuses.order_by("order"))
-    assert [s.name for s in statuses] == ["TO DO", "IN PROGRESS", "COMPLETE"]
+    assert [s.name for s in statuses] == ["BAJARILADI", "JARAYONDA", "BAJARILDI"]
     assert [s.type for s in statuses] == ["open", "active", "closed"]
     task_list = space.lists.get()
-    assert task_list.name == "Getting Started"
+    assert task_list.name == "Boshlash"
     assert task_list.tasks.count() == 3
 
 

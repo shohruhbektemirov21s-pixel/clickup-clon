@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Eye, EyeOff, Trash2 } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useMe, useMembers, useTags, useTask, useWorkspace } from "@/hooks/queries";
-import { useDeleteTask, useUpdateTask } from "@/hooks/mutations";
+import { useUpdateTask } from "@/hooks/mutations";
 import { api, isApiError } from "@/lib/api";
 import { keys } from "@/lib/keys";
 import { richBodyToText, textToRichBody, timeAgo } from "@/lib/format";
@@ -29,6 +29,7 @@ import {
 } from "@/components/task/pickers";
 import { TagPicker } from "@/components/task/pickers";
 import { CommentsThread } from "@/components/task/comments";
+import { TaskActionsMenu } from "@/components/task/task-actions-menu";
 import type { Status, Task } from "@/types/api";
 
 export function TaskPanel({
@@ -102,7 +103,18 @@ function TaskPanelBody({
       <SheetHeader className="border-b px-6 py-4">
         <SheetTitle className="sr-only">{task.title}</SheetTitle>
         <SheetDescription className="sr-only">Vazifa tafsilotlari</SheetDescription>
-        <TitleEditor task={task} listId={listId} canEdit={canEdit} />
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <TitleEditor task={task} listId={listId} canEdit={canEdit} />
+          </div>
+          <TaskActionsMenu
+            listId={listId}
+            taskId={task.id}
+            taskTitle={task.title}
+            canDelete={!isGuest}
+            onDeleted={onClose}
+          />
+        </div>
       </SheetHeader>
 
       <div className="flex-1 overflow-y-auto">
@@ -112,9 +124,7 @@ function TaskPanelBody({
           task={task}
           statuses={statuses}
           canEdit={canEdit}
-          canDelete={!isGuest}
           meId={me?.id}
-          onDeleted={onClose}
         />
         <Separator />
         <DescriptionEditor task={task} listId={listId} canEdit={canEdit} />
@@ -186,23 +196,18 @@ function FieldGrid({
   task,
   statuses,
   canEdit,
-  canDelete,
   meId,
-  onDeleted,
 }: {
   workspaceId: string;
   listId: string;
   task: Task;
   statuses: Status[];
   canEdit: boolean;
-  canDelete: boolean;
   meId?: string;
-  onDeleted: () => void;
 }) {
   const { data: members } = useMembers(workspaceId);
   const { data: tags } = useTags(workspaceId);
   const updateTask = useUpdateTask(listId);
-  const deleteTask = useDeleteTask(listId);
   const queryClient = useQueryClient();
   const watching = !!meId && task.watchers.some((w) => w.id === meId);
 
@@ -291,23 +296,6 @@ function FieldGrid({
         </Button>
       </dd>
 
-      {canDelete ? (
-        <>
-          <dt />
-          <dd>
-            <Button
-              variant="destructive"
-              size="xs"
-              onClick={() => {
-                deleteTask.mutate(task.id);
-                onDeleted();
-              }}
-            >
-              <Trash2 className="size-3.5" /> Vazifani o&apos;chirish
-            </Button>
-          </dd>
-        </>
-      ) : null}
     </dl>
   );
 }

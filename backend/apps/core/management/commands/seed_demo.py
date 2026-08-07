@@ -11,20 +11,34 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.comments.models import Comment
 from apps.comments.services import create_comment
-from apps.core.enums import Priority, WatcherSource
+from apps.core.enums import Priority, WatcherSource, WorkspaceRole
 from apps.core.ordering import evenly_spaced, midstring
 from apps.tasks.models import Tag, Task, TaskAssignee, TaskWatcher, TaskTag
-from apps.workspaces.models import Folder, TaskList
+from apps.workspaces.models import Folder, TaskList, WorkspaceMember
 from apps.workspaces.services import (
     bootstrap_workspace,
     create_space,
     next_position,
     refresh_list_counts,
+    refresh_member_count,
 )
 
 DEMO_EMAIL = "demo@clickish.dev"
 DEMO_PASSWORD = "clickish-demo-2026"
+
+DEMO_TEAM = [
+    ("aziz@clickish.dev", "Aziz Karimov", WorkspaceRole.ADMIN, "#E44343"),
+    ("malika@clickish.dev", "Malika Yusupova", WorkspaceRole.MEMBER, "#2ECD6F"),
+    ("jasur@clickish.dev", "Jasur Rahimov", WorkspaceRole.MEMBER, "#49CCF9"),
+    ("nodira@clickish.dev", "Nodira Tosheva", WorkspaceRole.GUEST, "#FD71AF"),
+]
+
+TEAM_COMMENTS = [
+    ("aziz@clickish.dev", "<p>Men bu vazifani ko'rib chiqdim — tuzatish tayyor.</p>"),
+    ("malika@clickish.dev", "<p>Rahmat! Testdan o'tkazib, tasdiqlayman.</p>"),
+]
 
 
 class Command(BaseCommand):
@@ -42,7 +56,7 @@ class Command(BaseCommand):
         user = User.objects.filter(email__iexact=email).first()
         if user is None:
             user = User.objects.create_user(
-                email=email, password=password, full_name="Demo User"
+                email=email, password=password, full_name="Demo foydalanuvchi"
             )
             self.stdout.write(f"Created user {email}")
         else:
@@ -50,36 +64,40 @@ class Command(BaseCommand):
             user.save(update_fields=["password", "updated_at"])
             self.stdout.write(f"User {email} already existed; password reset.")
 
-        if user.workspace_memberships.filter(workspace__name="Clickish Demo").exists():
-            self.stdout.write("Demo workspace already exists; nothing else to do.")
+        membership = user.workspace_memberships.filter(
+            workspace__name="Clickish Demo"
+        ).first()
+        if membership is not None:
+            self.stdout.write("Demo workspace already exists; ensuring demo team.")
+            self._ensure_team(user, membership.workspace)
             self._print_credentials(email, password)
             return
 
         workspace = bootstrap_workspace(
-            user, name="Clickish Demo", description="Seeded demo workspace"
+            user, name="Clickish Demo", description="Namuna sifatida yaratilgan demo ish maydoni"
         )
 
         # A second space with a folder, extra lists, tags, tasks and comments.
         space = create_space(
-            workspace, user, name="Product", color="#2ECD6F", icon="rocket"
+            workspace, user, name="Mahsulot", color="#2ECD6F", icon="rocket"
         )
         statuses = list(space.status_set.statuses.order_by("order"))
         by_type = {s.type: s for s in statuses}
 
         folder = Folder.objects.create(
             space=space,
-            name="Q3 Roadmap",
+            name="3-chorak yo'l xaritasi",
             color="#7B68EE",
             position="n",
             created_by=user,
         )
         sprint = TaskList.objects.create(
-            space=space, folder=folder, name="Sprint 24", position="n", created_by=user
+            space=space, folder=folder, name="24-sprint", position="n", created_by=user
         )
         backlog = TaskList.objects.create(
             space=space,
             folder=None,
-            name="Backlog",
+            name="Navbatdagi ishlar",
             position=next_position(TaskList.objects.filter(space=space, folder__isnull=True)),
             created_by=user,
         )
@@ -91,15 +109,15 @@ class Command(BaseCommand):
             for name, color in [
                 ("backend", "#FD71AF"),
                 ("frontend", "#49CCF9"),
-                ("bug", "#E44343"),
+                ("xatolik", "#E44343"),
             ]
         }
 
         sprint_tasks = [
-            ("Fix login redirect", "open", Priority.URGENT, ["bug", "backend"]),
-            ("Board drag & drop polish", "active", Priority.HIGH, ["frontend"]),
-            ("Realtime presence avatars", "active", Priority.NORMAL, ["frontend"]),
-            ("Ship status-set editor", "closed", Priority.HIGH, ["backend"]),
+            ("Kirishdagi yo'naltirishni tuzatish", "open", Priority.URGENT, ["xatolik", "backend"]),
+            ("Doskada sudrab ko'chirishni sayqallash", "active", Priority.HIGH, ["frontend"]),
+            ("Real vaqtdagi ishtirok avatarlari", "active", Priority.NORMAL, ["frontend"]),
+            ("Status to'plami muharririni chiqarish", "closed", Priority.HIGH, ["backend"]),
         ]
         positions = evenly_spaced(len(sprint_tasks))
         created_tasks = []
@@ -109,7 +127,7 @@ class Command(BaseCommand):
                 list=sprint,
                 status=status,
                 title=title,
-                description_html=f"<p>{title} — seeded demo task.</p>",
+                description_html=f"<p>{title} — namunaviy demo vazifa.</p>",
                 description_json={
                     "type": "doc",
                     "content": [
@@ -133,7 +151,7 @@ class Command(BaseCommand):
             created_tasks.append(task)
 
         pos = None
-        for title in ["Dark mode", "Public API", "Mobile layout audit"]:
+        for title in ["Tungi rejim", "Ochiq API", "Mobil ko'rinish tahlili"]:
             pos = midstring(pos, None)
             Task.objects.create(
                 list=backlog,
@@ -148,7 +166,7 @@ class Command(BaseCommand):
             created_tasks[0],
             user,
             {
-                "body_html": "<p>Repro confirmed on staging — fix incoming.</p>",
+                "body_html": "<p>Xatolik staging muhitida tasdiqlandi — tuzatish yo'lda.</p>",
                 "body_json": {"type": "doc", "content": []},
             },
         )
@@ -156,7 +174,7 @@ class Command(BaseCommand):
             created_tasks[0],
             user,
             {
-                "body_html": "<p>Deployed behind a feature flag.</p>",
+                "body_html": "<p>Funksiya bayrog'i ostida ishga tushirildi.</p>",
                 "body_json": {"type": "doc", "content": []},
             },
         )
@@ -166,9 +184,61 @@ class Command(BaseCommand):
             tag.save(update_fields=["usage_count"])
         refresh_list_counts(sprint)
         refresh_list_counts(backlog)
+        self._ensure_team(user, workspace)
 
         self.stdout.write(self.style.SUCCESS(f"Workspace '{workspace.name}' seeded."))
         self._print_credentials(email, password)
+
+    def _ensure_team(self, owner, workspace):
+        """Idempotent: extra demo members + a few assignments and comments so
+        multi-user UI (avatar stack, assignee picker, threads) is populated."""
+        team = {}
+        for member_email, full_name, role, color in DEMO_TEAM:
+            member = User.objects.filter(email__iexact=member_email).first()
+            if member is None:
+                member = User.objects.create_user(
+                    email=member_email, password=DEMO_PASSWORD, full_name=full_name
+                )
+                member.avatar_color = color
+                member.save(update_fields=["avatar_color", "updated_at"])
+                self.stdout.write(f"Created user {member_email}")
+            team[member_email] = member
+            _, added = WorkspaceMember.objects.get_or_create(
+                workspace=workspace, user=member, defaults={"role": role}
+            )
+            if added:
+                self.stdout.write(f"Added {member_email} to '{workspace.name}' as {role}")
+        refresh_member_count(workspace)
+
+        tasks = list(
+            Task.objects.filter(list__space__workspace=workspace)
+            .order_by("created_at")[:3]
+        )
+        assignment_plan = [
+            ["aziz@clickish.dev", "malika@clickish.dev"],
+            ["jasur@clickish.dev"],
+            ["malika@clickish.dev"],
+        ]
+        for task, emails in zip(tasks, assignment_plan):
+            for member_email in emails:
+                TaskAssignee.objects.get_or_create(
+                    task=task,
+                    user=team[member_email],
+                    defaults={"assigned_by": owner},
+                )
+
+        if tasks:
+            for member_email, body_html in TEAM_COMMENTS:
+                author = team[member_email]
+                if not Comment.objects.filter(task=tasks[0], author=author).exists():
+                    create_comment(
+                        tasks[0],
+                        author,
+                        {
+                            "body_html": body_html,
+                            "body_json": {"type": "doc", "content": []},
+                        },
+                    )
 
     def _print_credentials(self, email, password):
         self.stdout.write(self.style.SUCCESS(f"Login:    {email}"))

@@ -27,7 +27,18 @@ import type {
 } from "@/types/api";
 
 function errorMessage(err: unknown): string {
-  if (isApiError(err)) return err.message;
+  if (isApiError(err)) {
+    switch (err.code) {
+      case "permission_denied":
+        return "Sizda bu amal uchun ruxsat yo'q.";
+      case "not_found":
+        return "Topilmadi — u allaqachon o'chirilgan bo'lishi mumkin.";
+      case "throttled":
+        return "Urinishlar juda ko'p. Biroz kutib, qayta urinib ko'ring.";
+      default:
+        return err.message;
+    }
+  }
   return "Nimadir xato ketdi. Internet aloqasini tekshirib, qayta urinib ko'ring.";
 }
 
@@ -130,6 +141,10 @@ export function useDeleteTask(listId: string) {
         queryClient.setQueryData(keys.tasksGrouped(listId), ctx.previous);
       }
       toast.error(errorMessage(err));
+    },
+    onSuccess: (_data, taskId) => {
+      queryClient.removeQueries({ queryKey: keys.task(taskId) });
+      toast.success("Vazifa o'chirildi");
     },
   });
 }
@@ -375,6 +390,81 @@ export function useCreateSpace(workspaceId: string) {
       api.post(`workspaces/${workspaceId}/spaces/`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: keys.tree(workspaceId) });
+    },
+    onError: (err) => toast.error(errorMessage(err)),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Hierarchy rename / delete (sidebar context actions)
+// ---------------------------------------------------------------------------
+
+export type FolderDeleteStrategy = "cascade" | "detach";
+
+/** PATCH spaces|folders|lists/{id}/ — rename. Invalidates the sidebar tree. */
+export function useRenameEntity(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      kind,
+      id,
+      name,
+    }: {
+      kind: "space" | "folder" | "list";
+      id: string;
+      name: string;
+    }) => {
+      const segment =
+        kind === "space" ? "spaces" : kind === "folder" ? "folders" : "lists";
+      return api.patch(`${segment}/${id}/`, { name });
+    },
+    onSuccess: (_data, { kind, id }) => {
+      queryClient.invalidateQueries({ queryKey: keys.tree(workspaceId) });
+      if (kind === "list") queryClient.invalidateQueries({ queryKey: keys.list(id) });
+      toast.success("Nomi o'zgartirildi");
+    },
+    onError: (err) => toast.error(errorMessage(err)),
+  });
+}
+
+/** DELETE spaces/{id}/ — requires `confirm_name` (contract §6); admin+ only. */
+export function useDeleteSpace(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, confirmName }: { id: string; confirmName: string }) =>
+      api.delete(`spaces/${id}/`, { confirm_name: confirmName }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: keys.tree(workspaceId) });
+      toast.success("Bo'lim o'chirildi");
+    },
+    onError: (err) => toast.error(errorMessage(err)),
+  });
+}
+
+/** DELETE folders/{id}/?strategy=cascade|detach (contract §7). */
+export function useDeleteFolder(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, strategy }: { id: string; strategy: FolderDeleteStrategy }) =>
+      api.delete(`folders/${id}/`, undefined, { query: { strategy } }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: keys.tree(workspaceId) });
+      toast.success("Jild o'chirildi");
+    },
+    onError: (err) => toast.error(errorMessage(err)),
+  });
+}
+
+/** DELETE lists/{id}/ — no confirmation body; the UI confirms (contract §8). */
+export function useDeleteList(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`lists/${id}/`),
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: keys.tree(workspaceId) });
+      queryClient.removeQueries({ queryKey: keys.list(id) });
+      queryClient.removeQueries({ queryKey: keys.tasksRoot(id) });
+      toast.success("Ro'yxat o'chirildi");
     },
     onError: (err) => toast.error(errorMessage(err)),
   });

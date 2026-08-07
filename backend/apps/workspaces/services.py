@@ -26,15 +26,15 @@ from apps.workspaces.models import (
 )
 
 DEFAULT_STATUSES = [
-    {"name": "TO DO", "type": StatusType.OPEN, "color": "#87909E", "is_default": True},
-    {"name": "IN PROGRESS", "type": StatusType.ACTIVE, "color": "#4194F6", "is_default": False},
-    {"name": "COMPLETE", "type": StatusType.CLOSED, "color": "#6BC950", "is_default": False},
+    {"name": "BAJARILADI", "type": StatusType.OPEN, "color": "#87909E", "is_default": True},
+    {"name": "JARAYONDA", "type": StatusType.ACTIVE, "color": "#4194F6", "is_default": False},
+    {"name": "BAJARILDI", "type": StatusType.CLOSED, "color": "#6BC950", "is_default": False},
 ]
 
 SAMPLE_TASKS = [
-    ("Create your first task", 0),
-    ("Drag tasks between statuses", 1),
-    ("Invite your team", 2),
+    ("Birinchi vazifangizni yarating", 0),
+    ("Vazifalarni statuslar orasida ko'chiring", 1),
+    ("Jamoangizni taklif qiling", 2),
 ]
 
 
@@ -92,15 +92,15 @@ def create_space(workspace, actor, *, name, description="", color=None, icon="",
         position=next_position(Space.objects.filter(workspace=workspace)),
         created_by=actor,
     )
-    status_set = StatusSet.objects.create(space=space, name="Default")
+    status_set = StatusSet.objects.create(space=space, name="Standart")
     seed_default_statuses(status_set)
     return space
 
 
 @transaction.atomic
 def bootstrap_workspace(user, *, name, description="", color=None, workspace_id=None) -> Workspace:
-    """DATA_MODEL.md section 11: workspace + owner membership + Team Space +
-    default status set + Getting Started list + 3 sample tasks."""
+    """DATA_MODEL.md section 11: workspace + owner membership + "Jamoa bo'limi"
+    space + default status set + "Boshlash" list + 3 sample tasks."""
     from apps.tasks.models import Task, TaskWatcher
 
     check_client_id(Workspace, workspace_id)
@@ -118,15 +118,15 @@ def bootstrap_workspace(user, *, name, description="", color=None, workspace_id=
 
     space = Space.objects.create(
         workspace=workspace,
-        name="Team Space",
+        name="Jamoa bo'limi",
         position="n",
         created_by=user,
     )
-    status_set = StatusSet.objects.create(space=space, name="Default")
+    status_set = StatusSet.objects.create(space=space, name="Standart")
     statuses = seed_default_statuses(status_set)
 
     task_list = TaskList.objects.create(
-        space=space, folder=None, name="Getting Started", position="n", created_by=user
+        space=space, folder=None, name="Boshlash", position="n", created_by=user
     )
     positions = evenly_spaced(len(SAMPLE_TASKS))
     for (title, status_idx), pos in zip(SAMPLE_TASKS, positions):
@@ -367,7 +367,7 @@ def replace_status_set(*, space=None, task_list=None, data, actor, client_id=Non
         if status_set is None:
             creating_override = True
             status_set = StatusSet.objects.create(
-                list=task_list, name=data.get("name") or "Default"
+                list=task_list, name=data.get("name") or "Standart"
             )
         affected_tasks = Task.all_objects.filter(list=task_list)
         old_reference_statuses = (
