@@ -169,6 +169,12 @@ SPECTACULAR_SETTINGS = {
 CORS_ALLOWED_ORIGINS = env("CORS_ALLOWED_ORIGINS")
 CORS_ALLOW_CREDENTIALS = True
 
+# The frontend sends X-Client-Id on mutations so realtime consumers can
+# suppress echoing the actor's own events back to it (API_CONTRACT §15).
+from corsheaders.defaults import default_headers  # noqa: E402
+
+CORS_ALLOW_HEADERS = [*default_headers, "x-client-id"]
+
 
 # Internationalization
 
