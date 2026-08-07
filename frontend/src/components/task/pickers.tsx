@@ -29,6 +29,7 @@ import {
   PRIORITY_META,
   STATUS_TYPE_COLOR,
 } from "@/lib/format";
+import { ROLE_LABEL } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 import type { Member, Priority, Status, Tag, UserSummary } from "@/types/api";
 
@@ -241,35 +242,46 @@ export function AssigneePicker({
           </>
         )}
       </PopoverTrigger>
-      <PopoverContent className="w-60 p-0" align="start">
+      <PopoverContent className="w-72 p-0" align="start">
         <Command>
-          <CommandInput placeholder="Mas'ul tayinlash…" />
+          {/* Always searchable — the roster can grow well past a screenful. */}
+          <CommandInput placeholder="Ism yoki email bo'yicha qidirish…" />
           <CommandList>
             <CommandEmpty>A&apos;zolar topilmadi.</CommandEmpty>
             <CommandGroup>
-              {members.map((member) => (
-                <CommandItem
-                  key={member.id}
-                  value={`${member.user.full_name} ${member.user.email}`}
-                  onSelect={() => toggle(member.user.id)}
-                >
-                  <Avatar className="size-5">
-                    {member.user.avatar ? <AvatarImage src={member.user.avatar} alt="" /> : null}
-                    <AvatarFallback
-                      className="text-[9px] font-semibold text-primary-foreground"
-                      style={{ backgroundColor: member.user.avatar_color || "#7B68EE" }}
-                    >
-                      {initials(member.user.full_name, member.user.email)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <span className="truncate">
-                    {member.user.full_name || member.user.email}
-                  </span>
-                  {selected.has(member.user.id) ? (
-                    <Check className="ml-auto size-4" />
-                  ) : null}
-                </CommandItem>
-              ))}
+              {members.map((member) => {
+                const isSelected = selected.has(member.user.id);
+                return (
+                  <CommandItem
+                    key={member.id}
+                    value={`${member.user.full_name} ${member.user.email}`}
+                    onSelect={() => toggle(member.user.id)}
+                    aria-selected={isSelected}
+                  >
+                    <Avatar className="size-6 shrink-0">
+                      {member.user.avatar ? (
+                        <AvatarImage src={member.user.avatar} alt="" />
+                      ) : null}
+                      <AvatarFallback
+                        className="text-[9px] font-semibold text-primary-foreground"
+                        style={{ backgroundColor: member.user.avatar_color || "#7B68EE" }}
+                      >
+                        {initials(member.user.full_name, member.user.email)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate text-sm">
+                        {member.user.full_name || member.user.email}
+                      </span>
+                      <span className="truncate text-xs text-muted-foreground">
+                        {member.user.email}
+                        {member.role === "guest" ? ` · ${ROLE_LABEL.guest}` : ""}
+                      </span>
+                    </span>
+                    {isSelected ? <Check className="ml-auto size-4 shrink-0" /> : null}
+                  </CommandItem>
+                );
+              })}
             </CommandGroup>
           </CommandList>
         </Command>

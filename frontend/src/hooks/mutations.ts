@@ -62,13 +62,13 @@ export function useCreateTask(listId: string) {
   });
 }
 
-/** Optimistic field update (status change, priority, title, dates, …). */
+/** Optimistic field update (status change, priority, title, dates, assignees…). */
 export function useUpdateTask(listId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ taskId, patch }: { taskId: string; patch: TaskWriteRequest }) =>
+    mutationFn: ({ taskId, patch }: UpdateTaskVars) =>
       api.patch<Task>(`tasks/${taskId}/`, patch),
-    onMutate: async ({ taskId, patch }) => {
+    onMutate: async ({ taskId, patch, optimistic }: UpdateTaskVars) => {
       const groupedKey = keys.tasksGrouped(listId);
       await queryClient.cancelQueries({ queryKey: groupedKey });
       await queryClient.cancelQueries({ queryKey: keys.task(taskId) });
@@ -76,14 +76,17 @@ export function useUpdateTask(listId: string) {
         queryClient.getQueryData<GroupedTasksResponse>(groupedKey);
       const previousTask = queryClient.getQueryData<Task>(keys.task(taskId));
 
-      // Only simple scalar fields are applied optimistically; embedded arrays
-      // (assignees/tags) reconcile from the response.
+      // Scalar fields are derived from the patch; embedded arrays
+      // (assignees/tags) must be resolved by the caller via `optimistic`,
+      // since the request only carries ids.
       const scalarPatch: Partial<Task> = {};
       if (patch.title !== undefined) scalarPatch.title = patch.title;
       if (patch.status_id !== undefined) scalarPatch.status_id = patch.status_id;
       if (patch.priority !== undefined) scalarPatch.priority = patch.priority;
       if (patch.due_date !== undefined) scalarPatch.due_date = patch.due_date;
       if (patch.start_date !== undefined) scalarPatch.start_date = patch.start_date;
+      if (optimistic?.assignees !== undefined) scalarPatch.assignees = optimistic.assignees;
+      if (optimistic?.tags !== undefined) scalarPatch.tags = optimistic.tags;
 
       if (previousTask) {
         queryClient.setQueryData<Task>(keys.task(taskId), {
@@ -147,6 +150,16 @@ export function useDeleteTask(listId: string) {
       toast.success("Vazifa o'chirildi");
     },
   });
+}
+
+export interface UpdateTaskVars {
+  taskId: string;
+  patch: TaskWriteRequest;
+  /**
+   * Embedded values matching the ids in `patch`, so the optimistic write can
+   * render avatars/chips before the server echoes the full objects back.
+   */
+  optimistic?: Pick<Partial<Task>, "assignees" | "tags">;
 }
 
 export interface MoveIntent {
@@ -342,12 +355,26 @@ export function useCreateInvitation(workspaceId: string) {
       api.post<Invitation>(`workspaces/${workspaceId}/invitations/`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: keys.invitations(workspaceId) });
+      // The roster changes as soon as an invite is accepted; refresh both.
+      queryClient.invalidateQueries({ queryKey: keys.members(workspaceId) });
       toast.success("Taklif yuborildi");
     },
     onError: (err) => {
-      if (isApiError(err) && err.code === "conflict") {
-        toast.error("Bu foydalanuvchi allaqachon a'zo yoki taklif qilingan.");
-        return;
+      if (isApiError(err)) {
+        // §5: duplicate pending invite / already a member / send cap reached.
+        if (err.code === "conflict") {
+          toast.error("Bu foydalanuvchi allaqachon a'zo yoki taklifi yuborilgan.");
+          return;
+        }
+        if (err.code === "throttled") {
+          toast.error("Juda ko'p taklif yuborildi. Biroz kutib, qayta urinib ko'ring.");
+          return;
+        }
+        const emailError = err.fieldError("email") ?? err.fieldError("role");
+        if (emailError) {
+          toast.error(emailError);
+          return;
+        }
       }
       toast.error(errorMessage(err));
     },
@@ -375,7 +402,14 @@ export function useResendInvitation(workspaceId: string) {
       queryClient.invalidateQueries({ queryKey: keys.invitations(workspaceId) });
       toast.success("Taklif qayta yuborildi");
     },
-    onError: (err) => toast.error(errorMessage(err)),
+    onError: (err) => {
+      // §5: resend is throttled 1/5min and capped at 5 sends.
+      if (isApiError(err) && err.code === "conflict") {
+        toast.error("Bu taklif uchun yuborish chegarasi tugagan.");
+        return;
+      }
+      toast.error(errorMessage(err));
+    },
   });
 }
 

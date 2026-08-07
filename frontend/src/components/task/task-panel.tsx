@@ -30,6 +30,7 @@ import {
 import { TagPicker } from "@/components/task/pickers";
 import { CommentsThread } from "@/components/task/comments";
 import { TaskActionsMenu } from "@/components/task/task-actions-menu";
+import { resolveAssignees, resolveTags } from "@/lib/resolve-embedded";
 import type { Status, Task } from "@/types/api";
 
 export function TaskPanel({
@@ -247,7 +248,13 @@ function FieldGrid({
           value={task.assignees}
           members={members?.results ?? []}
           disabled={!canEdit}
-          onChange={(ids) => patch({ assignee_ids: ids })}
+          onChange={(ids) =>
+            updateTask.mutate({
+              taskId: task.id,
+              patch: { assignee_ids: ids },
+              optimistic: { assignees: resolveAssignees(ids, members?.results ?? []) },
+            })
+          }
         />
       </dd>
 
@@ -276,7 +283,13 @@ function FieldGrid({
           value={task.tags}
           tags={tags?.results ?? []}
           disabled={!canEdit}
-          onChange={(ids) => patch({ tag_ids: ids })}
+          onChange={(ids) =>
+            updateTask.mutate({
+              taskId: task.id,
+              patch: { tag_ids: ids },
+              optimistic: { tags: resolveTags(ids, tags?.results ?? []) },
+            })
+          }
         />
       </dd>
 

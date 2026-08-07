@@ -13,7 +13,6 @@ import {
   Settings,
   Sun,
   User as UserIcon,
-  Users,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -27,10 +26,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useMe, useMembers, useWorkspaces } from "@/hooks/queries";
+import { useMe, useWorkspaces } from "@/hooks/queries";
 import { useLogout } from "@/hooks/use-logout";
 import { initials } from "@/lib/format";
-import { ROLE_LABEL } from "@/lib/roles";
 
 export function TopBar({
   workspaceId,
@@ -73,83 +71,9 @@ export function TopBar({
           />
         </div>
       </form>
-      <MemberStack workspaceId={workspaceId} />
       <ThemeToggle />
       <UserMenu />
     </header>
-  );
-}
-
-/** Overlapping avatars of the workspace roster (max 4 + "+N"). */
-function MemberStack({ workspaceId }: { workspaceId: string }) {
-  const router = useRouter();
-  const { data } = useMembers(workspaceId);
-  const members = data?.results ?? [];
-  if (members.length === 0) return null;
-
-  const shown = members.slice(0, 4);
-  const extra = members.length - shown.length;
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="sm"
-            className="hidden gap-0 px-1.5 sm:flex"
-            aria-label={`Jamoa a'zolari (${members.length})`}
-          />
-        }
-      >
-        <span className="flex items-center -space-x-1.5">
-          {shown.map((member) => (
-            <Avatar key={member.id} className="size-6 ring-2 ring-card">
-              {member.user.avatar ? <AvatarImage src={member.user.avatar} alt="" /> : null}
-              <AvatarFallback
-                className="text-[10px] font-semibold text-primary-foreground"
-                style={{ backgroundColor: member.user.avatar_color || "#7B68EE" }}
-              >
-                {initials(member.user.full_name, member.user.email)}
-              </AvatarFallback>
-            </Avatar>
-          ))}
-          {extra > 0 ? (
-            <span className="flex size-6 items-center justify-center rounded-full bg-muted text-[10px] text-muted-foreground ring-2 ring-card">
-              +{extra}
-            </span>
-          ) : null}
-        </span>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64">
-        <DropdownMenuLabel>Jamoa a&apos;zolari ({members.length})</DropdownMenuLabel>
-        {members.slice(0, 10).map((member) => (
-          <DropdownMenuItem
-            key={member.id}
-            onClick={() => router.push(`/w/${workspaceId}/settings`)}
-          >
-            <Avatar className="size-5">
-              {member.user.avatar ? <AvatarImage src={member.user.avatar} alt="" /> : null}
-              <AvatarFallback
-                className="text-[9px] font-semibold text-primary-foreground"
-                style={{ backgroundColor: member.user.avatar_color || "#7B68EE" }}
-              >
-                {initials(member.user.full_name, member.user.email)}
-              </AvatarFallback>
-            </Avatar>
-            <span className="truncate">{member.user.full_name || member.user.email}</span>
-            <span className="ml-auto text-xs text-muted-foreground">
-              {ROLE_LABEL[member.role]}
-            </span>
-          </DropdownMenuItem>
-        ))}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => router.push(`/w/${workspaceId}/settings`)}>
-          <Users className="size-4" />
-          Barcha a&apos;zolar
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }
 

@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useGroupedTasks, useMembers, useTags } from "@/hooks/queries";
 import { useCreateTask, useUpdateTask } from "@/hooks/mutations";
 import { TaskActionsMenu } from "@/components/task/task-actions-menu";
+import { resolveAssignees, resolveTags } from "@/lib/resolve-embedded";
 import {
   AssigneePicker,
   DueDatePicker,
@@ -248,7 +249,13 @@ function TaskRow({
         value={task.assignees}
         members={members?.results ?? []}
         disabled={!canEdit}
-        onChange={(ids) => patch({ assignee_ids: ids })}
+        onChange={(ids) =>
+          updateTask.mutate({
+            taskId: task.id,
+            patch: { assignee_ids: ids },
+            optimistic: { assignees: resolveAssignees(ids, members?.results ?? []) },
+          })
+        }
       />
 
       <DueDatePicker
@@ -271,7 +278,13 @@ function TaskRow({
           value={task.tags}
           tags={tags?.results ?? []}
           disabled={!canEdit}
-          onChange={(ids) => patch({ tag_ids: ids })}
+          onChange={(ids) =>
+            updateTask.mutate({
+              taskId: task.id,
+              patch: { tag_ids: ids },
+              optimistic: { tags: resolveTags(ids, tags?.results ?? []) },
+            })
+          }
         />
       </span>
 

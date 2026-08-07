@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useMembers, useWorkspace, useWorkspaceTree } from "@/hooks/queries";
 import { CreateEntityDialog } from "@/components/shell/create-entity-dialog";
 import { TreeNodeActions } from "@/components/shell/tree-node-actions";
+import { InviteMemberDialog } from "@/components/workspace/invite-member-dialog";
 import type { Member, TreeFolder, TreeList, TreeSpace } from "@/types/api";
 import { initials } from "@/lib/format";
 import { ROLE_LABEL, ROLE_RANK } from "@/lib/roles";
@@ -109,7 +110,7 @@ export function Sidebar({ workspaceId }: { workspaceId: string }) {
         )}
       </div>
 
-      <TeamSection workspaceId={workspaceId} />
+      <TeamSection workspaceId={workspaceId} canInvite={canManage} />
 
       <div className="border-t p-2">
         <Link
@@ -358,9 +359,16 @@ function ListNode({
 }
 
 /** Workspace roster in the sidebar; a member links to the settings roster. */
-function TeamSection({ workspaceId }: { workspaceId: string }) {
+function TeamSection({
+  workspaceId,
+  canInvite,
+}: {
+  workspaceId: string;
+  canInvite: boolean;
+}) {
   const { data, isPending } = useMembers(workspaceId);
   const [expanded, setExpanded] = React.useState(true);
+  const [inviteOpen, setInviteOpen] = React.useState(false);
 
   const members: Member[] = React.useMemo(() => {
     const rows = data?.results ?? [];
@@ -384,10 +392,29 @@ function TeamSection({ workspaceId }: { workspaceId: string }) {
           )}
           JAMOA
         </button>
-        {members.length > 0 ? (
-          <span className="text-xs text-muted-foreground">{members.length}</span>
-        ) : null}
+        <span className="flex items-center gap-1">
+          {members.length > 0 ? (
+            <span className="text-xs text-muted-foreground">{members.length}</span>
+          ) : null}
+          {canInvite ? (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Jamoaga qo'shish"
+              title="Jamoaga qo'shish"
+              onClick={() => setInviteOpen(true)}
+            >
+              <Plus />
+            </Button>
+          ) : null}
+        </span>
       </div>
+
+      <InviteMemberDialog
+        workspaceId={workspaceId}
+        open={inviteOpen}
+        onOpenChange={setInviteOpen}
+      />
 
       {expanded ? (
         isPending ? (

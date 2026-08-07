@@ -6,14 +6,6 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -21,7 +13,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -34,14 +25,14 @@ import {
 import { useInvitations, useMe, useMembers, useWorkspace } from "@/hooks/queries";
 import {
   useChangeMemberRole,
-  useCreateInvitation,
   useRemoveMember,
   useRenameWorkspace,
   useResendInvitation,
   useRevokeInvitation,
 } from "@/hooks/mutations";
+import { InviteMemberDialog } from "@/components/workspace/invite-member-dialog";
 import { initials, timeAgo } from "@/lib/format";
-import type { InvitableRole, Member, Role } from "@/types/api";
+import type { Member, Role } from "@/types/api";
 
 import { ROLE_LABEL } from "@/lib/roles";
 
@@ -343,82 +334,12 @@ function InvitationsSection({ workspaceId }: { workspaceId: string }) {
           </TableBody>
         </Table>
       )}
-      {inviteOpen ? (
-        <InviteDialog workspaceId={workspaceId} onClose={() => setInviteOpen(false)} />
-      ) : null}
+      <InviteMemberDialog
+        workspaceId={workspaceId}
+        open={inviteOpen}
+        onOpenChange={setInviteOpen}
+      />
     </section>
   );
 }
 
-function InviteDialog({
-  workspaceId,
-  onClose,
-}: {
-  workspaceId: string;
-  onClose: () => void;
-}) {
-  const createInvitation = useCreateInvitation(workspaceId);
-  const [email, setEmail] = React.useState("");
-  const [role, setRole] = React.useState<InvitableRole>("member");
-
-  const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = email.trim().toLowerCase();
-    if (!trimmed) return;
-    await createInvitation.mutateAsync({ email: trimmed, role });
-    onClose();
-  };
-
-  return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-sm">
-        <form onSubmit={onSubmit} className="flex flex-col gap-4">
-          <DialogHeader>
-            <DialogTitle>Odamlarni taklif qilish</DialogTitle>
-            <DialogDescription>
-              Ularga ish maydoniga qo&apos;shilish havolasi emailda yuboriladi.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="invite-email">Email manzili</Label>
-            <Input
-              id="invite-email"
-              type="email"
-              autoFocus
-              placeholder="yangi.dev@kompaniya.uz"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label>Rol</Label>
-            <RadioGroup
-              value={role}
-              onValueChange={(v) => setRole(v as InvitableRole)}
-              className="flex gap-4"
-            >
-              {(["admin", "member", "guest"] as const).map((r) => (
-                <label key={r} className="flex items-center gap-1.5 text-sm">
-                  <RadioGroupItem value={r} /> {ROLE_LABEL[r]}
-                </label>
-              ))}
-            </RadioGroup>
-            <p className="text-xs text-muted-foreground">
-              Mehmonlar o&apos;qishi va komment yozishi mumkin, lekin ro&apos;yxat
-              yarata olmaydi.
-            </p>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={onClose}>
-              Bekor qilish
-            </Button>
-            <Button type="submit" disabled={createInvitation.isPending || !email.trim()}>
-              {createInvitation.isPending ? "Yuborilmoqda…" : "Taklif yuborish"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
