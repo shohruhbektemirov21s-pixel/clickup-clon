@@ -528,6 +528,26 @@ async def test_list_consumer_rejects_an_expired_jwt(env):
 
 
 @pytest.mark.django_db(transaction=True)
+async def test_list_consumer_rejects_a_token_without_a_user_claim(env):
+    """Imzosi to'g'ri, `exp`/`jti` joyida, lekin `user_id` da'vosi yo'q token.
+
+    `AccessToken.verify()` bunday tokenni o'tkazib yuboradi, ya'ni da'voni
+    o'qish `KeyError` berardi va handshake 500 bilan yiqilardi.
+    """
+    from rest_framework_simplejwt.tokens import AccessToken
+
+    from config.asgi import application
+
+    token = await sync_to_async(lambda: str(AccessToken()))()
+    communicator = WebsocketCommunicator(
+        application, f"/ws/list/{env.list.id}/?token={token}"
+    )
+    connected, _ = await communicator.connect()
+    assert not connected
+    await communicator.disconnect()
+
+
+@pytest.mark.django_db(transaction=True)
 async def test_list_consumer_rejects_non_member(env):
     """§15.1 shartnomasi: accept -> bitta `error` freymi -> close, `ack` YO'Q.
 
@@ -711,8 +731,13 @@ async def test_workspace_socket_never_leaks_a_private_space(env):
     # Ochiq bo'lim esa avvalgidek yetib keladi — soket "o'chib qolgani" uchun
     # emas, aynan doirasi torayganligi uchun jim.
     await sync_to_async(create_task_as_owner)(env, env.list.id, title="Ochiq ish")
-    frame = await communicator.receive_json_from(timeout=RECEIVE_TIMEOUT)
-    assert frame["type"] in {"task.created", "list.updated"}
+    created = None
+    for _ in range(2):  # task.created + list.updated, tartibi muhim emas
+        frame = await communicator.receive_json_from(timeout=RECEIVE_TIMEOUT)
+        if frame["type"] == "task.created":
+            created = frame
+    assert created is not None
+    assert created["payload"]["data"]["title"] == "Ochiq ish"
     await communicator.disconnect()
 
 

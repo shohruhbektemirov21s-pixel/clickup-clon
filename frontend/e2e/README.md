@@ -17,7 +17,9 @@ fayllari va ikkala server logi artefakt bo'lib yuklanadi.
    ```bash
    cd backend
    ../.venv/Scripts/python.exe manage.py migrate
-   AUTH_THROTTLE_RATE=1000/min AUTH_BURST_THROTTLE_RATE=1000/min \
+   AUTH_THROTTLE_RATE=1000/min \
+   AUTH_BURST_THROTTLE_RATE=1000/min \
+   REFRESH_THROTTLE_RATE=1000/min \
      ../.venv/Scripts/python.exe manage.py runserver
    ```
 
@@ -105,10 +107,15 @@ E2E_API_BASE_URL=http://localhost:8001/api/v1 \
 
 ## Login va throttle
 
-Backend `auth/login/` ni cheklaydi: email bo'yicha `AUTH_BURST_THROTTLE_RATE`
-(standart 5/min), IP bo'yicha `AUTH_THROTTLE_RATE` (standart 10/min).
+Backend uchta cheklov qo'yadi:
 
-**To'plam bu cheklovni UXLAB O'TKAZMAYDI.** Ilgari `login()` `429` ni ko'rsa
+| Endpoint | Kalit | Standart | Nima bo'yicha |
+|---|---|---|---|
+| `auth/login/` | `AUTH_BURST_THROTTLE_RATE` | 5/min | email |
+| `auth/login/` | `AUTH_THROTTLE_RATE` | 10/min | manba manzili |
+| `auth/refresh/` | `REFRESH_THROTTLE_RATE` | **30/min** | manba manzili |
+
+**To'plam bu cheklovlarni UXLAB O'TKAZMAYDI.** Ilgari `login()` `429` ni ko'rsa
 62 soniya kutardi, test byudjeti esa 60 soniya edi — ya'ni retry yo'li hech
 qachon oxiriga yetmasdi va sabab o'rniga "Test timeout" ko'rinardi. To'rtta
 spec buni 240 soniyalik hook timeout'i bilan yamardi, `auth.spec.ts` esa
@@ -120,20 +127,27 @@ Hozirgi tartib:
    fayl login oqimini tekshiradi.
 2. Qolgan hamma joyda sessiya REST orqali olinadi: `apiLogin()` token
    juftligini oladi, `clickish.refresh` `localStorage` ga qo'yiladi, ilova
-   yuklanganda `SessionBootstrap` uni `auth/refresh/` ga almashtiradi.
-   `auth/refresh/` throttle qilinmagan, ya'ni bu yo'l rate limiter'ga
-   umuman tegmaydi. Bu `signIn(page, user)` va `signedInContext(browser, user)`.
+   yuklanganda `SessionBootstrap` uni `auth/refresh/` ga almashtiradi. Bu
+   `signIn(page, user)` va `signedInContext(browser, user)`.
 3. Har brauzer kontekstiga **yangi** sessiya beriladi: SimpleJWT
    (`ROTATE_REFRESH_TOKENS` + `BLACKLIST_AFTER_ROTATION`) refresh tokenni
    birinchi ishlatilishida almashtirib eskisini blacklist qiladi, ya'ni bitta
    tokenni ikki kontekst bo'lisha olmaydi.
-4. Shunga qaramay bir run'da ~10 ta `auth/login/` so'rovi ketadi, bu esa
-   standart 10/min ni chetlab o'tishi mumkin. Shuning uchun CI va yuqoridagi
-   lokal buyruq throttle'ni bo'shatadi. Throttle mantig'ining o'zi backend
-   testlarida (`apps/accounts`) tekshiriladi — uni E2E'da qayta tekshirish
-   shart emas.
-5. Agar `429` baribir kelsa, `login()` **darhol** tushunarli xato beradi va
-   qaysi env o'zgaruvchini qo'yish kerakligini aytadi. Hech qayerda uyqu yo'q.
+4. Bir run'da ~10 ta `auth/login/` so'rovi ketadi (standart 10/min ni chetlab
+   o'tishi mumkin) va **`auth/refresh/` ga ~40 ta**: brauzer har TO'LIQ sahifa
+   yuklanishida bir marta refresh qiladi, `page.goto()` esa bu to'plamda ko'p.
+   30/min bunga yetmaydi. Shuning uchun CI ham, yuqoridagi lokal buyruq ham
+   ikkala oilani bo'shatadi. Throttle mantig'ining O'ZI backend testlarida
+   (`apps/accounts`) tekshiriladi — uni E2E'da qayta tekshirish shart emas.
+5. Agar `429` baribir kelsa:
+   - `auth/login/` da — `apiLogin()` / `login()` **darhol** tushunarli xato
+     beradi va qaysi env o'zgaruvchini qo'yish kerakligini aytadi;
+   - `auth/refresh/` da — 429 brauzer ichida sodir bo'ladi, ilova sessiyani
+     tozalab jimgina `/login` ga otadi va test "Hisob menyusi ko'rinmadi" deb
+     yiqilardi. `watchThrottling()` shu 429 ni yozib boradi,
+     `waitForAppShell()` esa uni o'sha tushunarli xatoga aylantiradi.
+
+   Hech qayerda uyqu yo'q.
 
 ## Test ma'lumoti va izolyatsiya
 

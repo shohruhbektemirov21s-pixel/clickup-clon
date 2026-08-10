@@ -43,7 +43,6 @@ from apps.workspaces.models import (
     RolePermission,
     Space,
     SpaceMember,
-    StatusSet,
     TaskList,
     Workspace,
     WorkspaceMember,

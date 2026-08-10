@@ -274,14 +274,91 @@ def test_logout_is_logged(auth_log):
 
 
 def test_forwarded_ip_is_ignored_without_a_trusted_proxy(auth_log, settings):
-    """`X-Forwarded-For` soxtalashtiriladi — proxy yo'q bo'lsa unga ishonmaymiz."""
-    settings.SECURE_PROXY_SSL_HEADER = None
+    """`X-Forwarded-For` soxtalashtiriladi — proxy yo'q bo'lsa unga ishonmaymiz.
+
+    Qaror `NUM_PROXIES` ga bog'langan (ilgari `SECURE_PROXY_SSL_HEADER` ga
+    edi — u TLS haqidagi sozlama va "necha hop ishonchli" degan savolga javob
+    bermaydi). Indeksatsiya qoidalarining to'liq matritsasi
+    `apps/accounts/test_auth_audit.py` da.
+    """
+    settings.REST_FRAMEWORK = {**settings.REST_FRAMEWORK, "NUM_PROXIES": 0}
     Client().post(
         reverse("admin:login"),
         {"username": "ghost@test.dev", "password": "x"},
         HTTP_X_FORWARDED_FOR="1.2.3.4",
+        REMOTE_ADDR="10.1.2.3",
     )
 
     records = [r for r in auth_log.records if getattr(r, "event", "") == "auth.login_failed"]
     assert records
-    assert records[-1].ip != "1.2.3.4"
+    assert records[-1].ip == "10.1.2.3"
+
+
+# ------------------------------------------- 6-band: `is_readonly` ko'rinadi
+
+
+def test_is_readonly_is_visible_in_the_user_admin():
+    """AppSec: ko'rinmaydigan nazorat — nazorat emas.
+
+    `is_readonly` demo hisobning YAGONA qulfi (`has_perm` va
+    `BlockReadonlyAccountWrites` shunga tayanadi), lekin u `fieldsets` da
+    umuman yo'q edi: bayroqni faqat `seed_demo` yoki shell o'zgartirardi va
+    admin sahifasida hech qanday izi ko'rinmasdi. Ya'ni yozish huquqi bor
+    "demo" hisobni hech kim payqamasdi.
+    """
+    model_admin = admin_for(User)
+    fields = {
+        name
+        for _title, options in model_admin.fieldsets
+        for name in options["fields"]
+    }
+    assert "is_readonly" in fields
+    assert "is_readonly" in model_admin.list_display
+    assert "is_readonly" in model_admin.list_filter
+
+
+def test_only_superuser_may_toggle_is_readonly():
+    """Ko'rish hammaga, o'zgartirish faqat superuser'ga.
+
+    `NoBulkDeleteMixin.has_delete_permission` bilan bir xil mantiq: `change_user`
+    berilgan oddiy staff demo qulfini yechib, faqat o'qish uchun mo'ljallangan
+    hisobni to'liq yozadigan hisobga aylantira olmasligi kerak.
+    """
+    model_admin = admin_for(User)
+    victim = make_user("ro@test.dev", "Read Only")
+
+    staff_readonly = model_admin.get_readonly_fields(request_from(staff_user()), victim)
+    assert "is_readonly" in staff_readonly
+
+    root_readonly = model_admin.get_readonly_fields(request_from(superuser()), victim)
+    assert "is_readonly" not in root_readonly
+
+
+def test_staff_cannot_clear_is_readonly_through_the_change_form():
+    """Faqat atribut emas, HTTP yo'li ham yopiq bo'lsin."""
+    victim = make_user("demo-lock@test.dev", "Demo Lock")
+    victim.is_readonly = True
+    victim.save(update_fields=["is_readonly"])
+
+    staff = grant(staff_user(), User, "view_user", "change_user")
+    client = logged_in(staff)
+    url = reverse("admin:accounts_user_change", args=[victim.pk])
+
+    page = client.get(url)
+    assert page.status_code == 200
+    # Readonly maydon input sifatida chizilmaydi, lekin qiymat ko'rinadi.
+    assert b'name="is_readonly"' not in page.content
+
+    client.post(
+        url,
+        {
+            "email": victim.email,
+            "full_name": victim.full_name,
+            "profession": "",
+            "avatar_color": victim.avatar_color,
+            "timezone": victim.timezone,
+            "is_active": "on",
+        },
+    )
+    victim.refresh_from_db()
+    assert victim.is_readonly is True

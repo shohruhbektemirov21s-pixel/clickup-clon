@@ -30,6 +30,10 @@ env = environ.Env(
     # Throttle rates (DRF "<n>/<period>"). Tightened defaults; see .env.example.
     AUTH_THROTTLE_RATE=(str, "10/min"),
     AUTH_BURST_THROTTLE_RATE=(str, "5/min"),
+    # `POST auth/refresh/` is AllowAny and every success writes twice (rotate +
+    # blacklist). Keyed on the source address, so a whole NAT'd office shares
+    # one bucket: deliberately loose. See apps/accounts/throttling.py.
+    REFRESH_THROTTLE_RATE=(str, "30/min"),
     REGISTER_THROTTLE_RATE=(str, "5/hour"),
     PASSWORD_CHANGE_THROTTLE_RATE=(str, "5/hour"),
     INVITE_THROTTLE_RATE=(str, "20/hour"),
@@ -249,6 +253,7 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "auth": env("AUTH_THROTTLE_RATE"),
         "auth_burst": env("AUTH_BURST_THROTTLE_RATE"),
+        "refresh": env("REFRESH_THROTTLE_RATE"),
         "register": env("REGISTER_THROTTLE_RATE"),
         "password_change": env("PASSWORD_CHANGE_THROTTLE_RATE"),
         "invite": env("INVITE_THROTTLE_RATE"),

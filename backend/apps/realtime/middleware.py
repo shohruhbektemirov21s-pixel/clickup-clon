@@ -52,11 +52,19 @@ def _user_from_ticket(raw_ticket):
 
 @database_sync_to_async
 def _user_from_token(raw_token):
+    """Muddati o'tgan / imzosi buzuq / da'vosi yetishmagan token → anonim.
+
+    `AccessToken.verify()` `exp`, `jti` va `token_type` ni tekshiradi, lekin
+    `user_id` ning BORLIGINI talab qilmaydi — shuning uchun `KeyError` ham
+    yutiladi. Aks holda da'vosiz, ammo to'g'ri imzolangan token handshake'ni
+    500 bilan yiqitardi (fail-open emas, lekin shovqinli).
+    """
     try:
         token = AccessToken(raw_token)
-    except (InvalidToken, TokenError):
+        user_id = token["user_id"]
+    except (InvalidToken, TokenError, KeyError):
         return AnonymousUser()
-    return _active_user(token["user_id"])
+    return _active_user(user_id)
 
 
 class JWTAuthMiddleware:

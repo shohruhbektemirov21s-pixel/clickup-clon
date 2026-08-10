@@ -394,6 +394,13 @@ jobs:
       AUTH_BURST_THROTTLE_RATE: "1000/min"
       COMMENT_THROTTLE_RATE: "1000/min"
       REALTIME_TICKET_THROTTLE_RATE: "1000/min"
+      # `auth/refresh/` ham cheklangan: `RefreshRateThrottle`, standarti
+      # 30/min, manba manzili bo'yicha. To'plam uni KO'P uradi — brauzer har
+      # TO'LIQ sahifa yuklanishida bir marta refresh qiladi
+      # (`src/app/providers.tsx` → `SessionBootstrap`), ya'ni ~40 chaqiruv va
+      # hammasi runner'ning bitta manzilidan. Nom `config/settings.py` dagi
+      # `DEFAULT_THROTTLE_RATES["refresh"]` bilan bir xil bo'lishi shart.
+      REFRESH_THROTTLE_RATE: "1000/min"
       # Runner oldida hech qanday proksi yo'q — X-Forwarded-For ga ishonmaymiz.
       NUM_PROXIES: "0"
       LOG_LEVEL: "INFO"

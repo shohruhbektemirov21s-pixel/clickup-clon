@@ -16,7 +16,7 @@ from apps.core.enums import SpaceAccess, StatusType
 from apps.tasks.models import Task
 from apps.workspaces import services
 from apps.workspaces.models import RolePermission, SpaceMember, TaskList
-from conftest import assert_error, client_for, make_user
+from conftest import assert_error, make_user
 
 pytestmark = pytest.mark.django_db
 

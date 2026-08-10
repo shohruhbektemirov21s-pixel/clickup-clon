@@ -106,28 +106,78 @@ function apiUrl(path: string, query?: Record<string, string | number>): string {
 }
 
 /**
- * Login throttle ishga tushganda beriladigan xabar.
+ * Throttle ishga tushganda beriladigan xabar.
  *
  * Bu yerda ATAYLAB kutilmaydi. Rate limiter'ni uxlab o'tkazish testni
  * sekinlashtiradi va (avvalgi tahrirda shunday bo'lgan) test byudjetidan
  * uzunroq uyquga ketib, sababni yashiradigan timeout'ga olib keladi. Throttle
  * urilishi = konfiguratsiya xatosi, uni darhol aytish kerak.
+ *
+ * IKKI xil yo'l bor va ikkalasi ham shu yerga keladi:
+ *
+ *   `auth/login/`   — test jarayoni `fetch` bilan uradi va 429 ni o'zi ko'radi.
+ *   `auth/refresh/` — BRAUZER uradi, har to'liq sahifa yuklanishida bir marta
+ *                    (`src/app/providers.tsx` → `SessionBootstrap`). 429 kelsa
+ *                    ilova sessiyani tozalab `/login` ga otadi, test esa
+ *                    "Hisob menyusi ko'rinmadi" deb yiqiladi — sabab butunlay
+ *                    yashirin qoladi. `watchThrottling()` aynan shuning uchun.
  */
-function throttleAdvice(email: string, detail: string): Error {
+function throttleAdvice(where: string, detail: string): Error {
   return new Error(
     [
-      `auth/login/ throttled (${email}): ${detail}`,
+      `Throttled (${where}): ${detail}`,
       "",
-      "E2E to'plami login cheklovini kutib o'tirmaydi. Backend'ni shunday",
-      "ishga tushiring (CI ham xuddi shunday qiladi):",
+      "E2E to'plami cheklovni kutib o'tirmaydi. Backend'ni shunday ishga",
+      "tushiring (CI ham xuddi shunday qiladi):",
       "",
-      "  AUTH_THROTTLE_RATE=1000/min AUTH_BURST_THROTTLE_RATE=1000/min \\",
+      "  AUTH_THROTTLE_RATE=1000/min \\",
+      "  AUTH_BURST_THROTTLE_RATE=1000/min \\",
+      "  REFRESH_THROTTLE_RATE=1000/min \\",
       "    ../.venv/Scripts/python.exe manage.py runserver",
+      "",
+      "Uchala kalit ham `config/settings.py` dagi DEFAULT_THROTTLE_RATES",
+      "bilan bir xil nomlanadi; standartlari 10/min, 5/min va 30/min.",
       "",
       "Throttle mantig'ining o'zi backend testlarida tekshiriladi",
       "(apps/accounts) — uni E2E'da qayta tekshirish shart emas.",
     ].join("\n"),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Brauzerdagi 429 larni kuzatish
+// ---------------------------------------------------------------------------
+
+/** Sahifada ko'rilgan `auth/*` 429 lari. WeakMap — Page bilan birga yo'qoladi. */
+const seenAuthThrottles = new WeakMap<Page, Set<string>>();
+
+/**
+ * Sahifadagi `auth/*` 429 javoblarini yozib boradi.
+ *
+ * Bularsiz `auth/refresh/` throttle'i oddiy "element ko'rinmadi" timeout'i
+ * bo'lib chiqadi va sababini bilish uchun trace ochib tarmoq panelini
+ * varaqlash kerak bo'ladi. `signIn()` va `signedInContext()` buni o'zi ulaydi.
+ */
+export function watchThrottling(page: Page): void {
+  if (seenAuthThrottles.has(page)) return;
+  const seen = new Set<string>();
+  seenAuthThrottles.set(page, seen);
+  page.on("response", (res) => {
+    if (res.status() !== 429) return;
+    try {
+      const { pathname } = new URL(res.url());
+      if (pathname.includes("/auth/")) seen.add(pathname);
+    } catch {
+      // URL emas — e'tiborsiz.
+    }
+  });
+}
+
+/** Shu sahifada `auth/*` 429 ko'rilgan bo'lsa tushunarli xato, aks holda null. */
+function throttleErrorFor(page: Page): Error | null {
+  const seen = seenAuthThrottles.get(page);
+  if (!seen || seen.size === 0) return null;
+  return throttleAdvice("brauzer", `429 ← ${[...seen].join(", ")}`);
 }
 
 /**
@@ -148,7 +198,9 @@ export async function apiLogin(
   if (res.ok) return (await res.json()) as AuthSession;
 
   const text = await res.text();
-  if (res.status === 429) throw throttleAdvice(email, text.slice(0, 200));
+  if (res.status === 429) {
+    throw throttleAdvice(`auth/login/ ${email}`, text.slice(0, 200));
+  }
   throw new Error(`apiLogin(${email}) muvaffaqiyatsiz: ${res.status} ${text}`);
 }
 
@@ -329,6 +381,7 @@ export async function signedInContext(
   const session = await apiLogin(user.email, user.password);
   const context = await browser.newContext({ storageState: storageStateFor(session) });
   const page = await context.newPage();
+  watchThrottling(page);
   return { context, page, session };
 }
 
@@ -340,6 +393,7 @@ export async function signedInContext(
  * yuklanishi kerak — buning uchun eng arzoni `/login`.
  */
 export async function signIn(page: Page, user: DemoUser): Promise<AuthSession> {
+  watchThrottling(page);
   const session = await apiLogin(user.email, user.password);
   const appOrigin = new URL(APP_BASE_URL).origin;
   let current: string | null = null;
@@ -429,7 +483,10 @@ export async function login(page: Page, user: DemoUser): Promise<void> {
     .textContent()
     .catch(() => null);
   if (banner?.includes("Urinishlar juda ko'p")) {
-    throw throttleAdvice(user.email, "forma banneri: Urinishlar juda ko'p");
+    throw throttleAdvice(
+      `auth/login/ ${user.email}`,
+      "forma banneri: Urinishlar juda ko'p",
+    );
   }
   throw new Error(`login(${user.email}) muvaffaqiyatsiz. Banner: ${banner ?? "yo'q"}`);
 }
@@ -447,9 +504,17 @@ export async function login(page: Page, user: DemoUser): Promise<void> {
  * testga kerak bo'lgan shart.
  */
 export async function waitForAppShell(page: Page): Promise<void> {
-  await expect(page.getByRole("button", { name: "Hisob menyusi" })).toBeVisible({
-    timeout: 30_000,
-  });
+  try {
+    await expect(page.getByRole("button", { name: "Hisob menyusi" })).toBeVisible({
+      timeout: 30_000,
+    });
+  } catch (err) {
+    // Qobiq chizilmasligining eng chalg'ituvchi sababi — `auth/refresh/` ga
+    // kelgan 429: ilova sessiyani tozalab `/login` ga otadi va bu yerda
+    // shunchaki "element ko'rinmadi" bo'lib ko'rinadi. Ko'rilgan bo'lsa,
+    // haqiqiy sabab aytiladi.
+    throw throttleErrorFor(page) ?? err;
+  }
 }
 
 /** Ish maydoni sahifasiga o'tib, qobiq chizilishini kutadi. */
