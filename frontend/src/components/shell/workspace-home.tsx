@@ -364,7 +364,9 @@ export function WorkspaceHome({ workspaceId }: { workspaceId: string }) {
             workspaceId={workspaceId}
             meId={me?.id ?? null}
             tasks={openTeamTasks}
-            tasksPending={teamTasks.isPending}
+            // Without `task.read` the workspace-wide read never runs — hide the
+            // counters rather than showing a misleading "0 ta" for everyone.
+            tasksPending={!canReadTasks || teamTasks.isPending}
             partial={
               !!teamTasks.data &&
               teamTasks.data.count > teamTasks.data.results.length
@@ -504,6 +506,7 @@ function MyTasksSection({
             {firstListId ? (
               <Button
                 size="sm"
+                nativeButton={false}
                 render={<Link href={`/w/${workspaceId}/l/${firstListId}`} />}
               >
                 <Plus className="size-4" />
@@ -653,6 +656,7 @@ function TeamTasksSection({
             {firstListId ? (
               <Button
                 size="sm"
+                nativeButton={false}
                 render={<Link href={`/w/${workspaceId}/l/${firstListId}`} />}
               >
                 <Plus className="size-4" />

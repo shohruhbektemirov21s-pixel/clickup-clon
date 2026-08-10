@@ -271,6 +271,13 @@ async function submitLoginForm(page: Page, user: DemoUser): Promise<void> {
  * Backend loginni cheklaydi (email bo'yicha 5/min). "Urinishlar juda ko'p"
  * bannerini ko'rsa, oyna bo'shashini kutib bir marta qayta uriniladi.
  */
+/**
+ * Sessiyani `localStorage` ga oldindan joylash MUMKIN EMAS: SimpleJWT refresh
+ * tokenni birinchi ishlatishda rotatsiya qilib eskisini blacklist'ga qo'yadi,
+ * shuning uchun bitta keshlangan token faqat bitta testga yetadi. Login shu
+ * sababli forma orqali qoladi; throttle'ni yumshatish uchun spec'lar bitta
+ * kontekstni bo'lishadi va hooklarga uzunroq timeout beriladi.
+ */
 export async function login(page: Page, user: DemoUser): Promise<void> {
   const attempts = 3;
   for (let attempt = 0; attempt < attempts; attempt += 1) {

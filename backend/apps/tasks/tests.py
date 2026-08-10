@@ -225,7 +225,8 @@ def test_move_cross_list_and_status(env, empty_list):
     empty_list.refresh_from_db()
     assert empty_list.task_count == 0
     target.refresh_from_db()
-    assert target.task_count == 4
+    # The bootstrapped list starts empty, so the moved task is the only one.
+    assert target.task_count == 1
 
 
 def test_move_missing_status_and_stale_neighbours(env, empty_list):
@@ -484,7 +485,8 @@ def test_activity_non_member_gets_404(env, empty_list):
 
 def test_activity_empty_for_untouched_task(env):
     """Tasks that pre-date the history table return an empty list, not an error."""
-    task = Task.objects.filter(list=env.list).first()
+    (created,) = make_tasks(env, env.list, ["Tarixsiz vazifa"])
+    task = Task.objects.get(pk=created["id"])
     TaskActivity.objects.filter(task=task).delete()
     body = env.member_client.get(activity_url(task.id)).json()
     assert body["count"] == 0

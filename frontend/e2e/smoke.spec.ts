@@ -24,6 +24,9 @@ test.describe("smoke — sahifalar konsol xatosisiz yuklanadi", () => {
   });
 
   test("authenticated pages load cleanly", async ({ page }) => {
+    // Bu spec to'plamning oxirida yuradi, ya'ni per-IP auth chelagi allaqachon
+    // to'lgan bo'lishi mumkin — `login()` 429 back-off oynasini kutib olsin.
+    test.setTimeout(240_000);
     const session = await sessionFor(USERS.demo);
     const workspace = await firstWorkspace(session.access);
     const listId = await firstListId(session.access, workspace.id);
