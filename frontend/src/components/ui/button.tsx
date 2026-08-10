@@ -44,12 +44,22 @@ function Button({
   className,
   variant = "default",
   size = "default",
+  render,
+  nativeButton,
   ...props
 }: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+  // Base UI warns when `nativeButton` is true but the rendered element is not a
+  // real <button> — which is exactly what `render={<Link/>}` produces, and it
+  // then adds the role/tabindex/Enter handling an anchor needs. Callers that
+  // render an actual <button> can still pass `nativeButton` explicitly.
+  const resolvedNativeButton = nativeButton ?? render === undefined
+
   return (
     <ButtonPrimitive
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
+      render={render}
+      nativeButton={resolvedNativeButton}
       {...props}
     />
   )
