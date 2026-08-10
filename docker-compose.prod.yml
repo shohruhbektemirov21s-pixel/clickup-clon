@@ -163,7 +163,7 @@ services:
   # postgres:16 (not alpine) so pg_dump exactly matches the server major
   # version — a newer pg_dump can read an older server, the reverse cannot.
   backup:
-    image: postgres:16
+    image: postgres:18
     restart: unless-stopped
     environment:
       PGHOST: db
