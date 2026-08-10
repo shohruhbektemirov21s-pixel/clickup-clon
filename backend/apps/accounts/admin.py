@@ -56,8 +56,17 @@ class UserAdmin(NoBulkDeleteMixin, BaseUserAdmin):
     form = UserEditForm
     change_password_form = AdminPasswordChangeForm
 
-    list_display = ("email", "full_name", "is_active", "is_staff", "date_joined")
-    list_filter = ("is_active", "is_staff", "is_superuser")
+    list_display = (
+        "email",
+        "full_name",
+        "is_active",
+        "is_staff",
+        # `is_readonly` — xavfsizlik nazorati, ro'yxatda ham ko'rinsin (pastdagi
+        # `get_readonly_fields` izohiga qarang).
+        "is_readonly",
+        "date_joined",
+    )
+    list_filter = ("is_active", "is_staff", "is_superuser", "is_readonly")
     search_fields = ("email", "full_name")
     ordering = ("email",)
     readonly_fields = ("date_joined", "last_login", "last_seen_at", "created_at", "updated_at")
@@ -72,7 +81,23 @@ class UserAdmin(NoBulkDeleteMixin, BaseUserAdmin):
         ),
         (
             "Ruxsatlar",
-            {"fields": ("is_active", "is_staff", "is_superuser", "groups", "user_permissions")},
+            {
+                "fields": (
+                    "is_active",
+                    "is_staff",
+                    "is_superuser",
+                    # AppSec: `is_readonly` — demo hisobning yagona qulfi
+                    # (`apps.core.access.has_perm` va
+                    # `apps.core.drf_permissions.BlockReadonlyAccountWrites`
+                    # shu bayroqqa tayanadi). Ilgari u `fieldsets` da umuman
+                    # yo'q edi: qulf faqat `seed_demo` yoki shell orqali
+                    # o'zgarardi va admin sahifasida KO'RINMASDI — ya'ni
+                    # yozish huquqi bor demo hisobni hech kim payqamasdi.
+                    "is_readonly",
+                    "groups",
+                    "user_permissions",
+                )
+            },
         ),
         (
             "Sanalar",
@@ -88,6 +113,20 @@ class UserAdmin(NoBulkDeleteMixin, BaseUserAdmin):
             },
         ),
     )
+
+    def get_readonly_fields(self, request, obj=None):
+        """`is_readonly` ni faqat superuser o'zgartira oladi.
+
+        `NoBulkDeleteMixin.has_delete_permission` bilan bir xil mantiq:
+        `change_user` ruxsati berilgan oddiy staff hisob demo qulfini yechib,
+        faqat o'qish uchun mo'ljallangan hisobni to'liq yozadigan hisobga
+        aylantira olmasligi kerak. Ko'rish esa hammaga ochiq — nazorat
+        ko'rinmas bo'lsa, u nazorat emas.
+        """
+        fields = tuple(super().get_readonly_fields(request, obj))
+        if not getattr(request.user, "is_superuser", False):
+            fields += ("is_readonly",)
+        return fields
 
 
 @admin.register(LogEntry)

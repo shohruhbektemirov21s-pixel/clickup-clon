@@ -22,8 +22,8 @@ import {
   useWorkspaceTree,
 } from "@/hooks/queries";
 import { useBulkSpaceMembers } from "@/hooks/mutations";
-import { initials } from "@/lib/format";
-import { canInSpace } from "@/lib/permissions";
+import { displayName, initials } from "@/lib/format";
+import { spacePermissionGate } from "@/lib/permissions";
 import { PROFESSION_LABEL, SPACE_ACCESS_LABEL } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 import type { Member, SpaceAccess, SpaceMember, UserSummary } from "@/types/api";
@@ -39,6 +39,9 @@ const ACCESS_HINT: Record<SpaceAccess, string> = {
 };
 
 function UserCell({ user, subtitle }: { user: UserSummary; subtitle?: string }) {
+  // Mehmon ko'ruvchiga `email` `null` keladi (§4): ikkinchi qator bo'sh
+  // qolmasin va birinchi qatorda "null" chiqmasin.
+  const secondary = subtitle ?? user.email;
   return (
     <div className="flex min-w-0 items-center gap-2">
       <Avatar className="size-7 shrink-0">
@@ -51,8 +54,10 @@ function UserCell({ user, subtitle }: { user: UserSummary; subtitle?: string }) 
         </AvatarFallback>
       </Avatar>
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium">{user.full_name || user.email}</p>
-        <p className="truncate text-xs text-muted-foreground">{subtitle ?? user.email}</p>
+        <p className="truncate text-sm font-medium">{displayName(user)}</p>
+        {secondary ? (
+          <p className="truncate text-xs text-muted-foreground">{secondary}</p>
+        ) : null}
       </div>
     </div>
   );
@@ -121,7 +126,7 @@ export function SpaceMembersPanel({
   workspaceId: string;
   spaceId: string;
 }) {
-  const { data: my } = useMyPermissions(workspaceId);
+  const { data: my, isPending: permsPending } = useMyPermissions(workspaceId);
   const { data: tree } = useWorkspaceTree(workspaceId);
   const roster = useMembers(workspaceId);
   const spaceMembers = useSpaceMembers(spaceId);
@@ -131,7 +136,8 @@ export function SpaceMembersPanel({
   /** Desired final roster: `user_id → access`. `null` = untouched since load. */
   const [draft, setDraft] = React.useState<Record<string, SpaceAccess> | null>(null);
 
-  const canManage = canInSpace(my, spaceId, "space.manage_members");
+  const manage = spacePermissionGate(my, permsPending, spaceId, "space.manage_members");
+  const canManage = manage.allowed;
   const space = tree?.spaces.find((s) => s.id === spaceId);
 
   const serverRows: SpaceMember[] = React.useMemo(
@@ -203,7 +209,10 @@ export function SpaceMembersPanel({
 
   const save = () => bulk.mutate({ add, remove }, { onSuccess: () => setDraft(null) });
 
-  if (spaceMembers.isPending || roster.isPending) {
+  // `manage.isLoading` ham shu yerda: aks holda panel avval "faqat o'qish"
+  // ko'rinishida chizilib, ruxsat kelgach Saqlash / "Qo'shish" / daraja
+  // tanlagichlari va sarlavha ostidagi matn birdan almashardi.
+  if (manage.isLoading || spaceMembers.isPending || roster.isPending) {
     return (
       <div className="mx-auto w-full max-w-5xl p-8">
         <PanelSkeleton />
@@ -344,7 +353,7 @@ export function SpaceMembersPanel({
                         variant="outline"
                         size="xs"
                         onClick={() => setAccess(member.user.id, "contributor")}
-                        aria-label={`${member.user.email} ni bo'limga qo'shish`}
+                        aria-label={`${displayName(member.user)} ni bo'limga qo'shish`}
                       >
                         <UserPlus className="size-3" /> Qo&apos;shish
                       </Button>
@@ -374,6 +383,8 @@ export function SpaceMembersPanel({
                 const row = rowByUser.get(userId);
                 const isNew = !(userId in serverState);
                 const changed = !isNew && serverState[userId] !== access;
+                // Ekran o'quvchisiga UUID ham, "null" ham o'qilmasin.
+                const label = user ? displayName(user) : "Noma'lum foydalanuvchi";
                 return (
                   <li
                     key={userId}
@@ -395,7 +406,11 @@ export function SpaceMembersPanel({
                           }
                         />
                       ) : (
-                        <p className="text-sm text-muted-foreground">{userId}</p>
+                        // Ro'yxatda topilmagan foydalanuvchi — xom UUID emas,
+                        // o'qiladigan matn (id nosozlikni izlash uchun `title` da).
+                        <p className="text-sm text-muted-foreground" title={userId}>
+                          {label}
+                        </p>
                       )}
                     </div>
                     {canManage ? (
@@ -403,13 +418,13 @@ export function SpaceMembersPanel({
                         <AccessSelect
                           value={access}
                           onChange={(next) => setAccess(userId, next)}
-                          label={`${user?.email ?? userId} darajasi`}
+                          label={`${label} darajasi`}
                         />
                         <Button
                           variant="ghost"
                           size="icon-xs"
                           className="text-danger"
-                          aria-label={`${user?.email ?? userId} ni bo'limdan olib tashlash`}
+                          aria-label={`${label} ni bo'limdan olib tashlash`}
                           onClick={() => removeUser(userId)}
                         >
                           <X />

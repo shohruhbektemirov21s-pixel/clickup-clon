@@ -31,6 +31,12 @@ export interface InviteContext {
   workspaceName: string;
   /** FAQAT KO'RSATISH UCHUN. Rol serverda `Invitation.role` dan olinadi. */
   role: InvitableRole;
+  /**
+   * "Hisobingiz bormi? Kirish" havolasi. §F-6 MUST-5 sababli bu yerga
+   * TOKEN QO'YILMAYDI — `InviteView` uni sessionStorage'da qoldirib, manzilga
+   * faqat ma'nosiz nonce yozadi.
+   */
+  loginHref: string;
 }
 
 function extractErrors(err: unknown, fields: string[]): { banner?: string; fields: FieldErrors } {
@@ -456,7 +462,7 @@ export function RegisterForm({ invite }: { invite?: InviteContext } = {}) {
       <p className="text-center text-sm text-muted-foreground">
         Hisobingiz bormi?{" "}
         <Link
-          href={inviteMode ? `/login?next=/invite/${invite.token}` : "/login"}
+          href={inviteMode ? invite.loginHref : "/login"}
           className="font-medium text-primary hover:underline"
         >
           Kirish

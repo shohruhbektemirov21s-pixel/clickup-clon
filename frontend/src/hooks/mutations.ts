@@ -1,6 +1,7 @@
 "use client";
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useParams } from "next/navigation";
 import { toast } from "sonner";
 import { api, isApiError } from "@/lib/api";
 import { keys } from "@/lib/keys";
@@ -52,11 +53,99 @@ function errorMessage(err: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
+// Workspace-wide rollups that every task write invalidates
+// ---------------------------------------------------------------------------
+
+/**
+ * A task write does not only change its own list. Four caches summarise tasks
+ * *above* the list level and go stale with it:
+ *
+ *   • `keys.tree`               — every list's `open_task_count` (sidebar badges)
+ *   • `keys.workspaceTasksRoot` — the dashboard cards and "Mening vazifalarim"
+ *   • `keys.activityRoot`       — the workspace history feed (§10.8)
+ *   • `keys.memberProfileRoot`  — the per-member counters (§4.1)
+ *
+ * None of them can be patched in place: the server applies visibility filters,
+ * bucketing and pagination that the client cannot re-evaluate (the same reason
+ * `use-workspace-channel` refetches instead of merging). So they are refetched.
+ *
+ * The `useWorkspaceChannel` socket would have covered this, but it is mounted
+ * on the workspace home only — it is not running while the user is on a list
+ * page, which is exactly where task writes happen.
+ */
+const ROLLUP_KEYS = [
+  keys.tree,
+  keys.workspaceTasksRoot,
+  keys.activityRoot,
+  keys.memberProfileRoot,
+] as const;
+
+/**
+ * Coalescing window. Editing a card fires a burst of PATCHes (status, then
+ * assignee, then due date…) and one `invalidateQueries` per request would
+ * refetch the tree once per keystroke-batch. One flush per window is enough —
+ * the same discipline `use-workspace-channel` applies to inbound frames.
+ */
+const ROLLUP_FLUSH_MS = 200;
+
+interface RollupState {
+  pending: Set<string>;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+/**
+ * Module-level so the flush coalesces across hook instances (a single task
+ * panel mounts `useUpdateTask` three times). Keyed by `QueryClient` in a
+ * WeakMap so a torn-down provider — or a second client in a test — can never be
+ * invalidated by a timer it does not own.
+ */
+const rollups = new WeakMap<QueryClient, RollupState>();
+
+function scheduleWorkspaceRollup(
+  queryClient: QueryClient,
+  workspaceId: string | null,
+): void {
+  if (!workspaceId) return;
+  let state = rollups.get(queryClient);
+  if (!state) {
+    state = { pending: new Set(), timer: null };
+    rollups.set(queryClient, state);
+  }
+  state.pending.add(workspaceId);
+  if (state.timer !== null) return; // a flush is already scheduled
+  const scheduled = state;
+  scheduled.timer = setTimeout(() => {
+    scheduled.timer = null;
+    const workspaceIds = [...scheduled.pending];
+    scheduled.pending.clear();
+    for (const id of workspaceIds) {
+      // Only *mounted* queries actually refetch, so a list page pays for the
+      // tree and the rest are merely marked stale.
+      for (const key of ROLLUP_KEYS) {
+        void queryClient.invalidateQueries({ queryKey: key(id) });
+      }
+    }
+  }, ROLLUP_FLUSH_MS);
+}
+
+/**
+ * The workspace a task mutation happens in. Every task surface lives under
+ * `/w/[workspaceId]/…`, so the route already carries the id and no call site
+ * has to pass it; outside that segment it is `null` and the rollup is skipped.
+ */
+function useRouteWorkspaceId(): string | null {
+  const params = useParams<{ workspaceId?: string | string[] }>();
+  const raw = params?.workspaceId;
+  return (Array.isArray(raw) ? raw[0] : raw) ?? null;
+}
+
+// ---------------------------------------------------------------------------
 // Tasks
 // ---------------------------------------------------------------------------
 
 export function useCreateTask(listId: string) {
   const queryClient = useQueryClient();
+  const workspaceId = useRouteWorkspaceId();
   return useMutation({
     mutationFn: (body: TaskWriteRequest & { title: string }) =>
       api.post<Task>(`lists/${listId}/tasks/`, { ...body, id: crypto.randomUUID() }),
@@ -66,6 +155,7 @@ export function useCreateTask(listId: string) {
         (old) => upsertTaskInGroups(old, task) ?? old,
       );
       queryClient.invalidateQueries({ queryKey: keys.tasksGrouped(listId) });
+      scheduleWorkspaceRollup(queryClient, workspaceId);
     },
     onError: (err) => toast.error(errorMessage(err)),
   });
@@ -74,6 +164,7 @@ export function useCreateTask(listId: string) {
 /** Optimistic field update (status change, priority, title, dates, assignees…). */
 export function useUpdateTask(listId: string) {
   const queryClient = useQueryClient();
+  const workspaceId = useRouteWorkspaceId();
   return useMutation({
     mutationFn: ({ taskId, patch }: UpdateTaskVars) =>
       api.patch<Task>(`tasks/${taskId}/`, patch),
@@ -130,12 +221,16 @@ export function useUpdateTask(listId: string) {
         toast.error(errorMessage(err));
       }
     },
-    onSuccess: (task) => writeTaskEverywhere(queryClient, task),
+    onSuccess: (task) => {
+      writeTaskEverywhere(queryClient, task);
+      scheduleWorkspaceRollup(queryClient, workspaceId);
+    },
   });
 }
 
 export function useDeleteTask(listId: string) {
   const queryClient = useQueryClient();
+  const workspaceId = useRouteWorkspaceId();
   return useMutation({
     mutationFn: (taskId: string) => api.delete(`tasks/${taskId}/`),
     onMutate: async (taskId) => {
@@ -156,6 +251,7 @@ export function useDeleteTask(listId: string) {
     },
     onSuccess: (_data, taskId) => {
       queryClient.removeQueries({ queryKey: keys.task(taskId) });
+      scheduleWorkspaceRollup(queryClient, workspaceId);
       toast.success("Vazifa o'chirildi");
     },
   });
@@ -187,6 +283,7 @@ export interface MoveIntent {
  */
 export function useMoveTask(listId: string) {
   const queryClient = useQueryClient();
+  const workspaceId = useRouteWorkspaceId();
   return useMutation({
     mutationFn: (intent: MoveIntent) =>
       api.patch<MoveTaskResponse>(`tasks/${intent.taskId}/move/`, {
@@ -206,8 +303,13 @@ export function useMoveTask(listId: string) {
       );
       return { previous };
     },
-    onSuccess: (task) => {
-      if (task.rebalanced) {
+    onSuccess: (response) => {
+      // `rebalanced` is a move-response flag, not a task field. Writing the
+      // whole response into `keys.task(id)` would persist it and leave the
+      // cached object out of sync with what `GET tasks/{id}/` returns.
+      const { rebalanced, ...task } = response;
+      scheduleWorkspaceRollup(queryClient, workspaceId);
+      if (rebalanced) {
         // Positions were renumbered server-side — refetch, don't patch.
         queryClient.invalidateQueries({ queryKey: keys.tasksRoot(listId) });
         return;

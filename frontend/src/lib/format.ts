@@ -2,6 +2,20 @@ import { format, formatDistanceToNow, isPast, isToday } from "date-fns";
 import { uz } from "date-fns/locale";
 import type { Priority, StatusType } from "@/types/api";
 
+/**
+ * Ekranda ko'rsatiladigan ism.
+ *
+ * `UserSummary.email` mehmon rolidagi *ko'ruvchi* uchun `null` bo'ladi (§4),
+ * shuning uchun `full_name || email` shakli `null` ni matnga aylantirib
+ * "null a'zoni chiqarish" kabi e'lonlar hosil qilardi.
+ */
+export function displayName(
+  user: { full_name?: string | null; email?: string | null } | null | undefined,
+): string {
+  if (!user) return "Foydalanuvchi";
+  return user.full_name?.trim() || user.email || "Foydalanuvchi";
+}
+
 export function initials(name: string | null | undefined, email?: string): string {
   const source = (name && name.trim()) || email || "?";
   const parts = source.trim().split(/\s+/);

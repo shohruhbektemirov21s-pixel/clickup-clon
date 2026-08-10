@@ -1,6 +1,12 @@
 "use client";
 
-import { useQueries, useQuery } from "@tanstack/react-query";
+import * as React from "react";
+import {
+  keepPreviousData,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { keys } from "@/lib/keys";
 import { useAuthStore } from "@/stores/auth-store";
@@ -310,9 +316,42 @@ export function useAttachments(taskId: string | null, canRead = true) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Watches a freshly-observed `catalog_version` and unfreezes the cached
+ * catalog when the server has moved on.
+ *
+ * Why this is needed: `usePermissionCatalog` caches with `staleTime` **and**
+ * `gcTime: Infinity`, which is not a cache but a value pinned for the life of
+ * the tab. Deploy a catalog change and an open session keeps rendering the old
+ * labels, groups and code set — including the set of codes the settings matrix
+ * is able to display at all — with no way back short of a hard reload.
+ * `catalog_version` is the server's counter for exactly that event; this is
+ * what makes it bind.
+ *
+ * Fails safe on absence. A missing version on either side — an older server
+ * that omits the field, or no catalog fetched yet — does nothing, so a server
+ * without the field can never push the client into a refetch loop. It
+ * invalidates rather than refetching imperatively, so TanStack refetches the
+ * catalog only where it is actually mounted; and because the effect is keyed on
+ * the observed version, a failed refetch cannot re-trigger it either.
+ */
+function useCatalogVersionGuard(observed: number | undefined): void {
+  const queryClient = useQueryClient();
+  React.useEffect(() => {
+    if (typeof observed !== "number") return;
+    const cached = queryClient.getQueryData<PermissionCatalog>(keys.permissionCatalog);
+    if (typeof cached?.catalog_version !== "number") return;
+    if (cached.catalog_version === observed) return;
+    // `isInvalidated` overrides `staleTime: Infinity` on the next fetch
+    // opportunity, so this reaches unmounted consumers on their next mount too.
+    void queryClient.invalidateQueries({ queryKey: keys.permissionCatalog });
+  }, [observed, queryClient]);
+}
+
+/**
  * The permission catalog is derived from server *code*, not from the database:
  * it only ever changes on deploy. `staleTime: Infinity` keeps it to one fetch
- * per session (risk R4 — never add a round trip per screen).
+ * per session (risk R4 — never add a round trip per screen); a catalog bump is
+ * picked up by {@link useCatalogVersionGuard} instead of by polling.
  */
 export function usePermissionCatalog() {
   const enabled = useAuthed();
@@ -347,13 +386,20 @@ export function useMyPermissions(workspaceId: string) {
  */
 export function useRolePermissions(workspaceId: string, canRead: boolean) {
   const enabled = useAuthed();
-  return useQuery({
+  const query = useQuery({
     queryKey: keys.rolePermissions(workspaceId),
     queryFn: () =>
       api.get<RolePermissionMatrix>(`workspaces/${workspaceId}/role-permissions/`),
     enabled: enabled && !!workspaceId && canRead,
     staleTime: 30_000,
   });
+  // The matrix is the only payload that carries a *fresh* `catalog_version` to
+  // the client: `GET my-permissions/` answers with the workspace's
+  // `permissions_version` (a different counter entirely) and does not send the
+  // catalog one at all. This screen is also where a frozen catalog does the
+  // most damage — it renders every label and group straight out of it.
+  useCatalogVersionGuard(query.data?.catalog_version);
+  return query;
 }
 
 /**
@@ -392,11 +438,34 @@ export function useInvitationLookup(token: string) {
   });
 }
 
+/**
+ * Bitta qidiruv javobi va u **aynan qaysi so'rovga** tegishli ekani.
+ *
+ * `placeholderData: keepPreviousData` yozayotgan paytda oldingi javobni ekranda
+ * ushlab turadi, ya'ni ro'yxat har bir yangi so'rovda skeletonga tushib
+ * miltillamaydi. Lekin TanStack Query o'sha javob qaysi kalitdan qolganini
+ * aytmaydi — shuning uchun so'rov matnini (va ish maydonini) javobning o'ziga
+ * bog'lab qo'yamiz. Shunda sarlavha, `Highlight` va a'zolar filtri doim
+ * ekrandagi natijalarga mos matnni ishlatadi va «xyz» bo'yicha 12 ta natija deb
+ * turib `abc` ning natijalari chizilib qolmaydi.
+ */
+export interface SearchResult {
+  workspaceId: string;
+  /** `?q=` — javob aynan shu matn uchun olingan. */
+  query: string;
+  response: SearchResponse;
+}
+
 export function useWorkspaceSearch(workspaceId: string, q: string) {
   const enabled = useAuthed();
   return useQuery({
     queryKey: keys.search(workspaceId, q),
-    queryFn: () => api.get<SearchResponse>(`workspaces/${workspaceId}/search/`, { q }),
+    queryFn: async (): Promise<SearchResult> => ({
+      workspaceId,
+      query: q,
+      response: await api.get<SearchResponse>(`workspaces/${workspaceId}/search/`, { q }),
+    }),
     enabled: enabled && !!workspaceId && q.trim().length >= 2,
+    placeholderData: keepPreviousData,
   });
 }

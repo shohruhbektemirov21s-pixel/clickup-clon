@@ -12,6 +12,7 @@ from rest_framework.exceptions import ValidationError
 
 from apps.core.enums import (
     AssignableRole,
+    InvitationStatus,
     SpaceAccess,
     SpaceMemberSource,
     StatusType,
@@ -40,13 +41,40 @@ DEFAULT_STATUSES = [
 ]
 
 
-def check_client_id(model, supplied_id):
-    """Client-generated ids: 409 conflict when the id is already in use."""
+def check_client_id(model, supplied_id, *, scope=None):
+    """Client-generated ids (API_CONTRACT.md §1.4) — returns the id to persist.
+
+    Kontrakt talabi: klient o'ylab topgan `id` allaqachon band bo'lsa `409`,
+    shunda tarmoq uzilgandan keyingi qayta urinish "men buni yaratganman"
+    ekanini bilib oladi.
+
+    XAVFSIZLIK. Tekshiruv jadval bo'ylab bo'lsa, `POST /workspaces/` ga
+    begona UUID yuborish `409` yoki `201` qaytaradi va bu **global mavjudlik
+    orakuli** bo'lib qoladi: chaqiruvchi ko'ra olmaydigan resurs haqida
+    ma'lumot sizadi (§1.7 buni taqiqlaydi). Shuning uchun `scope=` — bu
+    chaqiruvchi allaqachon ko'rayotgan idish (workspace, bo'lim, status
+    to'plami) bo'yicha toraytirilgan queryset:
+
+    * id shu doirada band  → `409` (qayta urinish semantikasi saqlanadi);
+    * id doiradan TASHQARIDA band → oshkor qilinmaydi, `None` qaytadi va
+      chaqiruvchi server tomonda yangi UUID ajratadi (javob tanasi baribir
+      haqiqiy `id` ni olib keladi);
+    * bo'sh                → `supplied_id`.
+
+    `scope=None` — eski, jadval bo'ylab xatti-harakat. Boshqa app'lardagi
+    chaqiruvchilar (tasks, comments) shu yo'lda qoladi.
+    """
     if supplied_id in (None, ""):
         return None
     manager = getattr(model, "all_objects", model.objects)
-    if manager.filter(pk=supplied_id).exists():
+    if scope is None:
+        if manager.filter(pk=supplied_id).exists():
+            raise Conflict("A resource with this id already exists.")
+        return supplied_id
+    if scope.filter(pk=supplied_id).exists():
         raise Conflict("A resource with this id already exists.")
+    if manager.filter(pk=supplied_id).exists():
+        return None
     return supplied_id
 
 
@@ -289,7 +317,9 @@ def create_space(workspace, actor, *, name, description="", color=None, icon="",
                  is_private=False, space_id=None) -> Space:
     if Space.objects.filter(workspace=workspace, name__iexact=name.strip()).exists():
         raise Conflict("A space with this name already exists in the workspace.")
-    check_client_id(Space, space_id)
+    space_id = check_client_id(
+        Space, space_id, scope=Space.objects.filter(workspace=workspace)
+    )
     space = Space.objects.create(
         id=space_id or uuid.uuid4(),
         workspace=workspace,
@@ -315,6 +345,73 @@ def create_space(workspace, actor, *, name, description="", color=None, icon="",
     return space
 
 
+def _visibility_snapshot(space, *, is_private) -> set:
+    """`is_private` shu qiymatda bo'lganda bo'limni KIM ko'radi (user id'lari).
+
+    Ikki so'rov: bo'lim a'zolari + ish maydoni a'zolari. Ruxsat matritsasi
+    keshdan keladi, shuning uchun a'zolar soniga qarab so'rov ko'paymaydi.
+    `space_access_of()` ning per-membership keshi oldindan to'ldiriladi.
+    """
+    from apps.core.access import space_is_visible
+
+    probe = Space(id=space.id, workspace_id=space.workspace_id, is_private=is_private)
+    explicit = dict(
+        SpaceMember.objects.filter(space=space).values_list("user_id", "access")
+    )
+    attr = f"_space_access_{space.pk}"
+    seen = set()
+    for member in WorkspaceMember.objects.filter(
+        workspace_id=space.workspace_id
+    ).select_related("workspace", "user"):
+        setattr(member, attr, explicit.get(member.user_id))
+        if space_is_visible(member, probe):
+            seen.add(member.user_id)
+    return seen
+
+
+@transaction.atomic
+def set_space_visibility(space, *, is_private, actor=None) -> Space:
+    """`is_private` — bo'limning CHEGARASI, oddiy atribut emas (§B.5).
+
+    Uni `queryset.update()` bilan o'zgartirish uch narsani o'tkazib yuboradi,
+    va uchalasi ham shu yerda bajariladi:
+
+    1. **Backfill.** Yopiq bo'lim menejersiz qolmasin — yaratuvchi
+       `manager` sifatida biriktiriladi (§B.6), aks holda hech kim unga a'zo
+       qo'sha olmaydi va bo'lim qulflanib qoladi.
+    2. **`permissions_version`.** Klient `my-permissions/` javobidagi
+       `spaces` ro'yxatiga tayanadi; versiya oshmasa u eskirib qoladi
+       (`permission.updated` ham shu yerdan chiqadi).
+    3. **`access.revoked`.** Ko'rinishni YO'QOTGAN har bir odamning ochiq
+       soketi `connect()` da bir marta tekshirilgan — xabarsiz u endi yopiq
+       bo'lgan bo'lim freymlarini oqizishda davom etardi (Y-1 bilan bir xil
+       sinf).
+    """
+    if space.is_private == is_private:
+        return space
+    before = _visibility_snapshot(space, is_private=space.is_private)
+    after = _visibility_snapshot(space, is_private=is_private)
+
+    space.is_private = is_private
+    space.save(update_fields=["is_private", "updated_at"])
+
+    if is_private and space.created_by_id is not None:
+        ensure_space_member(
+            space,
+            space.created_by,
+            access=SpaceAccess.MANAGER,
+            source=SpaceMemberSource.AUTO_CREATOR,
+            added_by=actor,
+        )
+
+    from apps.core.access import bump_permissions_version
+
+    bump_permissions_version(space.workspace, actor=actor)
+    for user_id in sorted(before - after, key=str):
+        _revoke(space, user_id)
+    return space
+
+
 @transaction.atomic
 def bootstrap_workspace(user, *, name, description="", color=None, workspace_id=None) -> Workspace:
     """DATA_MODEL.md section 11: workspace + owner membership + "Jamoa bo'limi"
@@ -323,7 +420,11 @@ def bootstrap_workspace(user, *, name, description="", color=None, workspace_id=
     The list ships empty on purpose: a brand-new account should start from zero
     rather than from placeholder tasks it has to clean up first.
     """
-    check_client_id(Workspace, workspace_id)
+    # Doira = chaqiruvchi allaqachon a'zo bo'lgan ish maydonlari; begona UUID
+    # 409 bermaydi (global mavjudlik orakuli), server yangi id ajratadi.
+    workspace_id = check_client_id(
+        Workspace, workspace_id, scope=Workspace.objects.filter(members__user=user)
+    )
     workspace = Workspace.objects.create(
         id=workspace_id or uuid.uuid4(),
         name=name.strip(),
@@ -364,6 +465,53 @@ def refresh_member_count(workspace):
     workspace.save(update_fields=["member_count", "updated_at"])
 
 
+@transaction.atomic
+def remove_workspace_member(membership) -> None:
+    """A'zolikni + shu ish maydonidagi biriktirilgan/kuzatuvchi qatorlarini o'chiradi.
+
+    HAMMASI BITTA TRANZAKSIYADA. Bu yerda beshta yozish bor (assignee, watcher,
+    SpaceMember, membership, `member_count`); ular alohida commit bo'lsa
+    o'rtada yiqilish yarim o'chirilgan a'zoni qoldiradi — masalan `SpaceMember`
+    yashab qolib, §B.4 invariantini buzadi ("SpaceMember hech qachon o'zi
+    bog'liq bo'lgan WorkspaceMember'dan uzoq yashamaydi").
+
+    Ochiq `atomic` bloki `transaction.on_commit` uchun ham SHART: blok
+    bo'lmasa callback DARHOL ishlaydi, ya'ni hali commit bo'lmagan o'chirish
+    haqida `access.revoked` yuboriladi.
+    """
+    from apps.tasks.models import TaskAssignee, TaskWatcher
+
+    workspace = membership.workspace
+    TaskAssignee.objects.filter(
+        user=membership.user, task__list__space__workspace=workspace
+    ).delete()
+    TaskWatcher.objects.filter(
+        user=membership.user, task__list__space__workspace=workspace
+    ).delete()
+    # DESIGN_PERMISSIONS.md §B.4 invariant: SpaceMember never outlives the
+    # WorkspaceMember it depends on.
+    SpaceMember.objects.filter(user=membership.user, space__workspace=workspace).delete()
+    user_id = membership.user_id
+    workspace_id = workspace.id
+    membership.delete()
+    refresh_member_count(workspace)
+    # REST endi 404 qaytaradi, lekin ochiq WebSocket soketi a'zolikni faqat
+    # `connect()` da bir marta tekshirgan — xabarsiz u chiqarilgan odamga
+    # `task.*`/`comment.*` freymlarini oqizishda davom etardi. `space_id=None`
+    # ikkala consumer'ni ham (workspace va list) 4403 bilan yopadi.
+    transaction.on_commit(
+        lambda: events.emit_access_revoked(user_id, workspace_id=workspace_id, space_id=None)
+    )
+
+
+def _emit_list_updated_on_commit(task_list, *, actor=None, client_id=None):
+    """`list.updated` FAQAT commit'dan keyin — rollback bo'lgan o'zgarish
+    hech qachon e'lon qilinmasin."""
+    transaction.on_commit(
+        lambda: events.emit_list_updated(task_list, actor=actor, client_id=client_id)
+    )
+
+
 def refresh_list_counts(task_list, *, actor=None, client_id=None, emit=False):
     from apps.tasks.models import Task
 
@@ -376,7 +524,7 @@ def refresh_list_counts(task_list, *, actor=None, client_id=None, emit=False):
     )
     task_list.save(update_fields=["task_count", "open_task_count", "updated_at"])
     if emit and old != (task_list.task_count, task_list.open_task_count):
-        events.emit_list_updated(task_list, actor=actor, client_id=client_id)
+        _emit_list_updated_on_commit(task_list, actor=actor, client_id=client_id)
 
 
 # --- hard deletes ------------------------------------------------------------
@@ -441,6 +589,30 @@ def create_invitation(workspace, actor, *, email, role) -> Invitation:
     )
 
 
+@transaction.atomic
+def accept_invitation(invitation, user):
+    """`POST invitations/accept/` — a'zolik + taklif holati BITTA tranzaksiyada.
+
+    Ikkiga bo'linsa: a'zolik yaratilib taklif `pending` qolsa token qayta
+    ishlatilardi; teskarisida esa taklif "qabul qilindi" bo'lib a'zolik
+    yaratilmasdi va odam hech qachon kira olmasdi.
+    """
+    if WorkspaceMember.objects.filter(workspace=invitation.workspace, user=user).exists():
+        raise Conflict("You are already a member of this workspace.")
+    member = WorkspaceMember.objects.create(
+        workspace=invitation.workspace,
+        user=user,
+        role=invitation.role,
+        invited_by=invitation.invited_by,
+    )
+    invitation.status = InvitationStatus.ACCEPTED
+    invitation.accepted_at = timezone.now()
+    invitation.accepted_by = user
+    invitation.save(update_fields=["status", "accepted_at", "accepted_by", "updated_at"])
+    refresh_member_count(invitation.workspace)
+    return member
+
+
 # --- list move (fractional position) ----------------------------------------
 
 
@@ -488,8 +660,38 @@ def move_list(task_list, *, folder_id, before_id, after_id, actor, client_id=Non
             if attempt == 2:
                 raise PositionConflict("Could not obtain a stable position after 3 attempts.")
             continue
-    events.emit_list_updated(task_list, actor=actor, client_id=client_id)
+    _emit_list_updated_on_commit(task_list, actor=actor, client_id=client_id)
     return task_list
+
+
+@transaction.atomic
+def update_list(task_list, validated_data, *, actor, client_id=None) -> TaskList:
+    """`PATCH lists/{id}/` — yozish + `list.updated`, bitta tranzaksiyada.
+
+    Nega view'da emas (CLAUDE.md / `apps/realtime/events.py` qoidasi): view
+    hech qanday `atomic` ochmagani uchun u yerdagi emit commit'dan OLDIN
+    ketardi. Keyingi commit yiqilsa mijozlar hech qachon sodir bo'lmagan
+    nomni ko'rsatib turaverardi. `on_commit` esa faqat haqiqatan yozilgan
+    o'zgarishni e'lon qiladi.
+    """
+    for field, value in validated_data.items():
+        setattr(task_list, field, value)
+    task_list.save()
+    _emit_list_updated_on_commit(task_list, actor=actor, client_id=client_id)
+    return task_list
+
+
+@transaction.atomic
+def detach_folder(folder):
+    """`DELETE folders/{id}/?strategy=detach` — ko'chirish + o'chirish, atomik.
+
+    Ikki qadam alohida commit bo'lsa, ikkinchisi yiqilganda ro'yxatlar bo'lim
+    ildizida, jild esa hali o'rnida qolardi — ya'ni "detach" yarim bajarilgan
+    holat. `CASCADE` tufayli teskari tartib esa ro'yxatlarni butunlay
+    yo'qotadi, shuning uchun tartib ham muhim.
+    """
+    detach_folder_lists(folder)
+    folder.delete()
 
 
 @transaction.atomic
@@ -627,7 +829,9 @@ def replace_status_set(*, space=None, task_list=None, data, actor, client_id=Non
             row = existing[sid]
         else:
             if sid:
-                check_client_id(Status, sid)
+                sid = check_client_id(
+                    Status, sid, scope=Status.objects.filter(status_set=status_set)
+                )
             row = Status(id=sid or uuid.uuid4(), status_set=status_set)
         row.name = sdata["name"].strip()
         row.color = sdata.get("color") or "#87909E"

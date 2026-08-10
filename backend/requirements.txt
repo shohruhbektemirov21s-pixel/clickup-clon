@@ -8,6 +8,7 @@ channels==4.3.2
 channels_redis==4.3.0
 colorama==0.4.6
 constantly==23.10.4
+coverage==7.15.4
 cryptography==50.0.0
 daphne==4.2.3
 django-cors-headers==4.9.0
@@ -25,7 +26,6 @@ inflection==0.5.1
 iniconfig==2.3.0
 jsonschema-specifications==2025.9.1
 jsonschema==4.26.0
-model-bakery==1.24.0
 msgpack==1.2.1
 nh3==0.3.6
 packaging==26.3
@@ -37,12 +37,15 @@ Pygments==2.20.0
 PyJWT==2.13.0
 pyOpenSSL==26.4.0
 pytest-asyncio==1.4.0
+pytest-cov==7.1.0
 pytest-django==4.13.0
+pytest-timeout==2.4.0
 pytest==9.1.1
 PyYAML==6.0.3
 redis==8.1.0
 referencing==0.37.0
 rpds-py==2026.6.3
+ruff==0.16.2
 service-identity==26.1.0
 sqlparse==0.5.5
 Twisted==26.4.0

@@ -114,14 +114,25 @@ def apply_task_filters(qs, request, membership):
     return qs
 
 
-def apply_ordering(qs, request, default):
+def ordering_fields(request, default) -> tuple[str, ...]:
+    """Validated `ORDER BY` field list for `?ordering=` (or `default`).
+
+    Ajratilgan sabab: doskaning `group_by=status` javobi bir xil tartibni
+    `Window(order_by=...)` ichida ham ishlatishi kerak — u yerda `QuerySet`
+    emas, maydon nomlari ro'yxati talab qilinadi. Ikki joyda ikki marta
+    yozilgan tartib bir kun ajralib ketardi.
+    """
     ordering = request.query_params.get("ordering")
     if not ordering:
-        return qs.order_by(*default)
+        return tuple(default)
     field = ordering.lstrip("-")
     if field not in ALLOWED_ORDERING_FIELDS:
         raise ValidationError({"ordering": [f"Unsupported ordering field: {field}."]})
-    return qs.order_by(ordering, "created_at")
+    return (ordering, "created_at")
+
+
+def apply_ordering(qs, request, default):
+    return qs.order_by(*ordering_fields(request, default))
 
 
 def include_deleted_requested(request, membership):

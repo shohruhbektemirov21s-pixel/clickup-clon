@@ -46,6 +46,49 @@ services:
         reservations:
           memory: 128M
 
+  # ------------------------------------------------------- migrations (once)
+  # A one-shot job, not a step in the app container's boot.
+  #
+  # Previously `backend` ran with RUN_MIGRATIONS=1 and restart: unless-stopped,
+  # so every restart re-ran migrate, and `docker compose up --scale backend=2`
+  # would have had two containers migrating the same database at the same
+  # time. Django takes a lock per migration, not one for the whole run, so
+  # that interleaves and can half-apply a release.
+  #
+  # Now: this service runs `migrate` and exits; the app containers wait for it
+  # to exit 0 (`service_completed_successfully`) and never migrate themselves.
+  # `docker compose up` still does the right thing with one command.
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+    image: ${BACKEND_IMAGE:-clickup-backend}
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      DEBUG: "False"
+      # The entrypoint must not migrate — `migrate` is this container's CMD.
+      RUN_MIGRATIONS: "0"
+      RUN_COLLECTSTATIC: "0"
+      RUN_SEED_DEMO: "0"
+      LOG_FORMAT: "json"
+      LOG_LEVEL: "INFO"
+    # One shot. If it fails, the app containers never start — which is the
+    # point: a half-migrated database should not start serving traffic.
+    restart: "no"
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    depends_on:
+      db:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
   backend:
     restart: unless-stopped
     environment:
@@ -54,15 +97,29 @@ services:
       DEBUG: "False"
       # Static was already collected into the image at build time.
       RUN_COLLECTSTATIC: "0"
-      RUN_MIGRATIONS: "1"
+      # Explicitly 0: the `migrate` service above owns schema changes. Setting
+      # this back to 1 re-creates the concurrent-migration race the moment
+      # this service is scaled past one replica.
+      RUN_MIGRATIONS: "0"
       RUN_SEED_DEMO: "0"
-      # One TLS-terminating reverse proxy hop in front of the container. Raise
-      # it if you chain more; a wrong value lets clients spoof X-Forwarded-For
-      # and slip past every throttle.
+      # One TLS-terminating reverse proxy hop in front of the container.
+      #
+      # ⚠ This value is correct ONLY when a reverse proxy really is
+      # terminating in front of the container (nginx/Caddy/Traefik), which is
+      # what the rest of this file assumes — `ports` below binds to loopback
+      # precisely so nothing else can reach it. Expose this container directly
+      # and 1 becomes a hole: DRF would take the last-but-one entry of a
+      # client-supplied X-Forwarded-For as the client IP, so every login,
+      # comment and invite throttle could be bypassed by rotating a header.
+      # The application default is 0 (no proxy) for exactly that reason; raise
+      # this only to the number of proxies that actually append to the header.
       NUM_PROXIES: "1"
       # Structured logs for the aggregator.
       LOG_FORMAT: "json"
       LOG_LEVEL: "INFO"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     # Drops the ./backend:/app bind mount; keeps only the data volumes.
     volumes: !override
       - static:/app/staticfiles
@@ -91,3 +148,52 @@ services:
           memory: 768M
         reservations:
           memory: 256M
+
+  # ------------------------------------------------------------------ backups
+  # `pgdata` is a local named volume: if this host's disk dies, every task,
+  # comment and attachment in the tracker dies with it. This service is the
+  # answer to that, and `scripts/README.md` is the runbook for restoring.
+  #
+  # It is a plain loop, not cron: no daemon to supervise, no crontab drift,
+  # and `docker compose logs backup` shows the whole history. Run one
+  # immediately with:
+  #
+  #   docker compose -f docker-compose.yml -f docker-compose.prod.yml   #     run --rm backup /scripts/backup.sh
+  #
+  # postgres:16 (not alpine) so pg_dump exactly matches the server major
+  # version — a newer pg_dump can read an older server, the reverse cannot.
+  backup:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB}
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      # Daily at this UTC hour:minute.
+      BACKUP_AT: ${BACKUP_AT:-02:30}
+      # Keep this many days of dumps. Older ones are pruned after a
+      # *successful* new dump, never before.
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_DIR: /backups
+      MEDIA_DIR: /media
+    volumes:
+      - ./scripts:/scripts:ro
+      - backups:/backups
+      # Uploaded attachments are not in the database. A dump without them
+      # restores a task tracker where every attachment link 404s.
+      - media:/media:ro
+    entrypoint: ["/bin/bash", "/scripts/backup-loop.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+volumes:
+  # Merged with the volumes declared in docker-compose.yml.
+  backups:

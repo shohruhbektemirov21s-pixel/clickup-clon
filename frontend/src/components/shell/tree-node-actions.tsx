@@ -44,15 +44,20 @@ const DELETE_WARNING: Record<TreeEntityKind, string> = {
 
 /**
  * Hover "…" menu on a sidebar tree row: rename + delete.
- * Role gating follows the contract: spaces are admin+, folders/lists member+,
- * and the folder `cascade` strategy is admin+ while `detach` is member+.
+ *
+ * Gating is per **permission code**, resolved inside the owning space by the
+ * caller (`sidebar.tsx`): rename needs `{kind}.update`, delete needs
+ * `{kind}.delete`, and the folder `cascade` strategy needs the separate
+ * `folder.delete_cascade`. They are three different codes and the matrix can
+ * grant them independently, so they are three different props.
  */
 export function TreeNodeActions({
   workspaceId,
   kind,
   id,
   name,
-  canManage,
+  canRename,
+  canDelete,
   canCascade,
   onDeleted,
 }: {
@@ -60,7 +65,11 @@ export function TreeNodeActions({
   kind: TreeEntityKind;
   id: string;
   name: string;
-  canManage: boolean;
+  /** `space.update` / `folder.update` / `list.update`. */
+  canRename: boolean;
+  /** `space.delete` / `folder.delete` / `list.delete`. */
+  canDelete: boolean;
+  /** `folder.delete_cascade` — jild ichidagilarni ham o'chirish. */
   canCascade: boolean;
   onDeleted?: () => void;
 }) {
@@ -79,7 +88,8 @@ export function TreeNodeActions({
   const deleting =
     deleteSpace.isPending || deleteFolder.isPending || deleteList.isPending;
 
-  if (!canManage) return null;
+  // Ikkalasi ham yo'q bo'lsa menyuning o'zi keraksiz.
+  if (!canRename && !canDelete) return null;
 
   const onRenameSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,20 +98,34 @@ export function TreeNodeActions({
       setRenameOpen(false);
       return;
     }
-    await rename.mutateAsync({ kind, id, name: trimmed });
-    setRenameOpen(false);
+    try {
+      await rename.mutateAsync({ kind, id, name: trimmed });
+      setRenameOpen(false);
+    } catch {
+      // Toast mutatsiyadan chiqadi; dialog ochiq qoladi, chunki 409 (nom band)
+      // va 400 tuzatib qayta yuboriladigan xatolar.
+    }
   };
 
+  /**
+   * `ConfirmDeleteDialog.onConfirm` `() => void` — promise tashlanadi,
+   * shuning uchun bu yerda reject bo'lmasligi shart. Ilgari 403/404/409 da
+   * dialog yopilmay qolib, konsolga "unhandled rejection" tushardi.
+   */
   const onDeleteConfirm = async () => {
-    if (kind === "space") {
-      await deleteSpace.mutateAsync({ id, confirmName: name });
-    } else if (kind === "folder") {
-      await deleteFolder.mutateAsync({ id, strategy });
-    } else {
-      await deleteList.mutateAsync(id);
+    try {
+      if (kind === "space") {
+        await deleteSpace.mutateAsync({ id, confirmName: name });
+      } else if (kind === "folder") {
+        await deleteFolder.mutateAsync({ id, strategy });
+      } else {
+        await deleteList.mutateAsync(id);
+      }
+      setDeleteOpen(false);
+      onDeleted?.();
+    } catch {
+      // Toast mutatsiyadan chiqadi; dialog ochiq qoladi.
     }
-    setDeleteOpen(false);
-    onDeleted?.();
   };
 
   return (
@@ -120,19 +144,23 @@ export function TreeNodeActions({
           <MoreHorizontal />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-52">
-          <DropdownMenuItem
-            onClick={() => {
-              setDraftName(name);
-              setRenameOpen(true);
-            }}
-          >
-            <Pencil className="size-4" />
-            Nomini o&apos;zgartirish
-          </DropdownMenuItem>
-          <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
-            <Trash2 className="size-4" />
-            O&apos;chirish
-          </DropdownMenuItem>
+          {canRename ? (
+            <DropdownMenuItem
+              onClick={() => {
+                setDraftName(name);
+                setRenameOpen(true);
+              }}
+            >
+              <Pencil className="size-4" />
+              Nomini o&apos;zgartirish
+            </DropdownMenuItem>
+          ) : null}
+          {canDelete ? (
+            <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
+              <Trash2 className="size-4" />
+              O&apos;chirish
+            </DropdownMenuItem>
+          ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -188,7 +216,7 @@ export function TreeNodeActions({
                   Ichidagilari bilan o&apos;chirish
                   {!canCascade ? (
                     <span className="block text-xs text-muted-foreground">
-                      Faqat admin yoki ega uchun
+                      Buning uchun alohida ruxsat kerak
                     </span>
                   ) : null}
                 </span>

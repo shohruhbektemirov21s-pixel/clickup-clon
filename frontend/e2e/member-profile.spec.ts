@@ -1,7 +1,13 @@
 import { expect, test } from "@playwright/test";
 import type { BrowserContext, Page } from "@playwright/test";
 
-import { USERS, apiRequest, collectPageErrors, firstWorkspace, login, sessionFor } from "./fixtures";
+import {
+  USERS,
+  apiRequest,
+  collectPageErrors,
+  firstWorkspace,
+  signedInContext,
+} from "./fixtures";
 
 /**
  * A'zo profili — /w/{id}/u/{userId}
@@ -10,7 +16,9 @@ import { USERS, apiRequest, collectPageErrors, firstWorkspace, login, sessionFor
  * bo'limlar. UI raqamlari API bilan bir xil bo'lishi tekshiriladi — aks holda
  * ekran ishonchsiz bo'lib qoladi.
  *
- * Login throttle'iga urilmaslik uchun bitta kontekst bo'lishiladi.
+ * Sessiya REST orqali olinadi (`signedInContext`), login formasi bosilmaydi —
+ * shuning uchun bu spec `auth/login/` throttle'iga deyarli tegmaydi va
+ * standart 60 s test byudjeti yetadi.
  */
 
 type Member = { user: { id: string; full_name: string; email: string } };
@@ -36,9 +44,10 @@ test.describe.configure({ mode: "serial" });
 
 test.describe("member profile", () => {
   test.beforeAll(async ({ browser }) => {
-    test.setTimeout(240_000);
-    const session = await sessionFor(USERS.demo);
-    access = session.access;
+    const signedIn = await signedInContext(browser, USERS.demo);
+    context = signedIn.context;
+    page = signedIn.page;
+    access = signedIn.session.access;
     workspaceId = (await firstWorkspace(access)).id;
 
     const roster = await apiRequest<{ results: Member[] }>(
@@ -50,10 +59,6 @@ test.describe("member profile", () => {
     const other = roster.results.find((m) => m.user.email !== USERS.demo.email);
     if (!other) throw new Error("ish maydonida boshqa a'zo yo'q");
     target = other;
-
-    context = await browser.newContext();
-    page = await context.newPage();
-    await login(page, USERS.demo);
   });
 
   test.afterAll(async () => {

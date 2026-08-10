@@ -4,10 +4,19 @@ Nega signal, nega `views.py` emas:
 
 * `user_logged_in` / `user_login_failed` / `user_logged_out` — Django'ning
   `authenticate()` va `login()` ichidan chiqadi. Ya'ni bitta joyga ulanib,
-  **barcha** kirish yo'llarini qamrab olamiz: DRF/simplejwt token endpoint,
-  `/admin/` login formasi, management-command va kelajakdagi SSO backend.
-  View'larga qo'lda `logger.info(...)` qo'shish esa har safar yangi yo'l
-  qo'shilganda unutiladigan va jimgina audit teshigi ochadigan yondashuv.
+  **barcha** kirish yo'llarini qamrab olamiz: `/admin/` login formasi,
+  management-command va kelajakdagi SSO backend. View'larga qo'lda
+  `logger.info(...)` qo'shish esa har safar yangi yo'l qo'shilganda
+  unutiladigan va jimgina audit teshigi ochadigan yondashuv.
+* API kirish yo'li (`POST /api/v1/auth/login/`) endi ayni shu signallarni
+  chiqaradi: `LoginSerializer` `django.contrib.auth.authenticate()` ni
+  chaqiradi (muvaffaqiyatsizlikda `user_login_failed` o'zi chiqadi) va
+  muvaffaqiyatda `user_logged_in` ni **aniq** `request` bilan yuboradi.
+  `login()` ataylab chaqirilmaydi: JWT API sessiya cookie'siga muhtoj emas,
+  bir dona `user_logged_in` esa audit uchun yetarli. Xuddi shunday
+  `auth/demo/` va `auth/logout/` ham signal chiqaradi — aks holda jurnalda
+  faqat `/admin/` ko'rinardi, ya'ni asosiy kirish nuqtasi auditdan tashqarida
+  qolardi (2026-08 AppSec topilmasi).
 * Muvaffaqiyatsiz urinishlar `WARNING` darajasida chiqadi — bitta email yoki
   bitta IP bo'yicha ketma-ket `auth.login_failed` brute-force / credential
   stuffing signali; log shipper'da shu daraja bo'yicha alert qo'yiladi.
@@ -20,13 +29,13 @@ maskalaydi, biz esa faqat email/IP/User-Agent ni olamiz.
 
 import logging
 
-from django.conf import settings
 from django.contrib.auth.signals import (
     user_logged_in,
     user_logged_out,
     user_login_failed,
 )
 from django.dispatch import receiver
+from rest_framework.settings import api_settings
 
 logger = logging.getLogger("apps.accounts.auth")
 
@@ -35,24 +44,59 @@ logger = logging.getLogger("apps.accounts.auth")
 _USER_AGENT_MAX = 200
 
 
-def _client_ip(request):
-    """Mijoz IP'si.
+#: Ishonchli proxy soni aniqlanmagan bo'lsa **hech biriga** ishonmaymiz.
+#: DRF'ning o'z sukut qiymati `None` = "butun `X-Forwarded-For` zanjirini ol",
+#: ya'ni aynan shu funksiya bartaraf qilmoqchi bo'lgan soxtalashtirish.
+_DEFAULT_NUM_PROXIES = 0
 
-    `X-Forwarded-For` — mijoz yuboradigan, ya'ni SOXTALASHTIRISH mumkin bo'lgan
-    sarlavha. Unga faqat oldinda ishonchli proxy turgani ma'lum bo'lganda
-    (`SECURE_PROXY_SSL_HEADER` sozlangan) ishonamiz; aks holda faqat
-    `REMOTE_ADDR`. Aks holda buzg'unchi audit jurnaliga istalgan IP'ni yozib,
-    o'z izini boshqa manzilga o'tkazib yuborardi.
+#: IP maydonining maksimal uzunligi (log injection/DoS'ga qarshi).
+_IP_MAX = 64
+
+
+def _num_proxies() -> int:
+    """Oldimizda turgan **ishonchli** proxy soni.
+
+    Qiymat DRF sozlamasidan (`REST_FRAMEWORK["NUM_PROXIES"]`) o'qiladi —
+    throttling ham aynan shundan foydalanadi, ya'ni "mijoz kim" degan savolga
+    audit jurnali va rate-limit **bir xil** javob beradi. Sozlanmagan bo'lsa
+    fail-closed: faqat `REMOTE_ADDR`.
+    """
+    value = getattr(api_settings, "NUM_PROXIES", None)
+    if value is None:
+        return _DEFAULT_NUM_PROXIES
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return _DEFAULT_NUM_PROXIES
+    return max(value, 0)
+
+
+def _client_ip(request):
+    """Mijoz IP'si — `X-Forwarded-For` zanjirining O'NGDAN `NUM_PROXIES`-chisi.
+
+    `X-Forwarded-For` — mijoz yuboradigan sarlavha. Har bir proxy o'zi ko'rgan
+    manzilni zanjirning **oxiriga** qo'shadi, shuning uchun ishonchli hop faqat
+    o'ngdan sanaganda topiladi. Ilgari bu yerda eng chapdagi element olinardi:
+    buzg'unchi `X-Forwarded-For: 8.8.8.8` yuborib, `auth.login_failed`
+    yozuvlarini istalgan manzilga yozdirib yuborardi va per-IP brute-force
+    alerti (bu modul aynan shuning uchun yozilgan) butunlay ko'r bo'lardi.
+
+    Indeksatsiya DRF `BaseThrottle.get_ident()` bilan bir xil:
+    `addrs[-min(NUM_PROXIES, len(addrs))]`.
     """
     if request is None:
         return None
     meta = getattr(request, "META", None) or {}
-    if getattr(settings, "SECURE_PROXY_SSL_HEADER", None):
-        forwarded = meta.get("HTTP_X_FORWARDED_FOR")
-        if forwarded:
-            # Eng chapdagi — asl mijoz; qolganlari proxy zanjiri.
-            return forwarded.split(",")[0].strip()[:64] or None
-    return meta.get("REMOTE_ADDR") or None
+    remote_addr = (meta.get("REMOTE_ADDR") or "")[:_IP_MAX] or None
+
+    num_proxies = _num_proxies()
+    forwarded = meta.get("HTTP_X_FORWARDED_FOR")
+    if num_proxies == 0 or not forwarded:
+        return remote_addr
+
+    addrs = [part.strip() for part in forwarded.split(",")]
+    client = addrs[-min(num_proxies, len(addrs))][:_IP_MAX]
+    return client or remote_addr
 
 
 def _user_agent(request):

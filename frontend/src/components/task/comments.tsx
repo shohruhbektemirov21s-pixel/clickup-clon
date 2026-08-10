@@ -6,21 +6,33 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { useComments, useMe, useWorkspace } from "@/hooks/queries";
-import { useParams } from "next/navigation";
+import { useComments } from "@/hooks/queries";
 import {
   useCreateComment,
   useDeleteComment,
   useUpdateComment,
 } from "@/hooks/mutations";
+import type { ListPermissions } from "@/components/list/use-list-permissions";
 import { initials, richBodyToText, textToRichBody, timeAgo } from "@/lib/format";
 import type { Comment } from "@/types/api";
 
-export function CommentsThread({ taskId }: { taskId: string }) {
+/**
+ * Vazifa kommentlari (§12).
+ *
+ * Ilgari bu yerda rol tekshiruvi turardi (`isAuthor || isAdmin`), kompozitor
+ * esa umuman gate qilinmagan edi. Endi qaror to'liq kodlarga tayanadi:
+ * `comment.create`, `comment.update_own`, `comment.delete_own`,
+ * `comment.delete_any` — serverdagi `CommentDetailView` bilan bir xil mantiq
+ * (muallif invarianti ruxsatdan USTUN: `comment.update_any` kodi yo'q).
+ */
+export function CommentsThread({
+  taskId,
+  perms,
+}: {
+  taskId: string;
+  perms: ListPermissions;
+}) {
   const { data, isPending } = useComments(taskId);
-  const params = useParams<{ workspaceId?: string }>();
-  const { data: workspace } = useWorkspace(params?.workspaceId ?? "");
-  const { data: me } = useMe();
   const [replyTo, setReplyTo] = React.useState<Comment | null>(null);
 
   const comments = data?.results ?? [];
@@ -34,7 +46,8 @@ export function CommentsThread({ taskId }: { taskId: string }) {
     }
   }
 
-  const isAdmin = workspace?.my_role === "owner" || workspace?.my_role === "admin";
+  // Javob ham yangi komment — `comment.create` bo'lmasa tugma ko'rsatilmaydi.
+  const canReply = perms.canCreateComment;
 
   return (
     <div className="flex flex-col px-6 py-4">
@@ -56,7 +69,9 @@ export function CommentsThread({ taskId }: { taskId: string }) {
         </div>
       ) : topLevel.length === 0 ? (
         <p className="mb-3 text-sm text-muted-foreground">
-          Hozircha kommentlar yo&apos;q. Suhbatni boshlang.
+          {canReply
+            ? "Hozircha kommentlar yo'q. Suhbatni boshlang."
+            : "Hozircha kommentlar yo'q."}
         </p>
       ) : (
         <ul className="flex flex-col gap-4">
@@ -65,18 +80,12 @@ export function CommentsThread({ taskId }: { taskId: string }) {
               <CommentItem
                 taskId={taskId}
                 comment={comment}
-                meId={me?.id}
-                isAdmin={isAdmin}
-                onReply={() => setReplyTo(comment)}
+                perms={perms}
+                onReply={canReply ? () => setReplyTo(comment) : undefined}
               />
               {(repliesByParent.get(comment.id) ?? []).map((reply) => (
                 <div key={reply.id} className="mt-3 ml-9">
-                  <CommentItem
-                    taskId={taskId}
-                    comment={reply}
-                    meId={me?.id}
-                    isAdmin={isAdmin}
-                  />
+                  <CommentItem taskId={taskId} comment={reply} perms={perms} />
                 </div>
               ))}
             </li>
@@ -84,7 +93,15 @@ export function CommentsThread({ taskId }: { taskId: string }) {
         </ul>
       )}
 
-      <Composer taskId={taskId} replyTo={replyTo} onClearReply={() => setReplyTo(null)} />
+      {canReply ? (
+        <Composer taskId={taskId} replyTo={replyTo} onClearReply={() => setReplyTo(null)} />
+      ) : (
+        <p className="mt-4 text-xs text-muted-foreground">
+          {perms.isLoading
+            ? "Ruxsatlar tekshirilmoqda…"
+            : "Bu vazifaga komment yozish uchun ruxsatingiz yo'q."}
+        </p>
+      )}
     </div>
   );
 }
@@ -92,14 +109,12 @@ export function CommentsThread({ taskId }: { taskId: string }) {
 function CommentItem({
   taskId,
   comment,
-  meId,
-  isAdmin,
+  perms,
   onReply,
 }: {
   taskId: string;
   comment: Comment;
-  meId?: string;
-  isAdmin: boolean;
+  perms: ListPermissions;
   onReply?: () => void;
 }) {
   const updateComment = useUpdateComment(taskId);
@@ -107,9 +122,9 @@ function CommentItem({
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState("");
 
-  const isAuthor = !!meId && comment.author?.id === meId;
-  const canEdit = isAuthor; // author only — admins may NOT edit others' (§12)
-  const canDelete = isAuthor || isAdmin;
+  const authorId = comment.author?.id;
+  const canEdit = perms.canEditComment(authorId);
+  const canDelete = perms.canDeleteComment(authorId);
   const text = richBodyToText(comment.body_html);
 
   const commitEdit = () => {
@@ -174,6 +189,7 @@ function CommentItem({
                 size="icon-xs"
                 aria-label="Kommentni o'chirish"
                 className="text-danger"
+                disabled={deleteComment.isPending}
                 onClick={() => deleteComment.mutate(comment.id)}
               >
                 <Trash2 />
@@ -214,15 +230,25 @@ function Composer({
   const createComment = useCreateComment(taskId);
   const [draft, setDraft] = React.useState("");
 
-  const send = () => {
+  /**
+   * Qoralamani FAQAT muvaffaqiyatdan keyin tozalaymiz. Ilgari `mutate` dan
+   * so'ng darhol `setDraft("")` chaqirilardi — 403 / 429 / oflaynda
+   * yozilgan matn qaytarib bo'lmaydigan darajada yo'qolardi.
+   */
+  const send = async () => {
     const trimmed = draft.trim();
     if (!trimmed) return;
-    createComment.mutate({
-      ...textToRichBody(trimmed),
-      parent_id: replyTo?.id ?? null,
-    });
-    setDraft("");
-    onClearReply();
+    try {
+      await createComment.mutateAsync({
+        ...textToRichBody(trimmed),
+        parent_id: replyTo?.id ?? null,
+      });
+      setDraft("");
+      onClearReply();
+    } catch {
+      // Xato toast'i mutatsiyaning `onError` idan chiqadi; qoralama joyida
+      // qoladi, foydalanuvchi qayta yuborishi mumkin.
+    }
   };
 
   return (
@@ -248,7 +274,7 @@ function Composer({
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
               e.preventDefault();
-              send();
+              void send();
             }
           }}
         />
@@ -256,7 +282,7 @@ function Composer({
           size="icon-sm"
           aria-label="Yuborish"
           disabled={!draft.trim() || createComment.isPending}
-          onClick={send}
+          onClick={() => void send()}
         >
           <Send />
         </Button>

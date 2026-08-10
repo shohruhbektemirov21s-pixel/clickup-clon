@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Browser, type BrowserContext, type Page } from "@playwright/test";
 
 // ---------------------------------------------------------------------------
 // Muhit
@@ -16,6 +16,9 @@ export const API_BASE_URL =
 
 /** Test ma'lumotlarining nomi shu prefiks bilan boshlanadi (tozalash oson). */
 export const E2E_PREFIX = "E2E ";
+
+/** `src/stores/auth-store.ts` — sessiya shu kalitda saqlanadi. */
+const REFRESH_STORAGE_KEY = "clickish.refresh";
 
 // ---------------------------------------------------------------------------
 // Demo hisoblar (backend `seed_demo` buyrug'idan)
@@ -102,43 +105,61 @@ function apiUrl(path: string, query?: Record<string, string | number>): string {
   return url.toString();
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Login throttle ishga tushganda beriladigan xabar.
+ *
+ * Bu yerda ATAYLAB kutilmaydi. Rate limiter'ni uxlab o'tkazish testni
+ * sekinlashtiradi va (avvalgi tahrirda shunday bo'lgan) test byudjetidan
+ * uzunroq uyquga ketib, sababni yashiradigan timeout'ga olib keladi. Throttle
+ * urilishi = konfiguratsiya xatosi, uni darhol aytish kerak.
+ */
+function throttleAdvice(email: string, detail: string): Error {
+  return new Error(
+    [
+      `auth/login/ throttled (${email}): ${detail}`,
+      "",
+      "E2E to'plami login cheklovini kutib o'tirmaydi. Backend'ni shunday",
+      "ishga tushiring (CI ham xuddi shunday qiladi):",
+      "",
+      "  AUTH_THROTTLE_RATE=1000/min AUTH_BURST_THROTTLE_RATE=1000/min \\",
+      "    ../.venv/Scripts/python.exe manage.py runserver",
+      "",
+      "Throttle mantig'ining o'zi backend testlarida tekshiriladi",
+      "(apps/accounts) — uni E2E'da qayta tekshirish shart emas.",
+    ].join("\n"),
+  );
+}
 
 /**
- * REST orqali kirish. Brauzersiz — `fetch` bilan token oladi, keyin shu token
- * bilan test ma'lumotini tayyorlash mumkin.
+ * REST orqali kirish. Brauzersiz — `fetch` bilan token juftligini oladi.
  *
- * Backend `auth/login/` ni cheklaydi (email bo'yicha 5/min, IP bo'yicha
- * 10/min), shuning uchun `429` da server aytgan muddat kutilib, bir marta
- * qayta uriniladi. Testlar login so'rovini isrof qilmasligi uchun
- * `sessionFor()` dan foydalaning.
+ * Har chaqiruv **yangi** sessiya yaratadi. Keshlash `sessionFor()` da; brauzer
+ * uchun esa har doim yangisi kerak (pastdagi `signIn` izohiga qarang).
  */
 export async function apiLogin(
   email: string,
   password: string,
 ): Promise<AuthSession> {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const res = await fetch(apiUrl("auth/login/"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
-    if (res.ok) return (await res.json()) as AuthSession;
+  const res = await fetch(apiUrl("auth/login/"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  if (res.ok) return (await res.json()) as AuthSession;
 
-    const text = await res.text();
-    if (res.status === 429 && attempt === 0) {
-      const seconds = Number(/available in (\d+) seconds/.exec(text)?.[1] ?? 60);
-      await sleep((seconds + 2) * 1000);
-      continue;
-    }
-    throw new Error(`apiLogin(${email}) muvaffaqiyatsiz: ${res.status} ${text}`);
-  }
-  throw new Error(`apiLogin(${email}) muvaffaqiyatsiz.`);
+  const text = await res.text();
+  if (res.status === 429) throw throttleAdvice(email, text.slice(0, 200));
+  throw new Error(`apiLogin(${email}) muvaffaqiyatsiz: ${res.status} ${text}`);
 }
 
 /**
- * Foydalanuvchi sessiyasi — worker jarayonida keshlanadi, ya'ni bitta run
- * davomida har bir hisob uchun **bitta** `auth/login/` so'rovi ketadi.
+ * REST chaqiruvlari uchun sessiya — worker jarayonida keshlanadi, ya'ni bitta
+ * run davomida har bir hisob uchun **bitta** `auth/login/` so'rovi ketadi.
+ *
+ * Bu sessiyaning `refresh` tokeni brauzerga BERILMAYDI: SimpleJWT
+ * (`ROTATE_REFRESH_TOKENS` + `BLACKLIST_AFTER_ROTATION`) tokenni birinchi
+ * ishlatilishida almashtirib eskisini qora ro'yxatga qo'yadi, shuning uchun
+ * bitta refresh token faqat bitta iste'molchiga yetadi.
  */
 const sessionCache = new Map<string, AuthSession>();
 
@@ -149,7 +170,6 @@ export async function sessionFor(user: DemoUser): Promise<AuthSession> {
   sessionCache.set(user.email, session);
   return session;
 }
-
 
 /** Autentifikatsiyalangan REST so'rovi. `204` da `undefined` qaytadi. */
 export async function apiRequest<T>(
@@ -216,12 +236,27 @@ export async function createTask(
   });
 }
 
-/** Vazifani o'chirish (soft delete). Tozalashda xatolarni yutadi. */
-export async function deleteTaskQuietly(token: string, taskId: string): Promise<void> {
+/** Vazifani o'chirish (soft delete). Xatoni YUTMAYDI. */
+export async function deleteTask(token: string, taskId: string): Promise<void> {
+  await apiRequest(token, `tasks/${taskId}/`, { method: "DELETE" });
+}
+
+/**
+ * `finally` blokidagi tozalash.
+ *
+ * `finally` ichidan otilgan xato testning HAQIQIY xatosini bosib ketadi,
+ * shuning uchun bu yerda qayta otilmaydi — lekin jimgina ham yutilmaydi:
+ * xabar konsolga chiqadi va `global-teardown.ts` `E2E ` prefiksli qolgan
+ * vazifalarni supurib, biror nima qolib ketgan bo'lsa **runni yiqitadi**.
+ */
+export async function deleteTaskAfterTest(token: string, taskId: string): Promise<void> {
   try {
-    await apiRequest(token, `tasks/${taskId}/`, { method: "DELETE" });
-  } catch {
-    // Tozalash — test natijasiga ta'sir qilmasin.
+    await deleteTask(token, taskId);
+  } catch (err) {
+    console.error(
+      `[e2e cleanup] tasks/${taskId}/ o'chmadi: ${(err as Error).message}\n` +
+        "  → global-teardown bu vazifani supurishga urinadi va uddalay olmasa run yiqiladi.",
+    );
   }
 }
 
@@ -231,88 +266,196 @@ export function uniqueTitle(label: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// UI orqali kirish
+// Huquqlar matritsasi (permissions.spec.ts + global-teardown.ts)
 // ---------------------------------------------------------------------------
 
 /**
- * Hidratsiyadan oldin yozilgan qiymatni React nazorat qilinadigan input
- * tozalab yuboradi. Shuning uchun qiymat `inputValue()` bilan tasdiqlanadi va
- * kerak bo'lsa qayta yoziladi.
+ * Rol-huquq matritsasini standart holatga qaytaradi. Xatoni YUTMAYDI —
+ * yutilgan reset demo ish maydonini butun run davomida (va keyin ham)
+ * o'zgargan holda qoldiradi, keyingi spec'lar esa buni sababsiz qizil
+ * natijada ko'radi.
  */
-async function fillStable(page: Page, selector: string, value: string): Promise<void> {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    await page.fill(selector, value);
-    await page.waitForTimeout(200);
-    if ((await page.inputValue(selector)) === value) return;
-  }
-  throw new Error(`"${selector}" maydoniga qiymat yozilmadi (hidratsiya muammosi).`);
+export async function resetRolePermissions(
+  token: string,
+  workspaceId: string,
+): Promise<void> {
+  await apiRequest<void>(token, `workspaces/${workspaceId}/role-permissions/reset/`, {
+    method: "POST",
+    body: { role: null },
+  });
 }
 
-/** Login formasini hidratsiya tugagach to'ldirib yuboradi. */
-async function submitLoginForm(page: Page, user: DemoUser): Promise<void> {
-  await page.goto("/login");
-  await page.waitForLoadState("networkidle");
-  await page.waitForTimeout(400);
+// ---------------------------------------------------------------------------
+// Sessiyani brauzerga berish (login formasidan o'tmasdan)
+// ---------------------------------------------------------------------------
 
-  await fillStable(page, "#email", user.email);
-  await fillStable(page, "#password", user.password);
+/**
+ * `storageState` — `clickish.refresh` kaliti bilan.
+ *
+ * Ilova yuklanganda `src/app/providers.tsx` dagi `SessionBootstrap` shu
+ * tokenni o'qib `auth/refresh/` ga boradi va sessiyani tiklaydi. `auth/refresh/`
+ * throttle qilinmagan (`apps/accounts/views.py:RefreshView`), demak bu yo'l
+ * rate limiter'ga umuman tegmaydi.
+ */
+export function storageStateFor(session: AuthSession) {
+  return {
+    cookies: [],
+    origins: [
+      {
+        origin: new URL(APP_BASE_URL).origin,
+        localStorage: [{ name: REFRESH_STORAGE_KEY, value: session.refresh }],
+      },
+    ],
+  };
+}
+
+/**
+ * Autentifikatsiya qilingan brauzer konteksti — login formasisiz.
+ *
+ * NEGA forma emas: login formasi orqali kirish sahifa yuklash + hidratsiya +
+ * throttle degani va u testning aynan tekshirmoqchi bo'lgan narsasi EMAS
+ * (login formasining o'zi `auth.spec.ts` da tekshiriladi). Bu yerda esa
+ * sessiya REST orqali olinadi va `localStorage` ga qo'yiladi — deterministik
+ * va bir necha barobar tez.
+ *
+ * Har kontekstga YANGI sessiya: refresh token birinchi ishlatilishida
+ * rotatsiya qilinib eskisi blacklist'ga tushadi, ya'ni bitta tokenni ikkita
+ * kontekst bo'lisha olmaydi.
+ */
+export async function signedInContext(
+  browser: Browser,
+  user: DemoUser,
+): Promise<{ context: BrowserContext; page: Page; session: AuthSession }> {
+  const session = await apiLogin(user.email, user.password);
+  const context = await browser.newContext({ storageState: storageStateFor(session) });
+  const page = await context.newPage();
+  return { context, page, session };
+}
+
+/**
+ * Mavjud sahifani (masalan Playwright bergan `page` fixture'ini) login
+ * formasidan o'tmasdan autentifikatsiya qiladi.
+ *
+ * `localStorage` origin'ga bog'langan, shuning uchun avval ilova origin'i
+ * yuklanishi kerak — buning uchun eng arzoni `/login`.
+ */
+export async function signIn(page: Page, user: DemoUser): Promise<AuthSession> {
+  const session = await apiLogin(user.email, user.password);
+  const appOrigin = new URL(APP_BASE_URL).origin;
+  let current: string | null = null;
+  try {
+    current = new URL(page.url()).origin;
+  } catch {
+    current = null; // about:blank
+  }
+  if (current !== appOrigin) await page.goto("/login");
+
+  await page.evaluate(
+    ([key, value]) => window.localStorage.setItem(key, value),
+    [REFRESH_STORAGE_KEY, session.refresh] as const,
+  );
+  return session;
+}
+
+// ---------------------------------------------------------------------------
+// UI orqali kirish (FAQAT login formasining o'zini tekshiradigan testlar uchun)
+// ---------------------------------------------------------------------------
+
+/**
+ * React hidratsiyasi tugaganini kutadi.
+ *
+ * React hidratsiya paytida DOM tuguniga `__reactFiber$<hash>` xususiyatini
+ * o'rnatadi — u paydo bo'lgani "bu element endi React nazoratida" degani.
+ * Shu sababli hidratsiyadan oldin yozilgan qiymatni React tozalab yuborishi
+ * mumkin bo'lgan poyga yo'q bo'ladi: avvalgi tahrirdagi "8 marta yozib ko'r,
+ * orasida 200 ms kut" sikli aynan shu poygani yashirar edi.
+ */
+export async function waitForHydration(page: Page, selector: string): Promise<void> {
+  await page.waitForFunction(
+    (sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return false;
+      return Object.keys(el).some((key) => key.startsWith("__reactFiber$"));
+    },
+    selector,
+    { timeout: 20_000 },
+  );
+}
+
+/** Hidratsiyadan keyin yozadi va qiymat o'rnida qolganini tasdiqlaydi. */
+export async function fillHydrated(
+  page: Page,
+  selector: string,
+  value: string,
+): Promise<void> {
+  await waitForHydration(page, selector);
+  await page.fill(selector, value);
+  await expect(page.locator(selector)).toHaveValue(value);
+}
+
+/** Login formasi to'liq tayyor (hidratsiya tugagan). */
+export async function gotoLoginForm(page: Page): Promise<void> {
+  await page.goto("/login");
+  await expect(page.locator("form")).toBeVisible();
+  await waitForHydration(page, "#email");
+}
+
+/**
+ * Login formasi orqali kirish — HAQIQIY forma yo'li.
+ *
+ * Faqat login oqimining o'zini tekshiradigan testlar uchun. Boshqa hamma joyda
+ * `signIn()` / `signedInContext()` ishlating: ular tezroq va throttle'ga
+ * tegmaydi.
+ */
+export async function login(page: Page, user: DemoUser): Promise<void> {
+  await gotoLoginForm(page);
+  await fillHydrated(page, "#email", user.email);
+  await fillHydrated(page, "#password", user.password);
 
   // `exact` bo'lmasa "Demo rejimda kirish" tugmasi ham mos keladi.
   await page.getByRole("button", { name: "Kirish", exact: true }).click();
-}
 
-/**
- * Login formasi orqali kirish.
- *
- * Hidratsiya tugashini kutadi (`networkidle` + kichik pauza), maydonlarni
- * to'ldirib qiymatni tasdiqlaydi, so'ng yuboradi. Muvaffaqiyatda `/login` dan
- * chiqib ketiladi.
- *
- * Backend loginni cheklaydi (email bo'yicha 5/min). "Urinishlar juda ko'p"
- * bannerini ko'rsa, oyna bo'shashini kutib bir marta qayta uriniladi.
- */
-/**
- * Sessiyani `localStorage` ga oldindan joylash MUMKIN EMAS: SimpleJWT refresh
- * tokenni birinchi ishlatishda rotatsiya qilib eskisini blacklist'ga qo'yadi,
- * shuning uchun bitta keshlangan token faqat bitta testga yetadi. Login shu
- * sababli forma orqali qoladi; throttle'ni yumshatish uchun spec'lar bitta
- * kontekstni bo'lishadi va hooklarga uzunroq timeout beriladi.
- */
-export async function login(page: Page, user: DemoUser): Promise<void> {
-  const attempts = 3;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    await submitLoginForm(page, user);
+  const left = await page
+    .waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 20_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (left) return;
 
-    const left = await page
-      .waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 20_000 })
-      .then(() => true)
-      .catch(() => false);
-    if (left) return;
-
-    // Next.js ning `__next-route-announcer__` elementi ham role="alert" —
-    // shuning uchun aynan formadagi banner o'qiladi.
-    const banner = await page
-      .locator('form p[role="alert"]')
-      .first()
-      .textContent()
-      .catch(() => null);
-    if (banner?.includes("Urinishlar juda ko'p") && attempt < attempts - 1) {
-      // Throttle oynasi (1 daqiqa) bo'shashini kutamiz.
-      await page.waitForTimeout(62_000);
-      continue;
-    }
-    throw new Error(`login(${user.email}) muvaffaqiyatsiz. Banner: ${banner ?? "yo'q"}`);
+  // Next.js ning `__next-route-announcer__` elementi ham role="alert" —
+  // shuning uchun aynan formadagi banner o'qiladi.
+  const banner = await page
+    .locator('form p[role="alert"]')
+    .first()
+    .textContent()
+    .catch(() => null);
+  if (banner?.includes("Urinishlar juda ko'p")) {
+    throw throttleAdvice(user.email, "forma banneri: Urinishlar juda ko'p");
   }
+  throw new Error(`login(${user.email}) muvaffaqiyatsiz. Banner: ${banner ?? "yo'q"}`);
 }
 
-/** Kirgan foydalanuvchining birinchi ish maydoni sahifasini ochadi. */
-export async function gotoFirstWorkspace(page: Page, user: DemoUser): Promise<string> {
-  const session = await sessionFor(user);
-  const workspace = await firstWorkspace(session.access);
-  await login(page, user);
-  await page.goto(`/w/${workspace.id}`);
-  await page.waitForLoadState("networkidle");
-  return workspace.id;
+// ---------------------------------------------------------------------------
+// Deterministik kutishlar (`networkidle` o'rniga)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ilova qobig'i chizilganini kutadi.
+ *
+ * `waitForLoadState("networkidle")` ATAYLAB ishlatilmaydi: Playwright uni
+ * tavsiya qilmaydi va bu sahifalar ochiq WebSocket ushlab turadi — "500 ms
+ * jimlik" hech qachon kafolatlanmaydi. Ko'rinadigan element esa aynan
+ * testga kerak bo'lgan shart.
+ */
+export async function waitForAppShell(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "Hisob menyusi" })).toBeVisible({
+    timeout: 30_000,
+  });
+}
+
+/** Ish maydoni sahifasiga o'tib, qobiq chizilishini kutadi. */
+export async function gotoWorkspace(page: Page, workspaceId: string): Promise<void> {
+  await page.goto(`/w/${workspaceId}`);
+  await waitForAppShell(page);
 }
 
 /**

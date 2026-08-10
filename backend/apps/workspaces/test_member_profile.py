@@ -5,7 +5,8 @@ faoliyat tasmasi har doim CHAQIRUVCHINING ko'rish doirasida qoladi, a'zo
 bo'lmagan `user_id` esa 404 beradi (403 emas — mavjudlik oshkor qilinmaydi).
 """
 
-from datetime import timedelta
+from datetime import datetime, timedelta
+from datetime import timezone as dt_timezone
 
 import pytest
 from django.utils import timezone
@@ -26,6 +27,23 @@ def profile_url(workspace_id, user_id):
 
 def activity_url(workspace_id):
     return f"/api/v1/workspaces/{workspace_id}/activity/"
+
+
+#: Qat'iy lahza: 2026-03-17, 12:00 UTC — kunning O'RTASI.
+#:
+#: Nega kerak: `due_today` = `due_date >= now AND due_date < <tun yarmi>`,
+#: va tun yarmi CHAQIRUVCHINING vaqt mintaqasida hisoblanadi. "now + 2 soat"
+#: ga tayangan test 22:00–24:00 UTC oralig'ida ishga tushsa muddat ERTANGI
+#: kunga o'tib ketadi va `due_today == 0` bo'ladi — ya'ni har kuni ikki soat
+#: kafolatlangan qizil. Lahzani qotirish bu oynani butunlay yopadi.
+FROZEN_NOW = datetime(2026, 3, 17, 12, 0, tzinfo=dt_timezone.utc)
+
+
+@pytest.fixture
+def frozen_now(monkeypatch):
+    """`timezone.now()` ni `FROZEN_NOW` ga qotiradi (view ham, test ham)."""
+    monkeypatch.setattr(timezone, "now", lambda: FROZEN_NOW)
+    return FROZEN_NOW
 
 
 def _grant(env, role, code):
@@ -101,12 +119,12 @@ def test_owner_sees_own_profile(env):
     assert body["spaces"][0]["open_tasks"] == 1
 
 
-def test_member_sees_another_members_profile_with_buckets(env):
-    now = timezone.now()
+def test_member_sees_another_members_profile_with_buckets(env, frozen_now):
+    now = frozen_now
     _make_task(env, env.list, "Muddati o'tgan", assignees=[env.admin],
                due_date=now - timedelta(days=2))
     _make_task(env, env.list, "Bugun kechqurun", assignees=[env.admin],
-               due_date=now + timedelta(hours=2))
+               due_date=now + timedelta(hours=2))  # 14:00 UTC, o'sha kun
     _make_task(env, env.list, "Muddatsiz", assignees=[env.admin])
 
     response = env.member_client.get(profile_url(env.workspace.id, env.admin.id))
@@ -118,6 +136,29 @@ def test_member_sees_another_members_profile_with_buckets(env):
     # bilan bir xil qoida.
     assert stats["due_today"] == 1
     assert response.json()["role"] == "admin"
+
+
+def test_due_today_window_ends_at_the_callers_midnight(env, frozen_now):
+    """Kun chegarasi CHAQIRUVCHINING mintaqasida — bu test buni qulflaydi.
+
+    Qotirilgan lahza 12:00 UTC; chaqiruvchi Tokioda (UTC+9), ya'ni mahalliy
+    vaqt 21:00 va mahalliy tun yarmi = 15:00 UTC. Demak 14:00 UTC hali
+    "bugun", 16:00 UTC esa allaqachon "ertaga" — ikkinchisi `due_today` ga
+    ham, `overdue` ga ham kirmaydi.
+    """
+    env.member.timezone = "Asia/Tokyo"
+    env.member.save(update_fields=["timezone"])
+    _make_task(env, env.list, "Bugun (Tokio)", assignees=[env.admin],
+               due_date=frozen_now + timedelta(hours=2))   # 14:00Z < 15:00Z
+    _make_task(env, env.list, "Ertaga (Tokio)", assignees=[env.admin],
+               due_date=frozen_now + timedelta(hours=4))   # 16:00Z >= 15:00Z
+
+    stats = env.member_client.get(
+        profile_url(env.workspace.id, env.admin.id)
+    ).json()["stats"]
+    assert stats["open_tasks"] == 2
+    assert stats["due_today"] == 1
+    assert stats["overdue_tasks"] == 0
 
 
 def test_completed_and_comment_counters(env):

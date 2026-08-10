@@ -1,6 +1,19 @@
 name: CI
 
-# Asosiy CI: backend (Django + pytest) va frontend (Next.js) mustaqil ishlaydi.
+# Asosiy CI.
+#
+#   backend         — Linux/PostgreSQL 16: pytest + coverage darvozasi + ruff +
+#                     OpenAPI sxema ratchet'i. Prod shakli.
+#   backend-sqlite  — Windows/SQLite: dasturchining kundalik muhiti. `position`
+#                     satrlarining taqqoslanishi (collation) va `icontains`
+#                     semantikasi ikki backend'da bir xil emas — shuning uchun
+#                     ikkalasi ham tekshiriladi.
+#   frontend        — eslint + tsc + next build
+#   e2e             — Playwright HAQIQIY stack ustida (Postgres + Redis +
+#                     Daphne + next start). Ilgari bu umuman ishlamas edi:
+#                     23 ta test faqat odam uchta jarayonni qo'lda ko'targanda
+#                     tekshirilardi.
+#   docker          — ikkala Dockerfile ham hali quriladimi
 on:
   push:
     branches: [main]
@@ -14,11 +27,29 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # ---------------------------------------------------------------- ratchets
+  # Ikkala son ham O'LCHANGAN, taxmin qilinmagan, va faqat YUQORIGA
+  # ko'tariladi: qizil natijani yashirish uchun pasaytirish darvozani
+  # o'chirish bilan barobar.
+  #
+  # Coverage poli ATAYLAB bu yerda emas — u `backend/.coveragerc` dagi
+  # `fail_under` da (2026-08-10 da o'lchangan 83.04% → 83). Bitta manba
+  # bo'lgani uchun lokal `pytest --cov` va CI bir xil darvozani qo'llaydi.
+  #
+  # drf-spectacular: 2026-08-10 da 54 ta noyob xato ("unable to guess
+  # serializer" — `serializer_class` siz APIView'lar). `--fail-on-warn` ni
+  # hozir yoqib bo'lmaydi, lekin backlog o'sishi ham mumkin emas.
+  SCHEMA_UNIQUE_ERROR_BUDGET: "54"
+
 jobs:
+  # ==========================================================================
+  # Backend — prod shakli (Linux + PostgreSQL 16)
+  # ==========================================================================
   backend:
-    name: Backend (Django 5.2 / Python 3.14)
+    name: Backend (Linux · PostgreSQL 16 · py3.14)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     services:
       postgres:
@@ -49,7 +80,7 @@ jobs:
     # backend/.env.example bilan sinxron. Qiymatlar faqat CI uchun.
     env:
       DEBUG: "False"
-      SECRET_KEY: "ci-dummy-not-a-real-secret-3f8a1c9e4b7d2056"
+      SECRET_KEY: "ci-dummy-not-a-real-secret-3f8a1c9e4b7d2056-padded-to-fifty-plus"
       ALLOWED_HOSTS: "localhost,127.0.0.1"
       DATABASE_URL: "postgres://clickup:clickup@localhost:5432/clickup_ci"
       REDIS_URL: "redis://localhost:6379/0"
@@ -58,6 +89,7 @@ jobs:
       REFRESH_TOKEN_LIFETIME_DAYS: "7"
       INVITATION_TTL_DAYS: "7"
       AUTH_THROTTLE_RATE: "60/min"
+      AUTH_BURST_THROTTLE_RATE: "60/min"
       COMMENT_THROTTLE_RATE: "120/min"
       PYTHONUNBUFFERED: "1"
 
@@ -85,26 +117,176 @@ jobs:
         working-directory: backend
         run: python manage.py makemigrations --check --dry-run
 
-      - name: Migratsiyalar (PostgreSQL 16)
+      - name: Migratsiyalar
         working-directory: backend
         run: python manage.py migrate --noinput
 
+      # ------------------------------------------------------------- lint
+      # BLOKLOVCHI. Ilgari uchta qadam ham `continue-on-error: true` edi —
+      # shu jumladan `pip install ruff` ning O'ZI, ya'ni o'rnatish yiqilsa
+      # `ruff check` "command not found" bilan YASHIL bo'lardi. Endi ruff
+      # `backend/requirements.txt` da, qoidalar `backend/ruff.toml` da va
+      # to'plam bugungi daraxtda toza — qizil lint har doim "shu PR nimadir
+      # buzdi" degani.
+      - name: ruff check (bloklovchi)
+        working-directory: backend
+        run: ruff check --output-format=github .
+
+      # ---------------------------------------------------------- testlar
+      - name: Testlar (pytest + coverage)
+        working-directory: backend
+        run: >
+          python -m pytest
+          --junitxml=test-results/junit.xml
+          --cov --cov-report=term-missing
+          --cov-report=xml:coverage.xml
+          --cov-report=html:htmlcov
+
+      - name: Test natijalari va coverage hisoboti (yiqilganda ham)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: |
+            backend/test-results/junit.xml
+            backend/coverage.xml
+            backend/htmlcov/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Coverage xulosasi
+        if: always()
+        working-directory: backend
+        run: |
+          {
+            echo "## Coverage"
+            echo ""
+            echo "Pol: \`backend/.coveragerc\` → \`fail_under\` (hozir **83%**). DoD maqsadi: 85%."
+            echo ""
+            echo '```'
+            python -m coverage report --skip-covered 2>&1 | tail -n 40 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # --------------------------------------------------- OpenAPI sxemasi
+      # docs/API_CONTRACT.md majburiy shartnoma va drf-spectacular
+      # bog'liqlikda turibdi — lekin sxema hech qachon qurilmasdi.
+      #
+      # `--fail-on-warn` ni bugun yoqib bo'lmaydi (54 ta noyob xato bor).
+      # Buning o'rniga ratchet: sxema QURILISHI shart, YAML sifatida
+      # o'qilishi shart va noyob xatolar soni budjetdan oshmasligi kerak.
+      - name: OpenAPI sxemasi (ratchet)
+        working-directory: backend
+        run: |
+          set -o pipefail
+          if ! python manage.py spectacular --file openapi-schema.yml 2> spectacular.log; then
+            echo "::error::OpenAPI sxemasi umuman qurilmadi"
+            cat spectacular.log
+            exit 1
+          fi
+          python - <<'PY'
+          import os, re, sys, pathlib, yaml
+
+          yaml.safe_load(pathlib.Path("openapi-schema.yml").read_text(encoding="utf-8"))
+          log = pathlib.Path("spectacular.log").read_text(encoding="utf-8", errors="replace")
+          match = re.search(r"Errors:\s+\d+\s+\((\d+)\s+unique\)", log)
+          unique = int(match.group(1)) if match else 0
+          budget = int(os.environ["SCHEMA_UNIQUE_ERROR_BUDGET"])
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+              fh.write(
+                  f"## OpenAPI sxemasi\n\nNoyob xatolar: **{unique}** / budjet {budget}\n\n"
+                  "```\n" + "\n".join(log.strip().splitlines()[-5:]) + "\n```\n"
+              )
+
+          if unique > budget:
+              print(
+                  f"::error::OpenAPI sxemasidagi noyob xatolar soni oshdi "
+                  f"({unique} > {budget}). Yangi APIView ga `serializer_class` "
+                  f"qo'shing yoki `@extend_schema` bering."
+              )
+              sys.exit(1)
+          print(f"schema ok — {unique} unique errors (budget {budget})")
+          PY
+
+      - name: Sxemani artefakt sifatida saqlash
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-schema
+          path: backend/openapi-schema.yml
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ==========================================================================
+  # Backend — dasturchi muhiti (Windows + SQLite)
+  # ==========================================================================
+  # Alohida job, matritsa emas: GitHub'ning `services:` konteynerlari faqat
+  # Linux runner'da ishlaydi, ya'ni bu legga Postgres/Redis berib bo'lmaydi.
+  # Bo'sh REDIS_URL Channels'ni xotiradagi qatlamga tushiradi (settings.py).
+  backend-sqlite:
+    name: Backend (Windows · SQLite · py3.14)
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    env:
+      DEBUG: "False"
+      SECRET_KEY: "ci-dummy-not-a-real-secret-3f8a1c9e4b7d2056-padded-to-fifty-plus"
+      ALLOWED_HOSTS: "localhost,127.0.0.1"
+      DATABASE_URL: "sqlite:///ci.sqlite3"
+      REDIS_URL: ""
+      CORS_ALLOWED_ORIGINS: "http://localhost:3000"
+      ACCESS_TOKEN_LIFETIME_MINUTES: "60"
+      REFRESH_TOKEN_LIFETIME_DAYS: "7"
+      INVITATION_TTL_DAYS: "7"
+      AUTH_THROTTLE_RATE: "60/min"
+      AUTH_BURST_THROTTLE_RATE: "60/min"
+      COMMENT_THROTTLE_RATE: "120/min"
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python 3.14 o'rnatish
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Bog'liqliklarni o'rnatish
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Django check
+        working-directory: backend
+        run: python manage.py check
+
+      - name: Migratsiyalar
+        working-directory: backend
+        run: python manage.py migrate --noinput
+
+      # Coverage darvozasi bu yerda YO'Q: bitta vakolatli son bo'lishi kerak,
+      # u esa Linux/PostgreSQL legida hisoblanadi. Bu leg SQLite'ga xos
+      # xatolarni tutish uchun.
       - name: Testlar (pytest)
         working-directory: backend
-        run: python -m pytest -q
+        run: python -m pytest --junitxml=test-results/junit.xml
 
-      - name: ruff o'rnatish (requirements'da yo'q)
-        continue-on-error: true
-        run: pip install ruff
+      - name: Test natijalari (yiqilganda ham)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results-windows-sqlite
+          path: backend/test-results/junit.xml
+          if-no-files-found: warn
+          retention-days: 14
 
-      - name: ruff check (non-blocking)
-        continue-on-error: true
-        run: ruff check backend
-
-      - name: ruff format --check (non-blocking)
-        continue-on-error: true
-        run: ruff format --check backend
-
+  # ==========================================================================
+  # Frontend
+  # ==========================================================================
   frontend:
     name: Frontend (Next.js 16 / Node 22)
     runs-on: ubuntu-latest
@@ -136,6 +318,9 @@ jobs:
         working-directory: frontend
         run: npm run lint
 
+      # `next build` `frontend/e2e/**` ni ham tekshiradi, lekin tsc darvozasi
+      # alohida turadi — xato xabari build logining ichida emas, shu yerda
+      # ko'rinsin.
       - name: Type-check (tsc --noEmit)
         working-directory: frontend
         run: npx tsc --noEmit
@@ -143,3 +328,253 @@ jobs:
       - name: Build (next build)
         working-directory: frontend
         run: npm run build
+
+  # ==========================================================================
+  # E2E — Playwright haqiqiy stack ustida
+  # ==========================================================================
+  e2e:
+    name: E2E (Playwright · Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    # Backend va frontend allaqachon qizil bo'lsa E2E dan yangilik chiqmaydi —
+    # faqat 20 daqiqa ko'proq kutiladi.
+    needs: [backend, frontend]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: clickup
+          POSTGRES_PASSWORD: clickup
+          POSTGRES_DB: clickup_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U clickup -d clickup_e2e"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # --- backend ---------------------------------------------------------
+      # DEBUG=False ataylab: E2E prod shaklidagi sozlamani tekshiradi.
+      # SECURE_SSL_REDIRECT esa o'chirilgan — u teskari proksining vazifasi;
+      # yoqilgan holda http://localhost:8000 har so'rovga https ga 301 beradi
+      # va hech nima ishlamaydi.
+      DEBUG: "False"
+      SECURE_SSL_REDIRECT: "False"
+      SECURE_HSTS_SECONDS: "0"
+      SECRET_KEY: "ci-dummy-not-a-real-secret-3f8a1c9e4b7d2056-padded-to-fifty-plus"
+      ALLOWED_HOSTS: "localhost,127.0.0.1"
+      DATABASE_URL: "postgres://clickup:clickup@localhost:5432/clickup_e2e"
+      REDIS_URL: "redis://localhost:6379/0"
+      CORS_ALLOWED_ORIGINS: "http://localhost:3000"
+      # WS handshake origin'ini `AllowedHostsOriginValidator` ALLOWED_HOSTS dan
+      # oladi, SPA esa boshqa portda — shuning uchun ochiq ro'yxatga olinadi.
+      WS_ALLOWED_ORIGINS: "http://localhost:3000"
+      ACCESS_TOKEN_LIFETIME_MINUTES: "60"
+      REFRESH_TOKEN_LIFETIME_DAYS: "7"
+      INVITATION_TTL_DAYS: "7"
+      # E2E to'plami login cheklovini UXLAB O'TKAZMAYDI (`e2e/fixtures.ts` →
+      # `throttleAdvice`). Sessiyalar REST orqali olinadi, ya'ni bir run'da
+      # o'nga yaqin `auth/login/` so'rovi ketadi va standart 10/min ni bosib
+      # o'tishi mumkin. Throttle mantig'ining O'ZI backend testlarida
+      # (apps/accounts) tekshiriladi — E2E'da uni qayta tekshirish shart emas,
+      # shuning uchun bu yerda ataylab bo'shatiladi.
+      AUTH_THROTTLE_RATE: "1000/min"
+      AUTH_BURST_THROTTLE_RATE: "1000/min"
+      COMMENT_THROTTLE_RATE: "1000/min"
+      REALTIME_TICKET_THROTTLE_RATE: "1000/min"
+      # Runner oldida hech qanday proksi yo'q — X-Forwarded-For ga ishonmaymiz.
+      NUM_PROXIES: "0"
+      LOG_LEVEL: "INFO"
+      PYTHONUNBUFFERED: "1"
+      # --- frontend --------------------------------------------------------
+      # NEXT_PUBLIC_* build vaqtida bundle ichiga yoziladi.
+      NEXT_PUBLIC_API_BASE_URL: "http://localhost:8000/api/v1"
+      NEXT_PUBLIC_WS_BASE_URL: "ws://localhost:8000"
+      NEXT_PUBLIC_API_MODE: "real"
+      NEXT_TELEMETRY_DISABLED: "1"
+      # --- test ------------------------------------------------------------
+      E2E_BASE_URL: "http://localhost:3000"
+      E2E_API_BASE_URL: "http://localhost:8000/api/v1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python 3.14 o'rnatish
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Node 22 o'rnatish
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Python bog'liqliklari
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: npm ci
+        working-directory: frontend
+        run: npm ci
+
+      - name: Playwright brauzer keshi
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+
+      - name: Chromium o'rnatish
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Migratsiyalar + demo ma'lumot
+        working-directory: backend
+        run: |
+          python manage.py migrate --noinput
+          python manage.py seed_demo
+
+      - name: Frontend production build
+        working-directory: frontend
+        run: npm run build
+
+      # Serverlarni Playwright emas, shu workflow ko'taradi — sababi
+      # `playwright.config.ts` da yozilgan. Eng muhimi: loglar faylga tushadi
+      # va yiqilganda artefakt bo'lib chiqadi (WS testi yiqilganda birinchi
+      # qaraladigan narsa aynan Daphne logi).
+      - name: Backend (Daphne) ni ko'tarish
+        working-directory: backend
+        run: |
+          nohup daphne -b 0.0.0.0 -p 8000 config.asgi:application \
+            > "${GITHUB_WORKSPACE}/daphne.log" 2>&1 &
+          echo $! > "${GITHUB_WORKSPACE}/daphne.pid"
+
+      - name: Frontend (next start) ni ko'tarish
+        working-directory: frontend
+        run: |
+          nohup npx next start --hostname 0.0.0.0 --port 3000 \
+            > "${GITHUB_WORKSPACE}/next.log" 2>&1 &
+          echo $! > "${GITHUB_WORKSPACE}/next.pid"
+
+      - name: Ikkala server sog'lom bo'lishini kutish
+        run: |
+          wait_for() {
+            name="$1"; url="$2"; log="$3"
+            for i in $(seq 1 60); do
+              if curl -fsS -o /dev/null --max-time 5 "$url"; then
+                echo "$name tayyor (~$((i * 2))s)"
+                return 0
+              fi
+              sleep 2
+            done
+            echo "::error::$name ${url} manzilida ko'tarilmadi"
+            echo "----- ${log} -----"
+            tail -n 100 "$log" || true
+            return 1
+          }
+          wait_for backend  http://localhost:8000/api/v1/health/ "${GITHUB_WORKSPACE}/daphne.log"
+          wait_for frontend http://localhost:3000/login          "${GITHUB_WORKSPACE}/next.log"
+
+      - name: Playwright
+        working-directory: frontend
+        run: npx playwright test
+
+      - name: Serverlarni to'xtatish
+        if: always()
+        run: |
+          for name in daphne next; do
+            pidfile="${GITHUB_WORKSPACE}/${name}.pid"
+            [ -f "$pidfile" ] && kill "$(cat "$pidfile")" 2>/dev/null || true
+          done
+          exit 0
+
+      - name: Server loglari (faqat yiqilganda)
+        if: failure()
+        run: |
+          {
+            echo "## Server loglari (oxirgi 80 satr)"
+            echo ""
+            echo "### Daphne"
+            echo '```'; tail -n 80 "${GITHUB_WORKSPACE}/daphne.log" 2>/dev/null || echo "(log yo'q)"; echo '```'
+            echo "### Next"
+            echo '```'; tail -n 80 "${GITHUB_WORKSPACE}/next.log" 2>/dev/null || echo "(log yo'q)"; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # `trace: retain-on-failure` bo'lgani uchun yashil runda trace deyarli
+      # bo'lmaydi — HTML hisobot + trace'lar faqat yiqilganda yuklanadi.
+      - name: Playwright hisoboti va trace'lar (yiqilganda)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+            daphne.log
+            next.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: E2E junit natijalari
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-junit
+          path: frontend/playwright-report/junit.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ==========================================================================
+  # Docker — obrazlar hali quriladimi
+  # ==========================================================================
+  docker:
+    name: Docker build (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: backend
+            context: ./backend
+            target: runtime
+          - image: frontend
+            context: ./frontend
+            target: runner
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Push yo'q — savol faqat "obraz hali quriladimi?". Ilgari bu umuman
+      # tekshirilmasdi, ya'ni ikkala Dockerfile ham main'da sezilmay
+      # buzilishi mumkin edi.
+      - name: Build (push yo'q)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          target: ${{ matrix.target }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

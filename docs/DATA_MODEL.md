@@ -3,21 +3,34 @@
 | | |
 |---|---|
 | **Document** | DATA_MODEL.md |
-| **Version** | 1.0 |
-| **Date** | 2026-08-07 |
+| **Version** | 1.1 |
+| **Date** | 2026-08-10 |
 | **Owner** | Architecture |
-| **Status** | Approved for build — **authoritative** |
+| **Status** | Approved for build — **authoritative for intended shape, not for what exists** (see the precedence note) |
 | **Applies to** | Django 5.2.17, DRF 3.17.2, Python 3.14, SQLite (dev) / PostgreSQL 16 (prod) |
 
-> **Binding contract.** This document is the single source of truth for the persistence layer.
-> Field names here are identical to the JSON field names in `API_CONTRACT.md`.
-> If code and this document disagree, the document wins until it is amended by PR.
+> **Precedence (revised 2026-08-10, `API_CONTRACT.md` R26).** This document is authoritative for the
+> **intended shape** of the persistence layer: field names, types, nullability, constraints, indexes
+> and the ordering strategy. Field names here are identical to the JSON field names in
+> `API_CONTRACT.md`.
+>
+> **It is not authoritative for what exists.** The previous edition said "if code and this document
+> disagree, the document wins", and that clause did real damage: it survived unamended while the file
+> went on describing an `apps.spaces` Django app that was never created (overruled by `API_CONTRACT.md`
+> R1 and only fixed here in v1.1) and while four shipped models went undocumented. A contributor
+> following it verbatim built a phantom app. **Where this document and the code disagree, treat the
+> document as the bug** and reconcile it in the same PR — unless you are deliberately changing the
+> design, in which case change this file first and say so. There is no automated drift gate on this
+> document, which is precisely why it cannot be allowed to outrank the code.
 
 ---
 
 ## 0. TL;DR
 
-- **15 models** across **6 apps**: `core` (abstract only), `accounts`, `workspaces`, `spaces`, `tasks`, `comments`. `realtime` has **no models**.
+- **19 concrete models** across **4 apps**: `accounts` (1), `workspaces` (9), `tasks` (7), `comments` (1).
+  `core` contributes **4 abstract bases only** (`UUIDModel`, `TimeStampedModel`, `SoftDeleteModel`,
+  `PositionedModel`) and holds the permission **catalog** — which is Python, not a table. `realtime`
+  has **no models**. There is **no `spaces` app**; see §1.
 - **Every model uses a UUIDv4 primary key** so clients can generate ids for optimistic creation.
 - **Drag & drop ordering uses a lexicographic fractional index** (`position = CharField(max_length=64)`), not integers. See §7.
 - **Statuses are per-Space with an optional per-List override** (`StatusSet` owned by exactly one of `space` / `list`). See §5.6.
@@ -31,21 +44,30 @@
 backend/
   config/                 # settings/, urls.py, asgi.py, wsgi.py, routing.py
   apps/
-    core/                 # NEW - abstract base models, mixins, permissions, pagination,
+    core/                 # abstract base models, mixins, enums, permission catalog, pagination,
                           #       exception handler, fractional-index helpers. NO concrete models.
     accounts/             # User
-    workspaces/           # Workspace, WorkspaceMember, Invitation
-    spaces/               # NEW - Space, Folder, TaskList, StatusSet, Status
-    tasks/                # Task, TaskAssignee, TaskWatcher, Tag, TaskTag
+    workspaces/           # Workspace, WorkspaceMember, RolePermission, Invitation,
+                          #       Space, SpaceMember, Folder, TaskList, StatusSet, Status
+    tasks/                # Task, TaskAssignee, TaskWatcher, TaskActivity, TaskAttachment,
+                          #       Tag, TaskTag
     comments/             # Comment
     realtime/             # Channels consumers + broadcast helpers. NO models.
 ```
 
-> **Repo state note.** `accounts`, `workspaces`, `tasks`, `comments`, `realtime` are already scaffolded
-> (empty `models.py`). `core` and `spaces` must be created with
-> `python manage.py startapp core apps/core` (create the directory first).
+> **There is no `apps.spaces` app, and there never was.** Earlier editions of this document put
+> `Space`, `Folder`, `TaskList`, `StatusSet` and `Status` in a separate `spaces` app. `CLAUDE.md`
+> put them in `apps.workspaces`, the code followed `CLAUDE.md`, and `API_CONTRACT.md` **R1** ruled
+> for `CLAUDE.md` — but this file was never amended, so for three versions it instructed readers to
+> create an app that does not exist. **The whole hierarchy lives in `apps.workspaces`** (verified
+> against `backend/apps/workspaces/models.py`). The §5 headings below say `workspaces` for that
+> reason. `db_table` names are unaffected: they were always `spaces`, `folders`, `lists`, … and a
+> table called `spaces` in an app called `workspaces` is correct, not a leftover.
 
-`INSTALLED_APPS` order (matters for migrations and for `AUTH_USER_MODEL`):
+`INSTALLED_APPS` order (matters for migrations and for `AUTH_USER_MODEL`). In the code this is
+assembled from `DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS` (`backend/config/settings.py`); the
+`LOCAL_APPS` tail is what matters here, and `drf_spectacular` and `whitenoise` sit in the
+third-party block:
 
 ```python
 INSTALLED_APPS = [
@@ -65,7 +87,6 @@ INSTALLED_APPS = [
     "apps.core",
     "apps.accounts",
     "apps.workspaces",
-    "apps.spaces",
     "apps.tasks",
     "apps.comments",
     "apps.realtime",
@@ -354,7 +375,17 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         max_length=7, default="#7B68EE", validators=[HEX_COLOR]
     )
 
+    # Profile label, NEVER a permission role. Nothing in has_perm/require_perm
+    # reads this field.
+    profession = models.CharField(
+        max_length=20, choices=Profession.choices, blank=True, default=""
+    )
+
     timezone = models.CharField(max_length=64, default="UTC", db_index=False)
+
+    # Read-only (demo) account. Denies every write code regardless of role,
+    # including owner - see apps/core/access.py::has_perm.
+    is_readonly = models.BooleanField(default=False)
 
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
@@ -403,8 +434,10 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
 | `email` | `EmailField(max_length=254, unique=True, db_index=True)` | Always stored lowercase. Extra CI unique constraint for defence in depth. |
 | `password` | inherited `CharField(max_length=128)` | Argon2 first in `PASSWORD_HASHERS`. Never serialised. |
 | `full_name` | `CharField(max_length=150, blank=True, default="")` | Single field, not first/last — matches ClickUp. |
-| `avatar` | `ImageField(upload_to="avatars/%Y/%m/", max_length=500, null=True, blank=True)` | Max 2 MB, jpeg/png/webp, resized server-side to 256×256. Only user avatars are uploadable — general file attachments are out of scope. |
+| `avatar` | `ImageField(upload_to="avatars/%Y/%m/", max_length=500, null=True, blank=True)` | Max 2 MB, jpeg/png/webp, resized server-side to 256×256. (Earlier editions added "general file attachments are out of scope" — no longer true: see `TaskAttachment`, §6.7.) |
 | `avatar_color` | `CharField(max_length=7, default="#7B68EE")` | Background for the initials fallback. |
+| `profession` | `CharField(max_length=20, choices=Profession.choices, blank=True, default="")` | **A profile label, never a permission.** `Profession` (`apps/core/enums.py`): `project_manager`, `developer`, `designer`, `qa`, `analyst`, `marketing`, `other`; `""` means "not stated". Nothing in `has_perm` / `require_perm` / visibility reads it — authority comes from `WorkspaceRole` + the `RolePermission` matrix alone. Adding a value here grants nobody anything. It exists so a PM can find the right person. Note in particular that `project_manager` here is **not** the PM authority — that is `SpaceMember.access = manager` (§5.10). |
+| `is_readonly` | `BooleanField(default=False)` | The demo account. **Denies every write permission regardless of role, owner included**, by intersecting the caller's permission set with `READONLY_ALLOWED_CODES` in `apps/core/access.py::has_perm` / `has_space_perm` / `my_permissions`. It could not be done through the matrix because owner authority is locked and never consults the table. The list is **fail-closed**: a newly added write code is denied automatically because it is not on the allow-list. |
 | `timezone` | `CharField(max_length=64, default="UTC")` | IANA name, validated against `zoneinfo.available_timezones()` in the serializer (not `choices=` — the tz database changes between releases and would churn migrations). |
 | `is_active` | `BooleanField(default=True)` | Deactivation instead of deletion. |
 | `is_staff` / `is_superuser` | `BooleanField(default=False)` | Django admin only. **Unrelated** to workspace roles. |
@@ -417,7 +450,7 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
 
 ---
 
-## 5. `workspaces` and `spaces` apps
+## 5. `workspaces` app
 
 ### 5.1 `Workspace` (`workspaces`)
 
@@ -436,6 +469,7 @@ class Workspace(UUIDModel, TimeStampedModel):
                                    null=True, blank=True, related_name="created_workspaces")
 
     member_count = models.PositiveIntegerField(default=0)   # denormalised
+    permissions_version = models.PositiveIntegerField(default=1, editable=False)
 
     class Meta:
         db_table = "workspaces"
@@ -453,6 +487,7 @@ class Workspace(UUIDModel, TimeStampedModel):
 | `owner` | `FK(User, on_delete=PROTECT, related_name="owned_workspaces")` | `PROTECT` so a user with workspaces cannot be hard-deleted; deactivate + transfer ownership instead. |
 | `created_by` | `FK(User, on_delete=SET_NULL, null=True, related_name="created_workspaces")` | |
 | `member_count` | `PositiveIntegerField(default=0)` | Denormalised; maintained by signal on `WorkspaceMember` create/delete. |
+| `permissions_version` | `PositiveIntegerField(default=1, editable=False)` | **Two jobs in one counter.** (1) Optimistic-concurrency token for `PUT role-permissions/` — the client echoes it as `expected_version` and a mismatch is `409`. (2) Permission-cache key: the cache key is `wsperm:<id>:<version>`, so bumping the version invalidates every process at once with no cache eviction and no TTL race. Written **only** by `apps.core.access.bump_permissions_version()` (`F()+1`, inside the transaction, with an `on_commit` `permission.updated` broadcast). Serialized read-only on the Workspace object. |
 
 **Invariants**
 - There is always exactly one `WorkspaceMember` with `role="owner"` whose `user_id == workspace.owner_id`.
@@ -559,7 +594,7 @@ address in the same workspace (that is a `409 conflict`).
 > SQLite 3.9+/Django 5.2, so the dev database behaves the same as PostgreSQL. Verify with
 > `python manage.py check --database default` after migrating.
 
-### 5.4 `Space` (`spaces`)
+### 5.4 `Space` (`workspaces`)
 
 ```python
 class Space(UUIDModel, TimeStampedModel, PositionedModel):
@@ -600,7 +635,7 @@ class Space(UUIDModel, TimeStampedModel, PositionedModel):
 
 **Cascade:** deleting a `Space` deletes its `StatusSet`, `Folder`s, `TaskList`s, `Task`s and `Comment`s. Guarded by a confirmation body field in the API.
 
-### 5.5 `Folder` (`spaces`)
+### 5.5 `Folder` (`workspaces`)
 
 ```python
 class Folder(UUIDModel, TimeStampedModel, PositionedModel):
@@ -633,7 +668,7 @@ group `TaskList`s. `position` scope: `space_id`.
 - `?strategy=cascade` — delete the folder and all its lists/tasks (default, `admin`+ only);
 - `?strategy=detach` — move the folder's lists up to the space (`folder_id = NULL`), then delete the folder.
 
-### 5.6 `TaskList` (`spaces`) — the "List"
+### 5.6 `TaskList` (`workspaces`) — the "List"
 
 > **Naming decision.** The Python class is `TaskList` because `List` shadows `typing.List` and reads
 > badly in queryset code. The database table is `lists`, `verbose_name` is `"list"`, and **every API
@@ -711,7 +746,7 @@ def clean(self):
 (`WHERE space_id = ?`) index-friendly and make the permission check a single join. A polymorphic
 parent would need `GenericForeignKey`, which cannot be joined or constrained.
 
-### 5.7 `StatusSet` (`spaces`)
+### 5.7 `StatusSet` (`workspaces`)
 
 A named, ordered collection of `Status` rows. Owned by **exactly one** of a `Space` (the space
 default, always present) or a `TaskList` (an override).
@@ -759,7 +794,7 @@ def effective_status_set(task_list: TaskList) -> StatusSet:
 - `PUT /api/v1/lists/{id}/status-set/` creates the override; `DELETE` removes it and reverts to inheritance.
 - Both operations require a `status_mapping` for existing tasks (see §5.8 migration rule).
 
-### 5.8 `Status` (`spaces`)
+### 5.8 `Status` (`workspaces`)
 
 ```python
 class Status(UUIDModel, TimeStampedModel):
@@ -820,15 +855,110 @@ still has tasks. Because `Task.status` is `PROTECT`, a missing mapping surfaces 
 
 ---
 
+### 5.9 `RolePermission` (`workspaces`)
+
+Per-workspace override of the permission catalog. Added with the granular-permission work
+(`docs/DESIGN_PERMISSIONS.md` §B.3) and previously missing from this document.
+
+```python
+class RolePermission(UUIDModel, TimeStampedModel):
+    workspace  = models.ForeignKey(Workspace, on_delete=models.CASCADE,
+                                   related_name="role_permissions")
+    role       = models.CharField(max_length=10, choices=AssignableRole.choices, db_index=True)
+    permission = models.CharField(max_length=64, db_index=True)   # catalog code, NOT a FK
+    allowed    = models.BooleanField(default=False)
+    updated_by = models.ForeignKey("accounts.User", on_delete=models.SET_NULL,
+                                   null=True, blank=True, related_name="+")
+
+    class Meta:
+        db_table = "workspace_role_permissions"
+        ordering = ["role", "permission"]
+        constraints = [
+            models.UniqueConstraint(fields=["workspace", "role", "permission"],
+                                    name="uniq_role_permission_per_workspace"),
+            models.CheckConstraint(condition=~models.Q(role="owner"),
+                                   name="role_permission_never_owner"),
+        ]
+        indexes = [models.Index(fields=["workspace", "role"], name="idx_roleperm_ws_role")]
+```
+
+| Field | Rule | Why |
+|---|---|---|
+| `permission` | a plain `CharField` holding a **catalog code**, deliberately not a FK | The catalog lives in Python (`apps/core/permissions.py`), not in a table. Adding a permission is one line of code and **no migration**. Validated in `clean()` against `PERMISSION_BY_CODE`. |
+| `role` | `admin`, `member` or `guest` — `AssignableRole`, which **excludes `owner`** | `owner` is never stored: `has_perm()` short-circuits to allow. The `CheckConstraint` makes the invariant unbreakable at the DB level, not just in application code. |
+| `allowed` | `False` means an **explicit revoke**, not "no opinion" | Absence of a row means "fall back to the catalog default". That is what lets a new catalog code work without any backfill. |
+
+**A missing row is the normal case.** `apps/core/access.py::_build_matrix` starts from
+`DEFAULT_MATRIX` and applies only the rows that exist, so a fresh workspace has zero rows here and
+still behaves correctly. Writes go exclusively through `bump_permissions_version()`, which increments
+`Workspace.permissions_version` in the same transaction — that counter is both the cache key and the
+optimistic-concurrency token (§5.1).
+
+---
+
+### 5.10 `SpaceMember` (`workspaces`)
+
+Per-space assignment — the "project manager" mechanism. This model **supersedes decision D8**
+(§14), which said there would be no per-space membership; `API_CONTRACT.md` **R19** records the
+reversal.
+
+```python
+class SpaceMember(UUIDModel, TimeStampedModel):
+    space    = models.ForeignKey(Space, on_delete=models.CASCADE, related_name="space_members")
+    user     = models.ForeignKey("accounts.User", on_delete=models.CASCADE,
+                                 related_name="space_memberships")
+    access   = models.CharField(max_length=12, choices=SpaceAccess.choices,
+                                default=SpaceAccess.CONTRIBUTOR, db_index=True)
+    source   = models.CharField(max_length=14, choices=SpaceMemberSource.choices,
+                                default=SpaceMemberSource.MANUAL)
+    added_by = models.ForeignKey("accounts.User", on_delete=models.SET_NULL,
+                                 null=True, blank=True, related_name="+")
+
+    class Meta:
+        db_table = "space_members"
+        ordering = ["access", "user__email"]
+        constraints = [
+            models.UniqueConstraint(fields=["space", "user"], name="uniq_space_member"),
+        ]
+        indexes = [
+            models.Index(fields=["user", "space"],   name="idx_spacemember_user_space"),
+            models.Index(fields=["space", "access"], name="idx_spacemember_space_access"),
+        ]
+```
+
+`access` (`SpaceAccess`, `apps/core/enums.py`):
+
+| Value | Meaning inside this one space |
+|---|---|
+| `viewer` | **Lowest-privilege-wins.** Reduced to a fixed read-only set (`SPACE_VIEWER_GRANTS`) *intersected* with the workspace role — a viewer row can only ever take authority away, never add it. |
+| `contributor` | No local change; the workspace role decides. This is the default. |
+| `manager` | The PM. Gains `SPACE_MANAGER_GRANTS` locally: `space.update`, `space.manage_members/statuses`, all of `folder.*` and `list.*`, and `task.update/delete/move/assign/restore`. Never gains `space.delete`, `space.change_visibility`, `member.*`, `workspace.*`, `tag.*` or `attachment.delete_any` — a PM rules inside the space but cannot move its boundary. |
+
+`source` (`SpaceMemberSource`) records **why** the row exists — `manual`, `auto_creator`,
+`auto_assignee` (written by AD-7 when someone is assigned a task in a space they cannot see, and only
+when the *caller* holds `space.manage_members`), or `backfill` (migration `workspaces.0004`). It is
+informational: authority comes from `access` alone.
+
+**Invariant, enforced in the service layer, not the DB:** a `SpaceMember.user` must also be a
+`WorkspaceMember` of that space's workspace. Removing someone from the workspace deletes their
+`SpaceMember` rows in the same transaction.
+
+**Visibility interaction.** `SpaceMember` is what makes a private space visible to a non-admin. The
+full ACL rule ships behind `SPACE_ACL_ENABLED` (**default off**, and it is not set in `settings.py`
+today), so the legacy rule applies: guest x private is invisible, *unless* an explicit `SpaceMember`
+row exists. See `API_CONTRACT.md` R20 and `apps/core/access.py::space_is_visible`.
+
+---
+
 ## 6. `tasks` app
 
 ### 6.1 `Task`
 
 ```python
 class Task(UUIDModel, TimeStampedModel, SoftDeleteModel, PositionedModel):
-    list = models.ForeignKey("spaces.TaskList", on_delete=models.CASCADE,
+    list = models.ForeignKey("workspaces.TaskList", on_delete=models.CASCADE,
                              related_name="tasks")
-    status = models.ForeignKey("spaces.Status", on_delete=models.PROTECT,
+    status = models.ForeignKey("workspaces.Status", on_delete=models.PROTECT,
                                related_name="tasks")
 
     title = models.CharField(max_length=500)
@@ -850,6 +980,7 @@ class Task(UUIDModel, TimeStampedModel, SoftDeleteModel, PositionedModel):
     archived = models.BooleanField(default=False, db_index=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     comment_count = models.PositiveIntegerField(default=0)
+    attachment_count = models.PositiveIntegerField(default=0)
 
     assignees = models.ManyToManyField("accounts.User", through="TaskAssignee",
                                        related_name="assigned_tasks", blank=True)
@@ -910,6 +1041,7 @@ class Task(UUIDModel, TimeStampedModel, SoftDeleteModel, PositionedModel):
 | `archived` | `BooleanField(default=False, db_index=True)` | `archived` | Hidden from default queries (`?archived=false` default). |
 | `completed_at` | `DateTimeField(null=True, blank=True)` | `completed_at` | **Derived**: set to `now()` when the task transitions into a `closed`-type status; cleared to `NULL` when it leaves one. Never client-settable. |
 | `comment_count` | `PositiveIntegerField(default=0)` | `comment_count` | **Denormalised**: live (non-deleted) comments incl. replies. |
+| `attachment_count` | `PositiveIntegerField(default=0)` | `attachment_count` | **Denormalised**: `COUNT(TaskAttachment)` (§6.7). Same rationale as `comment_count` — list endpoints serialize hundreds of tasks and a per-row annotation would have to be repeated on every queryset. Sole writer: `apps/tasks/services.py`. |
 | `deleted_at` | `DateTimeField(null=True, blank=True, db_index=True)` | *(not serialised; `is_deleted` is)* | Soft delete. Purged by a cron after 30 days. |
 | `created_by` / `updated_by` | `FK(User, SET_NULL, null=True)` | `created_by`, `updated_by` (embedded user objects) | `updated_by` set on **every** mutating write, including `move`. |
 | `assignees` | `M2M(User, through=TaskAssignee, related_name="assigned_tasks")` | `assignees` (embedded) / `assignee_ids` (write) | |
@@ -1037,6 +1169,78 @@ class TaskTag(UUIDModel):
 ```
 
 **Rule:** `tag.workspace_id` must equal `task.list.space.workspace_id`, else `400 validation_error`.
+
+---
+
+### 6.6 `TaskActivity`
+
+Immutable audit trail behind `GET tasks/{id}/activity/` and `GET workspaces/{id}/activity/`.
+Rows are written from `apps/tasks/services.py` (and `apps/tasks/attachments.py`) only — never from a
+view — and are never updated or deleted except by the task's own cascade.
+
+```python
+class TaskActivity(UUIDModel, TimeStampedModel):
+    task       = models.ForeignKey(Task, on_delete=models.CASCADE, related_name="activities")
+    actor      = models.ForeignKey("accounts.User", on_delete=models.SET_NULL,   # outlives the user
+                                   null=True, blank=True, related_name="task_activities")
+    verb       = models.CharField(max_length=32, choices=ActivityVerb.choices, db_index=True)
+    from_value = models.CharField(max_length=255, null=True, blank=True)
+    to_value   = models.CharField(max_length=255, null=True, blank=True)
+    metadata   = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "task_activities"
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["task", "-created_at"], name="idx_activity_task_recent")]
+```
+
+- `actor` is `SET_NULL`: **history outlives the user**. A deleted account leaves its trail intact
+  with a null actor, which is the point of an audit trail.
+- `verb` is `max_length=32`, not 16. The longest member of `ActivityVerb` is `attachment_removed`
+  (18 chars); at 16 PostgreSQL truncated or errored. Closed vocabulary (`apps/core/enums.py`):
+  `created`, `status_changed`, `assignee_added`, `assignee_removed`, `priority_changed`,
+  `due_date_changed`, `renamed`, `moved`, `completed`, `deleted`, `restored`, `attachment_added`,
+  `attachment_removed`.
+- `from_value`/`to_value` are **display strings**, not ids — the row must stay readable after the
+  thing it refers to is gone. Structured extras go in `metadata`.
+
+---
+
+### 6.7 `TaskAttachment`
+
+Files attached to a task (`API_CONTRACT.md` §10.7).
+
+```python
+class TaskAttachment(UUIDModel, TimeStampedModel):
+    task          = models.ForeignKey(Task, on_delete=models.CASCADE, related_name="attachments")
+    file          = models.FileField(upload_to="attachments/%Y/%m/", max_length=500)
+    original_name = models.CharField(max_length=255)
+    content_type  = models.CharField(max_length=100)
+    size_bytes    = models.PositiveIntegerField()
+    uploaded_by   = models.ForeignKey("accounts.User", on_delete=models.SET_NULL,
+                                      null=True, blank=True, related_name="uploaded_attachments")
+
+    class Meta:
+        db_table = "task_attachments"
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["task", "-created_at"], name="idx_attach_task_recent")]
+```
+
+| Field | Rule | Why |
+|---|---|---|
+| `file.name` | **always server-generated** as `<uuid4>.<ext>` | The client-supplied name never reaches the storage layer, which kills path traversal, double extensions and `.svg`/`.html` XSS vectors in one move (`apps/tasks/attachments.py::validate_upload`). |
+| `original_name` | the sanitised name shown in the UI — **not** the name on disk | Display only. |
+| `content_type` | canonical MIME derived **from the extension**, not from the client's header | A client-declared content type is an assertion, not a fact. |
+| `uploaded_by` | `SET_NULL` | The file outlives the uploader's account. |
+
+**`file` is deliberately not serialized.** A direct `MEDIA_URL` link bypasses every permission check,
+so the only exposed handle is `download_url` -> `GET attachments/{id}/download/`, which re-checks
+`attachment.read`. See `API_CONTRACT.md` §15.2 for the one case where that URL is relative rather
+than absolute (broadcast frames, which have no request to build against).
+
+`Task.attachment_count` is a denormalised counter maintained by `apps/tasks/services.py` — same
+pattern and same rationale as `comment_count` (§9): list endpoints serialize hundreds of rows and a
+per-row `Count` annotation would have to be added to every queryset.
 
 ---
 
@@ -1391,6 +1595,7 @@ There is a test for this: `test_position_ordering_matches_python_sort`.
 | `TaskList.task_count` | int | live tasks in list | signals on `Task` create/soft-delete/move/archive | `manage.py recount --model list` |
 | `TaskList.open_task_count` | int | live tasks with `status.type != "closed"` | same signals + status-type changes | same |
 | `Task.comment_count` | int | live comments incl. replies | signals on `Comment` | `manage.py recount --model task` |
+| `Task.attachment_count` | int | `COUNT(TaskAttachment)` | `apps/tasks/services.py` on upload/delete | `manage.py recount --model task` |
 | `Task.priority_order` | small int | `PRIORITY_ORDER[priority]` | `Task.save()` | n/a (always consistent) |
 | `Task.completed_at` | datetime | first transition into a `closed` status | task update service | `manage.py recount --model task` |
 | `Comment.reply_count` | int | live child comments | signals on `Comment` | `manage.py recount --model comment` |
@@ -1457,6 +1662,11 @@ The same seed data is produced by `manage.py seed_demo --email <user>` for local
 | Priority sort | `idx_task_priority_order` |
 | Tag filter | `idx_tasktag_tag_task` |
 | Permission check "is user a member of this workspace" | `idx_member_user_ws` |
+| Effective permission matrix for a workspace role | `idx_roleperm_ws_role` (§5.9); usually served from cache keyed on `permissions_version`, so this index is only hit on a cache miss |
+| "Which spaces can this user see?" (`visible_spaces_q`) | `idx_spacemember_user_space` (§5.10) |
+| Space team roster / PM panel | `idx_spacemember_space_access` |
+| Task history, newest first | `idx_activity_task_recent` (§6.6) |
+| Attachments for a task, newest first | `idx_attach_task_recent` (§6.7) |
 | Members page | `idx_member_ws_role` |
 | Sidebar tree (spaces → folders → lists) | `idx_space_ws_arch_pos`, `idx_folder_space_arch_pos`, `idx_list_space_folder_pos` |
 | Comments for a task | `idx_comment_task_live` |
@@ -1507,7 +1717,7 @@ Migrations must be created in this order (dependency order):
 | D5 | `Invitation.token` stored in plaintext | Simplicity; token is short-lived and single-use | DB read discloses live invites. **Recommend hashing (`sha256`) post-MVP** and storing only `token_hash`. |
 | D6 | Tags are workspace-scoped, not space-scoped | Matches ClickUp; fewer duplicate tags | A large workspace gets a long tag list — mitigated by `usage_count` ordering + typeahead. |
 | D7 | Per-user view preference (List vs Board) is **client-side only** | Avoids a `UserListPreference` table in MVP | Preference does not follow the user across devices. |
-| D8 | `Space.is_private` is a boolean, not an ACL table | MVP only needs "hide from guests" | Real private spaces need a `SpaceMember` table later. |
+| D8 | ~~`Space.is_private` is a boolean, not an ACL table~~ — **SUPERSEDED 2026-08** | MVP only needs "hide from guests" | **Reversed.** `SpaceMember` (§5.10) shipped; `API_CONTRACT.md` **R19** records the decision and **R20** the staged rollout (`SPACE_ACL_ENABLED`, default off). `is_private` is now the "an ACL is mandatory here" flag rather than a guest cut-off. |
 | D9 | `description_json` + `description_html` stored side by side | Editing fidelity + cheap rendering/search | Divergence if a write path updates only one — the serializer must always write both (HTML is re-derived server-side from JSON when JSON is supplied). |
 | D10 | No `ActivityLog`/audit table in MVP | Out of scope | No history tab; `created_by`/`updated_by` only. Post-MVP. |
 

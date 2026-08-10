@@ -16,18 +16,13 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  useMembers,
-  useMyPermissions,
-  useWorkspace,
-  useWorkspaceTree,
-} from "@/hooks/queries";
+import { useMembers, useMyPermissions, useWorkspaceTree } from "@/hooks/queries";
 import { CreateEntityDialog } from "@/components/shell/create-entity-dialog";
 import { TreeNodeActions } from "@/components/shell/tree-node-actions";
 import { InviteMemberDialog } from "@/components/workspace/invite-member-dialog";
-import type { Member, TreeFolder, TreeList, TreeSpace } from "@/types/api";
+import type { Member, MyPermissions, TreeFolder, TreeList, TreeSpace } from "@/types/api";
 import { initials } from "@/lib/format";
-import { canInSpace } from "@/lib/permissions";
+import { can, canInSpace } from "@/lib/permissions";
 import { ROLE_LABEL, ROLE_RANK } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 
@@ -35,19 +30,56 @@ type CreateTarget =
   | { kind: "space" }
   | { kind: "list"; spaceId: string; folderId?: string | null };
 
+/**
+ * Bitta bo'lim shoxobchasi uchun oldindan hisoblangan ruxsatlar.
+ *
+ * Ilgari daraxt `my_role === "owner" | "admin"` bo'yicha chizilardi, ya'ni
+ * matritsada `member` ga `space.create` berish UI da hech narsani
+ * o'zgartirmasdi, `list.create` si olib qo'yilgan a'zo esa baribir `＋` ni
+ * ko'rardi. Endi har bir tugma o'z kodiga bog'langan va kod bo'lim doirasida
+ * hal qilinadi (`canInSpace`), xuddi serverdagi `has_space_perm` kabi.
+ */
+interface SpaceTreePermissions {
+  createList: boolean;
+  renameSpace: boolean;
+  deleteSpace: boolean;
+  renameFolder: boolean;
+  deleteFolder: boolean;
+  cascadeFolder: boolean;
+  renameList: boolean;
+  deleteList: boolean;
+  manageTeam: boolean;
+}
+
+function spaceTreePermissions(
+  my: MyPermissions | undefined,
+  spaceId: string,
+): SpaceTreePermissions {
+  return {
+    createList: canInSpace(my, spaceId, "list.create"),
+    renameSpace: canInSpace(my, spaceId, "space.update"),
+    // `space.delete` ataylab PM'ning lokal grantiga kirmaydi (§B.5).
+    deleteSpace: canInSpace(my, spaceId, "space.delete"),
+    renameFolder: canInSpace(my, spaceId, "folder.update"),
+    deleteFolder: canInSpace(my, spaceId, "folder.delete"),
+    cascadeFolder: canInSpace(my, spaceId, "folder.delete_cascade"),
+    renameList: canInSpace(my, spaceId, "list.update"),
+    deleteList: canInSpace(my, spaceId, "list.delete"),
+    manageTeam: canInSpace(my, spaceId, "space.manage_members"),
+  };
+}
+
 export function Sidebar({ workspaceId }: { workspaceId: string }) {
   const { data: tree, isPending, isError, refetch } = useWorkspaceTree(workspaceId);
-  const { data: workspace } = useWorkspace(workspaceId);
   const { data: my } = useMyPermissions(workspaceId);
   const [createTarget, setCreateTarget] = React.useState<CreateTarget | null>(null);
   const params = useParams<{ listId?: string }>();
   const router = useRouter();
   const activeListId = params?.listId;
 
-  // Contract roles: spaces are admin+; folders and lists are member+.
-  const canManage =
-    workspace?.my_role === "owner" || workspace?.my_role === "admin";
-  const canCreateList = workspace ? workspace.my_role !== "guest" : false;
+  // Bo'lim hali yo'q — bu yagona chinakam ish maydoni darajasidagi kod.
+  const canCreateSpace = can(my, "space.create");
+  const canInvite = can(my, "member.invite");
 
   /** After deleting the container holding the open list, fall back to home. */
   const leaveIfActive = (containsActive: boolean) => {
@@ -61,7 +93,7 @@ export function Sidebar({ workspaceId }: { workspaceId: string }) {
           <span className="text-xs font-semibold tracking-wide text-muted-foreground">
             BO&apos;LIMLAR
           </span>
-          {canManage ? (
+          {canCreateSpace ? (
             <Button
               variant="ghost"
               size="icon-xs"
@@ -85,7 +117,7 @@ export function Sidebar({ workspaceId }: { workspaceId: string }) {
         ) : tree && tree.spaces.length === 0 ? (
           <div className="px-2 py-4 text-sm text-muted-foreground">
             Hozircha bo&apos;limlar yo&apos;q.
-            {canManage ? (
+            {canCreateSpace ? (
               <Button
                 variant="outline"
                 size="sm"
@@ -106,9 +138,7 @@ export function Sidebar({ workspaceId }: { workspaceId: string }) {
               key={space.id}
               workspaceId={workspaceId}
               space={space}
-              canCreateList={canCreateList}
-              canManageSpace={canManage}
-              canManageTeam={canInSpace(my, space.id, "space.manage_members")}
+              perms={spaceTreePermissions(my, space.id)}
               activeListId={activeListId}
               onLeaveIfActive={leaveIfActive}
               onCreateList={(spaceId, folderId) =>
@@ -119,7 +149,7 @@ export function Sidebar({ workspaceId }: { workspaceId: string }) {
         )}
       </div>
 
-      <TeamSection workspaceId={workspaceId} canInvite={canManage} />
+      <TeamSection workspaceId={workspaceId} canInvite={canInvite} />
 
       <div className="border-t p-2">
         <Link
@@ -145,19 +175,14 @@ export function Sidebar({ workspaceId }: { workspaceId: string }) {
 function SpaceNode({
   workspaceId,
   space,
-  canCreateList,
-  canManageSpace,
-  canManageTeam,
+  perms,
   activeListId,
   onLeaveIfActive,
   onCreateList,
 }: {
   workspaceId: string;
   space: TreeSpace;
-  canCreateList: boolean;
-  canManageSpace: boolean;
-  /** `space.manage_members` or a local `manager` row — mirrors the server. */
-  canManageTeam: boolean;
+  perms: SpaceTreePermissions;
   activeListId?: string;
   onLeaveIfActive: (containsActive: boolean) => void;
   onCreateList: (spaceId: string, folderId?: string | null) => void;
@@ -189,7 +214,7 @@ function SpaceNode({
           {/* §D.6 — "Jamoa" faqat bo'lim a'zolarini boshqara oladiganga.
               Qolganlar jamoani baribir ko'radi, lekin bo'lim sahifasidagi
               read-only avatarlar orqali (SpaceTeamStrip). */}
-          {canManageTeam ? (
+          {perms.manageTeam ? (
             <Button
               variant="ghost"
               size="icon-xs"
@@ -201,7 +226,7 @@ function SpaceNode({
               <Users />
             </Button>
           ) : null}
-          {canCreateList ? (
+          {perms.createList ? (
             <Button
               variant="ghost"
               size="icon-xs"
@@ -217,8 +242,9 @@ function SpaceNode({
             kind="space"
             id={space.id}
             name={space.name}
-            canManage={canManageSpace}
-            canCascade={canManageSpace}
+            canRename={perms.renameSpace}
+            canDelete={perms.deleteSpace}
+            canCascade={perms.deleteSpace}
             onDeleted={() => onLeaveIfActive(holdsActiveList)}
           />
         </span>
@@ -231,8 +257,7 @@ function SpaceNode({
               workspaceId={workspaceId}
               folder={folder}
               spaceId={space.id}
-              canCreateList={canCreateList}
-              canManageSpace={canManageSpace}
+              perms={perms}
               activeListId={activeListId}
               onLeaveIfActive={onLeaveIfActive}
               onCreateList={onCreateList}
@@ -244,7 +269,7 @@ function SpaceNode({
               workspaceId={workspaceId}
               list={list}
               depth={1}
-              canManageList={canCreateList}
+              perms={perms}
               onLeaveIfActive={onLeaveIfActive}
             />
           ))}
@@ -263,8 +288,7 @@ function FolderNode({
   workspaceId,
   folder,
   spaceId,
-  canCreateList,
-  canManageSpace,
+  perms,
   activeListId,
   onLeaveIfActive,
   onCreateList,
@@ -272,8 +296,7 @@ function FolderNode({
   workspaceId: string;
   folder: TreeFolder;
   spaceId: string;
-  canCreateList: boolean;
-  canManageSpace: boolean;
+  perms: SpaceTreePermissions;
   activeListId?: string;
   onLeaveIfActive: (containsActive: boolean) => void;
   onCreateList: (spaceId: string, folderId?: string | null) => void;
@@ -297,7 +320,7 @@ function FolderNode({
         <FolderIcon className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="truncate text-[13px]">{folder.name}</span>
         <span className="ml-auto flex items-center">
-          {canCreateList ? (
+          {perms.createList ? (
             <Button
               variant="ghost"
               size="icon-xs"
@@ -313,8 +336,9 @@ function FolderNode({
             kind="folder"
             id={folder.id}
             name={folder.name}
-            canManage={canCreateList}
-            canCascade={canManageSpace}
+            canRename={perms.renameFolder}
+            canDelete={perms.deleteFolder}
+            canCascade={perms.cascadeFolder}
             onDeleted={() => onLeaveIfActive(holdsActiveList)}
           />
         </span>
@@ -326,7 +350,7 @@ function FolderNode({
               workspaceId={workspaceId}
               list={list}
               depth={2}
-              canManageList={canCreateList}
+              perms={perms}
               onLeaveIfActive={onLeaveIfActive}
             />
           ))
@@ -339,13 +363,13 @@ function ListNode({
   workspaceId,
   list,
   depth,
-  canManageList,
+  perms,
   onLeaveIfActive,
 }: {
   workspaceId: string;
   list: TreeList;
   depth: 1 | 2;
-  canManageList: boolean;
+  perms: SpaceTreePermissions;
   onLeaveIfActive: (containsActive: boolean) => void;
 }) {
   const params = useParams<{ listId?: string }>();
@@ -377,8 +401,9 @@ function ListNode({
         kind="list"
         id={list.id}
         name={list.name}
-        canManage={canManageList}
-        canCascade={canManageList}
+        canRename={perms.renameList}
+        canDelete={perms.deleteList}
+        canCascade={perms.deleteList}
         onDeleted={() => onLeaveIfActive(isActive)}
       />
     </div>
@@ -391,6 +416,7 @@ function TeamSection({
   canInvite,
 }: {
   workspaceId: string;
+  /** `member.invite` — rol emas: matritsa uni istalgan rolga bera oladi. */
   canInvite: boolean;
 }) {
   const { data, isPending } = useMembers(workspaceId);

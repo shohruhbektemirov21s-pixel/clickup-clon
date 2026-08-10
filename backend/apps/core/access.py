@@ -70,7 +70,8 @@ SPACE_VIEWER_GRANTS = frozenset(
 )
 
 #: `access == manager` (PM) shu bo'lim ichida lokal oladigan kodlar (F-5).
-#: `space.delete`, `member.*`, `workspace.*`, `tag.*` HECH QACHON kirmaydi.
+#: `space.delete`, `space.change_visibility`, `member.*`, `workspace.*`,
+#: `tag.*` HECH QACHON kirmaydi.
 SPACE_MANAGER_GRANTS = frozenset(
     {
         "space.read",
@@ -101,6 +102,14 @@ SPACE_MANAGER_GRANTS = frozenset(
         "attachment.delete_own",
         # `attachment.delete_any` ataylab YO'Q — `comment.delete_any` kabi
         # moderatsiya huquqi bo'lim menejeriga lokal berilmaydi.
+        #
+        # `space.change_visibility` ham ataylab YO'Q (`space.delete` bilan bir
+        # xil mantiq): PM bo'lim ICHIDA to'liq hokim, lekin bo'limning ish
+        # maydoniga nisbatan CHEGARASINI o'zgartira olmaydi. Aks holda u
+        # `is_private=false` bilan yopiq loyihaning butun mazmunini bir
+        # so'rovda barcha a'zolarga oshkor qilardi (yoki teskarisi — ochiq
+        # bo'limni yopib, unga tayangan guest/kontraktorlarni chiqarib
+        # yuborardi).
     }
 )
 

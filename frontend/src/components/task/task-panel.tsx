@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { useMe, useMembers, useTags, useTask, useWorkspace } from "@/hooks/queries";
+import { useMe, useMembers, useTags, useTask } from "@/hooks/queries";
 import { useUpdateTask } from "@/hooks/mutations";
 import { api, isApiError } from "@/lib/api";
 import { keys } from "@/lib/keys";
@@ -32,6 +32,7 @@ import { TagPicker } from "@/components/task/pickers";
 import { CommentsThread } from "@/components/task/comments";
 import { TaskAttachments } from "@/components/task/attachments";
 import { TaskActionsMenu } from "@/components/task/task-actions-menu";
+import type { ListPermissions } from "@/components/list/use-list-permissions";
 import { resolveAssignees, resolveTags } from "@/lib/resolve-embedded";
 import type { Status, Task } from "@/types/api";
 
@@ -40,12 +41,21 @@ export function TaskPanel({
   listId,
   taskId,
   statuses,
+  perms,
   onClose,
 }: {
   workspaceId: string;
   listId: string;
   taskId: string | null;
   statuses: Status[];
+  /**
+   * Ro'yxat qatoriga qanday qaror qo'llanilgan bo'lsa, panelda ham xuddi
+   * shu. Ilgari panel `!isGuest || isAssignee` degan **rol** tekshiruvini
+   * o'zi qilardi: to'g'ri "faqat o'qish" qatoridan ochilgan begona vazifa
+   * panelda to'liq tahrirlanadigan bo'lib ko'rinardi va har bosish 403 bilan
+   * qaytarilardi.
+   */
+  perms: ListPermissions;
   onClose: () => void;
 }) {
   return (
@@ -61,6 +71,7 @@ export function TaskPanel({
             listId={listId}
             taskId={taskId}
             statuses={statuses}
+            perms={perms}
             onClose={onClose}
           />
         ) : null}
@@ -74,20 +85,19 @@ function TaskPanelBody({
   listId,
   taskId,
   statuses,
+  perms,
   onClose,
 }: {
   workspaceId: string;
   listId: string;
   taskId: string;
   statuses: Status[];
+  perms: ListPermissions;
   onClose: () => void;
 }) {
   const { data: task, isPending, isError } = useTask(taskId);
-  const { data: workspace } = useWorkspace(workspaceId);
   const { data: me } = useMe();
-  const isGuest = workspace?.my_role === "guest";
-  const isAssignee = !!me && !!task?.assignees.some((a) => a.id === me.id);
-  const canEdit = !isGuest || isAssignee;
+  const canEdit = !!task && perms.canEditTask(task);
 
   if (isPending) return <PanelSkeleton />;
   if (isError || !task) {
@@ -108,13 +118,18 @@ function TaskPanelBody({
         <SheetDescription className="sr-only">Vazifa tafsilotlari</SheetDescription>
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
-            <TitleEditor task={task} listId={listId} canEdit={canEdit} />
+            <TitleEditor
+              task={task}
+              listId={listId}
+              canEdit={canEdit}
+              hint={perms.hint(canEdit)}
+            />
           </div>
           <TaskActionsMenu
             listId={listId}
             taskId={task.id}
             taskTitle={task.title}
-            canDelete={!isGuest}
+            canDelete={perms.canDeleteTask}
             onDeleted={onClose}
           />
         </div>
@@ -126,6 +141,7 @@ function TaskPanelBody({
           listId={listId}
           task={task}
           statuses={statuses}
+          perms={perms}
           canEdit={canEdit}
           meId={me?.id}
         />
@@ -134,9 +150,9 @@ function TaskPanelBody({
         <Separator />
         {/* Bajarilgan vazifada ham faol — `canEdit` bilan gate qilinmaydi.
             Yagona shart `attachment.*` ruxsatlari (§10.7). */}
-        <TaskAttachments taskId={task.id} workspaceId={workspaceId} />
+        <TaskAttachments taskId={task.id} perms={perms} />
         <Separator />
-        <CommentsThread taskId={task.id} />
+        <CommentsThread taskId={task.id} perms={perms} />
       </div>
 
       <footer className="border-t px-6 py-2 text-xs text-muted-foreground">
@@ -154,10 +170,12 @@ function TitleEditor({
   task,
   listId,
   canEdit,
+  hint,
 }: {
   task: Task;
   listId: string;
   canEdit: boolean;
+  hint?: string;
 }) {
   const updateTask = useUpdateTask(listId);
   const [value, setValue] = React.useState(task.title);
@@ -193,6 +211,7 @@ function TitleEditor({
       rows={1}
       className="min-h-0 resize-none border-none p-0 text-lg font-semibold shadow-none focus-visible:ring-0"
       aria-label="Vazifa nomi"
+      title={hint}
     />
   );
 }
@@ -202,6 +221,7 @@ function FieldGrid({
   listId,
   task,
   statuses,
+  perms,
   canEdit,
   meId,
 }: {
@@ -209,6 +229,7 @@ function FieldGrid({
   listId: string;
   task: Task;
   statuses: Status[];
+  perms: ListPermissions;
   canEdit: boolean;
   meId?: string;
 }) {
@@ -217,6 +238,12 @@ function FieldGrid({
   const updateTask = useUpdateTask(listId);
   const queryClient = useQueryClient();
   const watching = !!meId && task.watchers.some((w) => w.id === meId);
+
+  // Mas'ullarni almashtirish tahrirdan alohida, admin darajasidagi
+  // `task.assign` kodini talab qiladi (server: `assignees_are_changing`).
+  const canAssign = perms.canAssignTask(task);
+  const canWatch = perms.canWatchTask;
+  const editHint = perms.hint(canEdit);
 
   const patch = (p: Parameters<typeof updateTask.mutate>[0]["patch"]) =>
     updateTask.mutate({ taskId: task.id, patch: p });
@@ -239,7 +266,7 @@ function FieldGrid({
   return (
     <dl className="grid grid-cols-[110px_1fr] items-center gap-x-4 gap-y-2 px-6 py-4 text-sm">
       <dt className="text-muted-foreground">Holat</dt>
-      <dd>
+      <dd title={editHint}>
         <StatusPicker
           value={task.status_id}
           statuses={statuses}
@@ -249,11 +276,11 @@ function FieldGrid({
       </dd>
 
       <dt className="text-muted-foreground">Mas&apos;ullar</dt>
-      <dd className="flex flex-wrap items-center gap-1">
+      <dd className="flex flex-wrap items-center gap-1" title={perms.hint(canAssign)}>
         <AssigneePicker
           value={task.assignees}
           members={members?.results ?? []}
-          disabled={!canEdit}
+          disabled={!canAssign}
           onChange={(ids) =>
             updateTask.mutate({
               taskId: task.id,
@@ -277,7 +304,7 @@ function FieldGrid({
       </dd>
 
       <dt className="text-muted-foreground">Muhimlik</dt>
-      <dd>
+      <dd title={editHint}>
         <PriorityPicker
           value={task.priority}
           disabled={!canEdit}
@@ -287,7 +314,7 @@ function FieldGrid({
       </dd>
 
       <dt className="text-muted-foreground">Muddat</dt>
-      <dd>
+      <dd title={editHint}>
         <DueDatePicker
           value={task.due_date}
           disabled={!canEdit}
@@ -296,7 +323,7 @@ function FieldGrid({
       </dd>
 
       <dt className="text-muted-foreground">Teglar</dt>
-      <dd>
+      <dd title={editHint}>
         <TagPicker
           value={task.tags}
           tags={tags?.results ?? []}
@@ -314,7 +341,14 @@ function FieldGrid({
       <dt className="text-muted-foreground">Kuzatuvchilar</dt>
       <dd className="flex items-center gap-2">
         <AvatarStack users={task.watchers} max={4} />
-        <Button variant="ghost" size="xs" onClick={toggleWatch} className="text-muted-foreground">
+        <Button
+          variant="ghost"
+          size="xs"
+          onClick={toggleWatch}
+          disabled={!canWatch}
+          title={perms.hint(canWatch)}
+          className="text-muted-foreground"
+        >
           {watching ? (
             <>
               <EyeOff className="size-3.5" /> Kuzatishni to&apos;xtatish

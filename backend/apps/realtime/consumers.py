@@ -29,6 +29,13 @@ INBOUND_WINDOW_SECONDS = 10.0
 # ish pochtasini yig'ib ololmasligi kerak.
 PRESENCE_FIELDS = ("id", "full_name", "avatar", "avatar_color")
 
+# Soket ruxsat o'zgarishidan UZOQ yashaydi, shuning uchun handshake'dagi bir
+# martalik tekshiruv yetarli emas: quyidagi freymlar kelganda soket o'z
+# doirasini (guruh a'zoligini) qaytadan hisoblaydi va kerak bo'lsa yopiladi.
+SCOPE_CHANGING_EVENTS = frozenset({"access.revoked", "permission.updated"})
+
+REVOKED_MESSAGE = "Ushbu resursga kirish huquqi bekor qilindi."
+
 
 def _presence_summary(user_summary: dict) -> dict:
     return {field: user_summary.get(field) for field in PRESENCE_FIELDS}
@@ -36,22 +43,29 @@ def _presence_summary(user_summary: dict) -> dict:
 
 @database_sync_to_async
 def _list_access(user, list_id):
-    """(allowed, presence_summary, workspace_id, space_id) - mehmon yopiq bo'limni o'qiy olmaydi."""
+    """(allowed, presence_summary, workspace_id, space_id).
+
+    Ko'rinuvchanlik REST bilan **bitta** manbadan keladi —
+    `apps.core.access.space_is_visible`. Ilgari bu yerda qo'lda yozilgan
+    `role == GUEST and space.is_private -> rad` qoidasi turardi va u
+    `SpaceMember` qatorlarini ko'rmasdi: bo'limga aniq qo'shilgan mehmon REST
+    (`get_list()` -> `check_space_visible`) dan o'tib, soketdan rad etilardi.
+    Endi ikkalasi ham bir xil predikatga tayanadi, ya'ni ular hech qachon
+    ajralib keta olmaydi.
+    """
     from apps.accounts.serializers import UserSummarySerializer
-    from apps.core.enums import WorkspaceRole
-    from apps.workspaces.models import TaskList, WorkspaceMember
+    from apps.core.access import get_membership, space_is_visible
+    from apps.workspaces.models import TaskList
 
     task_list = (
-        TaskList.objects.select_related("space").filter(pk=list_id).first()
+        TaskList.objects.select_related("space", "space__workspace")
+        .filter(pk=list_id)
+        .first()
     )
     if task_list is None:
         return False, None, None, None
-    membership = WorkspaceMember.objects.filter(
-        workspace_id=task_list.space.workspace_id, user=user
-    ).first()
-    if membership is None:
-        return False, None, None, None
-    if membership.role == WorkspaceRole.GUEST and task_list.space.is_private:
+    membership = get_membership(user, task_list.space.workspace_id)
+    if membership is None or not space_is_visible(membership, task_list.space):
         return False, None, None, None
     return (
         True,
@@ -62,10 +76,27 @@ def _list_access(user, list_id):
 
 
 @database_sync_to_async
-def _workspace_access(user, workspace_id):
-    from apps.workspaces.models import WorkspaceMember
+def _workspace_scope(user, workspace_id):
+    """(a'zomi, ko'rinadigan bo'lim id'lari to'plami) — fail closed.
 
-    return WorkspaceMember.objects.filter(workspace_id=workspace_id, user=user).exists()
+    `visible_spaces_q` — bo'lim ro'yxatlari uchun REST ishlatadigan aynan o'sha
+    filtr (C.5), shuning uchun soket REST 404 beradigan bo'lim haqidagi
+    freymga hech qachon obuna bo'lmaydi. A'zolik topilmasa bo'sh to'plam
+    qaytadi va chaqiruvchi handshake'ni rad etadi.
+    """
+    from apps.core.access import get_membership, visible_spaces_q
+    from apps.workspaces.models import Space
+
+    membership = get_membership(user, workspace_id)
+    if membership is None:
+        return False, frozenset()
+    space_ids = (
+        Space.objects.filter(workspace_id=workspace_id)
+        .filter(visible_spaces_q(membership))
+        .values_list("id", flat=True)
+        .distinct()
+    )
+    return True, frozenset(str(space_id) for space_id in space_ids)
 
 
 class BaseConsumer(AsyncJsonWebsocketConsumer):
@@ -94,20 +125,28 @@ class BaseConsumer(AsyncJsonWebsocketConsumer):
 
     async def broadcast(self, message):
         event = message["event"]
+        event_type = event.get("type")
         await self.send_json(event)
+        data = (event.get("payload") or {}).get("data") or {}
         # Y-2 - `access.revoked` shaxsiy `user.<id>` kanalidan keladi. Klient
         # cache'ini tozalashi uchun freymning o'zi avval yuboriladi, so'ng
         # bekor qilish haqiqatan shu soketni qamrasa, soket majburan yopiladi.
         # Aks holda REST allaqachon 404 qaytarayotgan bo'lsa-da, ochiq soket
         # bekor qilingan a'zolikka voqealar oqizishda davom etardi.
-        if event.get("type") == "access.revoked":
-            data = (event.get("payload") or {}).get("data") or {}
-            if self.revocation_applies(data):
-                await self.error_and_close(
-                    "permission_denied",
-                    "Ushbu resursga kirish huquqi bekor qilindi.",
-                    CLOSE_ACCESS_REVOKED,
-                )
+        if event_type == "access.revoked" and self.revocation_applies(data):
+            await self.error_and_close(
+                "permission_denied", REVOKED_MESSAGE, CLOSE_ACCESS_REVOKED
+            )
+            return
+        # Soketni yopmaydigan ruxsat o'zgarishi ham guruh a'zoligini
+        # eskirtiradi (masalan bo'limdan chiqarilgan a'zoning yon panel
+        # soketi hali ham o'sha `space.<id>` guruhida turadi).
+        if event_type in SCOPE_CHANGING_EVENTS:
+            await self.resync_scope()
+
+    async def resync_scope(self):
+        """Ruxsat o'zgargandan keyin doirani qayta baholaydi (standarti: yo'q)."""
+        return
 
     def revocation_applies(self, data) -> bool:  # pragma: no cover - abstract
         raise NotImplementedError
@@ -237,6 +276,24 @@ class ListConsumer(BaseConsumer):
         space_id = data.get("space_id")
         return space_id is None or str(space_id) == str(self.space_id)
 
+    async def resync_scope(self):
+        """Ruxsat o'zgardi — shu ro'yxatni hali ham o'qiy olamizmi?
+
+        `revocation_applies` qamramagan holatlar uchun (masalan matritsa
+        o'zgarib rol `space.read_private` ni yo'qotdi) yagona haqiqat manbai
+        `_list_access` qayta so'raladi. Fail-closed: o'qiy olmasak — 4403.
+        """
+        if not getattr(self, "joined", False):
+            return
+        user = self.scope.get("user")
+        if user is None or user.is_anonymous:
+            return
+        allowed, *_ = await _list_access(user, self.list_id)
+        if not allowed:
+            await self.error_and_close(
+                "permission_denied", REVOKED_MESSAGE, CLOSE_ACCESS_REVOKED
+            )
+
     async def handle_json(self, content):
         # Closed client vocabulary: presence.ping / presence.typing; ignore the rest.
         if content.get("type") not in ("presence.ping", "presence.typing"):
@@ -244,21 +301,35 @@ class ListConsumer(BaseConsumer):
 
 
 class WorkspaceConsumer(BaseConsumer):
+    """Yon panel soketi — `list.updated` va ierarxiya o'zgarishlari.
+
+    Ilgari bu soket faqat `workspace.<id>` guruhiga qo'shilardi va o'sha guruh
+    butun ish maydonining `task.*` / `list.updated` freymlarini olib yurardi:
+    yopiq bo'limga kirish huquqi bo'lmagan mehmon REST'da 404 oladigan
+    ro'yxatning nomini, vazifa sarlavhasini va tavsifini soket orqali o'qib
+    olardi. Endi soket faqat **o'ziga ko'rinadigan** `space.<id>` guruhlariga
+    qo'shiladi (`visible_spaces_q`), `workspace.<id>` esa faqat mazmun olib
+    yurmaydigan `permission.updated` uchun qoladi.
+    """
+
     channel = "workspace"
 
     async def connect(self):
         self.workspace_id = self.scope["url_route"]["kwargs"]["workspace_id"]
         self.group = events.workspace_group(self.workspace_id)
+        self.space_groups: set[str] = set()
         self.joined = False
         user = self.scope.get("user")
         if user is None or user.is_anonymous:
             await self.close()
             return
-        if not await _workspace_access(user, self.workspace_id):
+        allowed, space_ids = await _workspace_scope(user, self.workspace_id)
+        if not allowed:
             await self.send_error_and_close("permission_denied", "Not a workspace member.")
             return
         await self.channel_layer.group_add(self.group, self.channel_name)
         await self.channel_layer.group_add(events.user_group(user.id), self.channel_name)
+        await self._sync_space_groups(space_ids)
         await self.accept()
         self.joined = True
         await self.send_json(
@@ -273,11 +344,23 @@ class WorkspaceConsumer(BaseConsumer):
             }
         )
 
+    async def _sync_space_groups(self, space_ids):
+        """Guruh a'zoligini ko'rinadigan bo'limlar to'plamiga tenglashtiradi."""
+        wanted = {events.space_group(space_id) for space_id in space_ids}
+        for group in wanted - self.space_groups:
+            await self.channel_layer.group_add(group, self.channel_name)
+        for group in self.space_groups - wanted:
+            await self.channel_layer.group_discard(group, self.channel_name)
+        self.space_groups = wanted
+
     async def disconnect(self, code):
         if not getattr(self, "joined", False):
             return
         user = self.scope.get("user")
         await self.channel_layer.group_discard(self.group, self.channel_name)
+        for group in getattr(self, "space_groups", set()):
+            await self.channel_layer.group_discard(group, self.channel_name)
+        self.space_groups = set()
         if user is not None and not user.is_anonymous:
             await self.channel_layer.group_discard(
                 events.user_group(user.id), self.channel_name
@@ -286,5 +369,20 @@ class WorkspaceConsumer(BaseConsumer):
     def revocation_applies(self, data) -> bool:
         """Bo'limdan chiqarish workspace a'zoligini olib tashlamaydi, shuning
         uchun yon panel soketi faqat workspace darajasidagi bekor qilishda
-        (`space_id is None`) yopiladi."""
+        (`space_id is None`) yopiladi. Bo'lim darajasidagisi soketni yopmaydi —
+        u `resync_scope()` orqali o'sha bo'lim guruhidan chiqib ketadi."""
         return data.get("space_id") is None and self._same_workspace(data)
+
+    async def resync_scope(self):
+        if not getattr(self, "joined", False):
+            return
+        user = self.scope.get("user")
+        if user is None or user.is_anonymous:
+            return
+        allowed, space_ids = await _workspace_scope(user, self.workspace_id)
+        if not allowed:
+            await self.error_and_close(
+                "permission_denied", REVOKED_MESSAGE, CLOSE_ACCESS_REVOKED
+            )
+            return
+        await self._sync_space_groups(space_ids)

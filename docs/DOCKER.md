@@ -432,7 +432,99 @@ docker system prune -a        # DIQQAT: ishlatilmayotgan hamma image o'chadi
 
 ---
 
-## 12. Foydali buyruqlar to'plami
+## 12. Zaxira nusxa va tiklash (backup / restore)
+
+> Ilgari bu mavzu §13 dagi "foydali buyruqlar" ro'yxatida ikkita qatordan
+> iborat edi. Ikki qator buyruq — bu **backup emas**: u nimani saqlash
+> kerakligini, qaerga saqlashni, qancha saqlashni va tiklash ishlaganini
+> qanday tekshirishni aytmaydi.
+
+### 12.1 Nimani saqlash kerak
+
+Uchta narsa, va ular **birga** olinishi shart — aks holda tiklangan tizim
+o'zaro mos kelmaydi:
+
+| Manba | Nima | Yo'qolsa nima bo'ladi |
+|---|---|---|
+| `pgdata` volume (PostgreSQL) | Butun ma'lumot: ish maydonlari, vazifalar, izohlar, `RolePermission` matritsasi | Hammasi. Bu asosiy zaxira. |
+| `media` volume | Yuklangan fayllar: avatarlar va **vazifa biriktirmalari** (`TaskAttachment.file`) | DB'da `TaskAttachment` qatori qoladi, lekin fayl yo'q — yuklab olishda `404`. Ya'ni **faqat DB backup yetarli emas**. |
+| `.env` (repo ildizida) | `SECRET_KEY`, DB paroli, `SENTRY_DSN` va boshqalar | `SECRET_KEY` o'zgarsa barcha mavjud JWT va parol-tiklash havolalari kuchini yo'qotadi. Buni **maxfiy** saqlang, git'ga qo'ymang. |
+
+`redisdata` **saqlanmaydi** — u faqat Channels'ning o'tkinchi holati; yo'qolsa
+soketlar qayta ulanadi va hammasi tiklanadi. `static` ham saqlanmaydi:
+`collectstatic` uni har build'da qaytadan yaratadi.
+
+### 12.2 Qo'lda olish (eng kichik ishlaydigan variant)
+
+```bash
+# 1) DB — mantiqiy dump (versiyalar orasida ko'chirish uchun eng ishonchlisi)
+docker compose exec -T db pg_dump -U clickup -Fc clickup > backup-$(date +%F).dump
+
+# 2) Media — volume'ni tar qilib olish
+docker run --rm -v clickup_media:/data -v "$PWD":/out alpine \
+  tar czf /out/media-$(date +%F).tar.gz -C /data .
+```
+
+`-Fc` (custom format) `pg_restore` ga selektiv tiklash va parallel yuklash
+imkonini beradi; oddiy `.sql` dan afzal.
+
+### 12.3 Tiklash
+
+**Tartib muhim:** avval baza, keyin media, keyin migratsiyalar tekshiruvi.
+
+```bash
+# 0) Ilovani to'xtating — tiklash paytida yozuv bo'lmasin
+docker compose stop backend frontend
+
+# 1) Bo'sh bazaga tiklash
+docker compose exec -T db dropdb   -U clickup --if-exists clickup
+docker compose exec -T db createdb -U clickup clickup
+docker compose exec -T db pg_restore -U clickup -d clickup --no-owner < backup-YYYY-MM-DD.dump
+
+# 2) Media
+docker run --rm -v clickup_media:/data -v "$PWD":/in alpine \
+  sh -c "rm -rf /data/* && tar xzf /in/media-YYYY-MM-DD.tar.gz -C /data"
+
+# 3) Ko'taring va tekshiring
+docker compose up -d backend frontend
+docker compose exec backend python manage.py migrate --check
+docker compose exec backend python manage.py check --deploy
+```
+
+`migrate --check` **nolinchi qadam emas, oxirgi qadam**: agar zaxira kod
+versiyasidan eskiroq bo'lsa u nolga teng bo'lmagan kod bilan chiqadi va sizga
+`migrate` kerakligini aytadi. Zaxirani **kod versiyasi bilan birga** belgilab
+qo'ying (masalan git SHA nomga kirsin) — aks holda qaysi migratsiya holatiga
+mos kelishini keyin topib bo'lmaydi.
+
+### 12.4 Skriptlar
+
+Takrorlanadigan zaxira uchun buyruqlarni qo'lda terish emas, skript ishlatiladi:
+
+| Fayl | Vazifasi |
+|---|---|
+| `scripts/backup.sh` | DB + media zaxirasini bir buyruq bilan olish, sana bo'yicha nomlash, eski nusxalarni tozalash |
+| `scripts/README.md` | Skriptlarni ishlatish tartibi, cron/Task Scheduler namunasi, saqlash muddati (retention) siyosati |
+
+> **Holat (2026-08-10):** bu ikki fayl boshqa muhandis tomonidan **hozir
+> qo'shilmoqda** va bu hujjat yozilayotgan paytda repoda hali yo'q edi. Agar
+> `scripts/` papkasini ko'rmasangiz, §12.2–§12.3 dagi qo'lda variantdan
+> foydalaning — u to'liq ishlaydi va skriptlar aynan shu buyruqlarni o'raydi.
+
+### 12.5 Nimani unutmaslik kerak
+
+- **Tiklashni sinab ko'rmagan zaxira — zaxira emas.** Kamida bir marta bo'sh
+  stack'ga tiklab, `seed_demo` emas, haqiqiy ma'lumot chiqishini ko'ring.
+- Zaxirani **boshqa mashinada** saqlang. `pgdata` bilan bir xil diskdagi
+  `backup.sql` disk nosozligida birga yo'qoladi.
+- `.env` ni zaxira arxiviga **qo'shmang** — uni parol menejerida yoki secret
+  store'da alohida saqlang.
+- Prod'da `docker compose down -v` **hech qachon** ishlatilmaydi: u `pgdata`
+  ni ham o'chiradi (§8).
+
+---
+
+## 13. Foydali buyruqlar to'plami
 
 ```bash
 # konteyner ichiga kirish
@@ -448,9 +540,9 @@ docker compose exec backend python -m pytest
 # psql
 docker compose exec db psql -U clickup -d clickup
 
-# baza dump / restore
-docker compose exec db pg_dump -U clickup clickup > backup.sql
-docker compose exec -T db psql -U clickup -d clickup < backup.sql
+# baza dump / restore — to'liq tartib (media va tekshiruv bilan) §12 da
+docker compose exec -T db pg_dump -U clickup -Fc clickup > backup.dump
+docker compose exec -T db pg_restore -U clickup -d clickup --no-owner < backup.dump
 
 # resurs sarfi va jarayonlar
 docker stats

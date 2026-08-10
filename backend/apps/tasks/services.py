@@ -1,7 +1,5 @@
 """Task services — the write path. Realtime events are emitted from here only."""
 
-import random
-import time
 import uuid
 
 from django.db import IntegrityError, transaction
@@ -132,19 +130,41 @@ def _grant_assignee_space_access(space, users, actor):
     bo'lardi — o'ziga biriktirilgan vazifani tahrirlay olmay qolardi
     (`task.update_assigned` → 403). Shuning uchun grant faqat kirish
     YETISHMAYOTGAN odamga beriladi: u yutadi, hech kim yo'qotmaydi.
+
+    **AppSec cheklovi.** `SpaceMember` qatorini yozish — bu aslida
+    `space.manage_members` amali (§D.6). Uni biriktirishning yon ta'siri
+    sifatida HAR QANDAY chaqiruvchiga ochib qo'yish yopiq bo'limga kirishni
+    tarqatish kanaliga aylanardi: biriktira olgan odam istalganini bo'lim
+    o'quvchisiga aylantirib, `space.manage_members` (admin-only) ni chetlab
+    o'tardi. Shuning uchun grant faqat aktyorning o'zi `space.manage_members`
+    ga ega bo'lganda yoziladi; aks holda `400` — "avval odamni bo'limga
+    qo'shing" (fail-closed, kirish jimgina kengaymaydi).
     """
-    from apps.core.access import space_is_visible
+    from apps.core.access import get_membership, has_space_perm, space_is_visible
 
     if not users:
         return
     memberships = WorkspaceMember.objects.select_related("user", "workspace").filter(
         workspace_id=space.workspace_id, user_id__in=[u.id for u in users]
     )
+    actor_membership = None
     for membership in memberships:
         # `space_is_visible` mavjud `SpaceMember` qatorini ham hisobga oladi,
         # ya'ni bu tekshiruv idempotentlikni ham ta'minlaydi.
         if space_is_visible(membership, space):
             continue
+        if actor_membership is None and actor is not None:
+            actor_membership = get_membership(actor, space.workspace_id)
+        if actor_membership is None or not has_space_perm(
+            actor_membership, space, "space.manage_members"
+        ):
+            raise ValidationError(
+                {
+                    "assignee_ids": [
+                        "Bu foydalanuvchi bo'limni ko'rmaydi; avval uni bo'limga qo'shing."
+                    ]
+                }
+            )
         ensure_space_member(
             space,
             membership.user,
@@ -262,15 +282,16 @@ def _status_activities(task, actor, previous, status):
     return rows
 
 
-def _nudged_position(task, status, desired):
-    """Keep `desired` unless it collides in the destination column; nudge one row."""
-    while (
-        _column_qs(task.list_id, status.id, exclude_pk=task.pk)
-        .filter(position=desired)
-        .exists()
-    ):
+def _nudged_position(list_id, status_id, exclude_pk, desired):
+    """Keep `desired` unless it collides in the destination column; nudge one row.
+
+    Ustun/status ATAYLAB alohida argument: ko'chirishda `task.list` xotirada
+    allaqachon manzilga o'zgartirilgan bo'lishi mumkin, DB'dagi holat esa hali
+    manba ustuni bo'lib turadi.
+    """
+    while _column_qs(list_id, status_id, exclude_pk=exclude_pk).filter(position=desired).exists():
         nxt = (
-            _column_qs(task.list_id, status.id, exclude_pk=task.pk)
+            _column_qs(list_id, status_id, exclude_pk=exclude_pk)
             .filter(position__gt=desired)
             .order_by("position")
             .values_list("position", flat=True)
@@ -306,6 +327,15 @@ def create_task(task_list, data, actor, client_id=None) -> Task:
         updated_by=actor,
     )
     _apply_completed_at(task, status)
+    # `uniq_task_position_per_column` bilan poyga: boshqa yozuvchi ayni shu
+    # kalitni oldindan olib qo'ygan bo'lishi mumkin. Qayta urinish oldida
+    # KUTILMAYDI — bu funksiya `@transaction.atomic` ichida, ya'ni `sleep`
+    # PostgreSQL'da ochiq tranzaksiya va olingan qulflarni ushlab turgan holda
+    # uxlardi (boshqa yozuvchilarni bloklab). Kutishning keragi ham yo'q:
+    # to'qnashuvga sabab bo'lgan qator ALLAQACHON commit qilingan (aks holda
+    # `IntegrityError` bo'lmasdi), READ COMMITTED'da esa keyingi `SELECT` uni
+    # ko'radi — ya'ni qayta urinish determinlashgan holda yangi kalit beradi,
+    # backoff talab qiladigan tasodifiy raqobat emas.
     for attempt in range(3):
         task.position = _end_of_column_position(task_list.id, status.id)
         try:
@@ -315,7 +345,6 @@ def create_task(task_list, data, actor, client_id=None) -> Task:
         except IntegrityError:
             if attempt == 2:
                 raise Conflict("Could not create the task; please retry.")
-            time.sleep(random.uniform(0.005, 0.02))
 
     add_watcher(task, actor, WatcherSource.AUTO_CREATOR)
     rows = [
@@ -354,7 +383,9 @@ def update_task(task, data, actor, client_id=None) -> Task:
         if status.id != task.status_id:
             previous = task.status
             task.status = status
-            task.position = _nudged_position(task, status, task.position)
+            task.position = _nudged_position(
+                task.list_id, status.id, task.pk, task.position
+            )
             _apply_completed_at(task, status)
             update_fields |= {"status", "position", "completed_at"}
             status_changed = True
@@ -421,7 +452,7 @@ def restore_task(task, actor, client_id=None) -> Task:
     task.deleted_at = None
     task.updated_by = actor
     # restore may collide with a live task's position
-    task.position = _nudged_position(task, task.status, task.position)
+    task.position = _nudged_position(task.list_id, task.status_id, task.pk, task.position)
     task.save(update_fields=["deleted_at", "updated_by", "position", "updated_at"])
     log_activities([activity(task, actor, ActivityVerb.RESTORED, to_value=task.title)])
     refresh_list_counts(task.list, actor=actor, client_id=client_id, emit=True)
@@ -477,6 +508,7 @@ def move_task(task, *, list_id, status_id, before_id, after_id, actor, client_id
     source_list = task.list
     previous_status = task.status
     rebalanced = False
+    collided = False
     for attempt in range(3):
         prev_pos = _neighbour_position(target_list.id, status.id, before_id, task.pk)
         next_pos = _neighbour_position(target_list.id, status.id, after_id, task.pk)
@@ -491,9 +523,20 @@ def move_task(task, *, list_id, status_id, before_id, after_id, actor, client_id
         else:
             new_pos = midstring(prev_pos, next_pos)
 
+        if collided:
+            # Oldingi urinish `uniq_task_position_per_column` ga urildi: aynan
+            # shu qo'shni juftlik orasiga parallel yozuvchi allaqachon
+            # joylashgan. `midstring(prev, next)` yana O'SHA kalitni beradi,
+            # ya'ni takroriy urinishlar hech qachon yaqinlashmasdi (3 ta
+            # urinish → 409, garchi bo'sh joy bor bo'lsa ham). G'olibning
+            # ustidan bir qadam bosib o'tamiz — natija baribir `prev` bilan
+            # `next` orasida qoladi.
+            new_pos = _nudged_position(target_list.id, status.id, task.pk, new_pos)
+
         if len(new_pos) > MAX_LEN_BEFORE_REBALANCE:
             rebalance_column(target_list, status)
             rebalanced = True
+            collided = False
             continue
 
         try:
@@ -517,7 +560,9 @@ def move_task(task, *, list_id, status_id, before_id, after_id, actor, client_id
         except IntegrityError:
             if attempt == 2:
                 raise PositionConflict("Could not obtain a stable position after 3 attempts.")
-            time.sleep(random.uniform(0.005, 0.02) * (attempt + 1))
+            # Backoff YO'Q — `create_task` dagi bilan bir xil sabab: bu blok
+            # ochiq tranzaksiya ichida, `sleep` esa qulflarni ushlab turardi.
+            collided = True
             continue
 
     rows = []

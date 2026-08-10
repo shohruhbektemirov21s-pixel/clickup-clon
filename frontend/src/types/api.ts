@@ -682,6 +682,7 @@ export interface WsPermissionUpdatedData {
   version: number;
 }
 
+/** `access.revoked` payload data (§18.6). `space_id: null` = whole workspace. */
 export interface WsAccessRevokedData {
   workspace_id: string;
   space_id: string | null;
@@ -692,9 +693,18 @@ export interface WsAccessRevokedData {
 // ---------------------------------------------------------------------------
 
 /**
- * The closed catalog of permission codes — 48 codes across 9 groups
- * (`catalog_version: 2`). Codes are never removed from the catalog, only
- * flagged `deprecated` server-side, so this union only ever grows.
+ * The closed catalog of permission codes, mirroring the `PermissionDef` list in
+ * `backend/apps/core/permissions.py`. Codes are never removed from the catalog,
+ * only flagged `deprecated` server-side, so this union only ever grows.
+ *
+ * Deliberately no code count and no `catalog_version` literal here — the last
+ * ones sat three catalog bumps out of date. `catalog_version` is the server's
+ * cache-busting counter for the shape of the catalog, and it travels on the
+ * payload itself (`PermissionCatalog.catalog_version`): read it from there, so
+ * there is never a number in this file that can go stale.
+ *
+ * This union is hand-maintained and is the client's only copy of the catalog,
+ * so it can drift silently. Keep it in step with the backend on every add.
  */
 export type PermissionCode =
   | "workspace.read"
@@ -712,6 +722,7 @@ export type PermissionCode =
   | "space.read_private"
   | "space.create"
   | "space.update"
+  | "space.change_visibility"
   | "space.delete"
   | "space.manage_members"
   | "space.manage_statuses"
@@ -864,10 +875,4 @@ export interface BulkSpaceMembersResponse {
   added: number;
   removed: number;
   results: SpaceMember[];
-}
-
-/** `access.revoked` payload data (§18.6). `space_id: null` = whole workspace. */
-export interface WsAccessRevokedData {
-  workspace_id: string;
-  space_id: string | null;
 }

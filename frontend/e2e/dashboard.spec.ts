@@ -1,11 +1,11 @@
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import {
   createTask,
-  deleteTaskQuietly,
+  deleteTaskAfterTest,
   firstListId,
   firstWorkspace,
-  login,
-  sessionFor,
+  gotoWorkspace,
+  signedInContext,
   uniqueTitle,
   USERS,
   type AuthSession,
@@ -14,9 +14,10 @@ import {
 /**
  * Ish maydoni bosh sahifasi (dashboard).
  *
- * Login endpoint'i cheklangan, shuning uchun bu fayl bitta autentifikatsiya
- * qilingan kontekstni bo'lishadi. Testlar bir-biriga bog'liq emas: har biri
- * o'z sahifasiga o'zi o'tadi va o'z ma'lumotini yaratadi.
+ * Bitta autentifikatsiya qilingan kontekst bo'lishiladi — sessiya REST orqali
+ * olinadi (`signedInContext`), login formasi bosilmaydi. Testlar bir-biriga
+ * bog'liq emas: har biri o'z sahifasiga o'zi o'tadi va o'z ma'lumotini
+ * yaratadi.
  */
 let context: BrowserContext;
 let page: Page;
@@ -24,11 +25,8 @@ let session: AuthSession;
 let workspaceId: string;
 
 test.beforeAll(async ({ browser }) => {
-  session = await sessionFor(USERS.demo);
+  ({ context, page, session } = await signedInContext(browser, USERS.demo));
   workspaceId = (await firstWorkspace(session.access)).id;
-  context = await browser.newContext();
-  page = await context.newPage();
-  await login(page, USERS.demo);
 });
 
 test.afterAll(async () => {
@@ -36,8 +34,7 @@ test.afterAll(async () => {
 });
 
 async function openDashboard() {
-  await page.goto(`/w/${workspaceId}`);
-  await page.waitForLoadState("networkidle");
+  await gotoWorkspace(page, workspaceId);
 }
 
 test.describe("workspace dashboard", () => {
@@ -104,7 +101,7 @@ test.describe("workspace dashboard", () => {
       await page.waitForURL(new RegExp(`/w/${workspaceId}/l/${listId}`));
       await expect(page).toHaveURL(new RegExp(`task=${task.id}`));
     } finally {
-      await deleteTaskQuietly(session.access, task.id);
+      await deleteTaskAfterTest(session.access, task.id);
     }
   });
 });

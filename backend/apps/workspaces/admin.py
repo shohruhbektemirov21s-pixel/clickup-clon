@@ -61,7 +61,7 @@ class WorkspaceMemberInline(admin.TabularInline):
 
 
 class RolePermissionInline(admin.TabularInline):
-    """144 qator — default yopiq; faqat `allowed` tahrirlanadi."""
+    """3 rol × butun katalog (v5: 147 qator) — default yopiq; faqat `allowed` tahrirlanadi."""
 
     model = RolePermission
     extra = 0
@@ -290,13 +290,31 @@ class SpaceAdmin(admin.ModelAdmin):
     inlines = [SpaceMemberInline]
     actions = ["make_private", "make_public", "sync_creator_as_manager"]
 
+    def _set_visibility(self, request, queryset, *, is_private):
+        """`queryset.update()` EMAS — servis qatlami orqali.
+
+        Bo'limning `is_private` bayrog'i oddiy ustun emas: uni o'zgartirish
+        (a) yopiq bo'limga menejer biriktirishni, (b) `permissions_version`
+        ni oshirishni va (c) ko'rinishni yo'qotganlarga `access.revoked`
+        yuborishni talab qiladi. To'g'ridan-to'g'ri `UPDATE` uchalasini ham
+        o'tkazib yuborardi va mehmon ochiq soket bilan endi yopiq bo'lgan
+        bo'limning freymlarini olishda davom etardi (§G.3 / Y-1).
+        """
+        changed = 0
+        for space in queryset.select_related("workspace"):
+            if space.is_private == is_private:
+                continue
+            services.set_space_visibility(space, is_private=is_private, actor=request.user)
+            changed += 1
+        self.message_user(request, f"{changed} ta bo'lim yangilandi.")
+
     @admin.action(description="Yopiq qilish")
     def make_private(self, request, queryset):
-        queryset.update(is_private=True)
+        self._set_visibility(request, queryset, is_private=True)
 
     @admin.action(description="Ochiq qilish")
     def make_public(self, request, queryset):
-        queryset.update(is_private=False)
+        self._set_visibility(request, queryset, is_private=False)
 
     @admin.action(description="Yaratuvchini menejer qilib biriktirish")
     def sync_creator_as_manager(self, request, queryset):

@@ -29,8 +29,9 @@ export function PasswordInput({
         onClick={() => setVisible((v) => !v)}
         aria-label={visible ? "Parolni yashirish" : "Parolni ko'rsatish"}
         aria-pressed={visible}
-        tabIndex={-1}
-        className="absolute inset-y-0 right-0 flex w-9 items-center justify-center bg-transparent text-muted-foreground transition-colors hover:text-foreground"
+        // WCAG 2.1.1 (A): tugma klaviatura bilan ham topilishi shart —
+        // `tabIndex={-1}` uni faqat sichqoncha uchun qoldirar edi.
+        className="absolute inset-y-0 right-0 flex w-9 items-center justify-center rounded-md bg-transparent text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
       >
         {visible ? (
           <EyeOff className="size-4" aria-hidden />

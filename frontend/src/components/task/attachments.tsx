@@ -18,11 +18,11 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useAttachments, useMe, useMyPermissions } from "@/hooks/queries";
+import { useAttachments } from "@/hooks/queries";
 import { useDeleteAttachment, useUploadAttachment } from "@/hooks/mutations";
+import type { ListPermissions } from "@/components/list/use-list-permissions";
 import { api, isApiError } from "@/lib/api";
 import { formatFileSize, timeAgo } from "@/lib/format";
-import { can } from "@/lib/permissions";
 import {
   ATTACHMENT_ALLOWED_EXTENSIONS,
   ATTACHMENT_MAX_BYTES,
@@ -122,18 +122,20 @@ async function downloadAttachment(attachment: TaskAttachment) {
  *
  * Deliberately stays enabled for completed (closed) tasks — attaching the
  * final report *after* the work is done is the whole point of the feature.
+ *
+ * `attachment.*` kodlari bo'lim doirasida hal qilinadi (`perms`), chunki
+ * server ham `has_space_perm` ni chaqiradi: bo'lim `viewer` i fayl ko'radi,
+ * lekin yuklay ham, o'chira ham olmaydi.
  */
 export function TaskAttachments({
   taskId,
-  workspaceId,
+  perms,
 }: {
   taskId: string;
-  workspaceId: string;
+  perms: ListPermissions;
 }) {
-  const { data: my } = useMyPermissions(workspaceId);
-  const { data: me } = useMe();
-  const canRead = can(my, "attachment.read");
-  const canUpload = can(my, "attachment.create");
+  const canRead = perms.canReadAttachments;
+  const canUpload = perms.canUploadAttachment;
   const { data, isPending } = useAttachments(taskId, canRead);
   const upload = useUploadAttachment(taskId);
   const remove = useDeleteAttachment(taskId);
@@ -220,9 +222,7 @@ export function TaskAttachments({
             <AttachmentRow
               key={attachment.id}
               attachment={attachment}
-              canDeleteOwn={can(my, "attachment.delete_own")}
-              canDeleteAny={can(my, "attachment.delete_any")}
-              isMine={!!me && attachment.uploaded_by?.id === me.id}
+              canDelete={perms.canDeleteAttachment(attachment.uploaded_by?.id)}
               onDelete={() => remove.mutate(attachment.id)}
             />
           ))}
@@ -286,18 +286,14 @@ export function TaskAttachments({
 
 function AttachmentRow({
   attachment,
-  canDeleteOwn,
-  canDeleteAny,
-  isMine,
+  canDelete,
   onDelete,
 }: {
   attachment: TaskAttachment;
-  canDeleteOwn: boolean;
-  canDeleteAny: boolean;
-  isMine: boolean;
+  /** `attachment.delete_own` o'ziniki uchun, `attachment.delete_any` boshqasi. */
+  canDelete: boolean;
   onDelete: () => void;
 }) {
-  const canDelete = isMine ? canDeleteOwn : canDeleteAny;
   const uploader =
     attachment.uploaded_by?.full_name ||
     attachment.uploaded_by?.email ||

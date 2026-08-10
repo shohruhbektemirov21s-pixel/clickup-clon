@@ -38,3 +38,37 @@ class LoginEmailThrottle(SimpleRateThrottle):
         # a shared Redis) as plaintext keys.
         ident = hashlib.sha256(email.encode("utf-8")).hexdigest()
         return self.cache_format % {"scope": self.scope, "ident": ident}
+
+
+class RefreshRateThrottle(SimpleRateThrottle):
+    """Per-source bound on `POST auth/refresh/`.
+
+    The endpoint is `AllowAny` — a client that needs a new access token has no
+    valid one to authenticate with — and every *successful* call performs two
+    writes (rotate the refresh token, blacklist the old one). Without a bound,
+    an anonymous client can drive unlimited inserts into the SimpleJWT tables.
+
+    ``DEFAULT_RATE`` is a fallback, not the intended configuration: the rate
+    belongs in ``REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]["refresh"]`` next to
+    the other scopes. Until that key exists, a missing scope must not turn into
+    an ``ImproperlyConfigured`` 500 on a public endpoint, so ``get_rate()``
+    falls back instead of raising.
+
+    The default is deliberately loose. The key is the source address, and with
+    ``NUM_PROXIES`` set correctly a whole office behind one NAT address shares
+    a bucket, so a tight limit would lock out real users long before it
+    inconvenienced an attacker. 30/min still turns "unbounded" into a
+    bounded, alertable cost.
+    """
+
+    scope = "refresh"
+    DEFAULT_RATE = "30/min"
+
+    def get_rate(self):
+        return self.THROTTLE_RATES.get(self.scope) or self.DEFAULT_RATE
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {
+            "scope": self.scope,
+            "ident": self.get_ident(request),
+        }

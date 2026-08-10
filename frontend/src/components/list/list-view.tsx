@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useGroupedTasks, useMembers, useTags } from "@/hooks/queries";
 import { useCreateTask, useUpdateTask } from "@/hooks/mutations";
 import { TaskActionsMenu } from "@/components/task/task-actions-menu";
+import type { ListPermissions } from "@/components/list/use-list-permissions";
 import { resolveAssignees, resolveTags } from "@/lib/resolve-embedded";
 import {
   AssigneePicker,
@@ -17,7 +18,7 @@ import {
   StatusPicker,
   TagPicker,
 } from "@/components/task/pickers";
-import type { Status, Task } from "@/types/api";
+import type { Member, Status, Tag, Task } from "@/types/api";
 import { cn } from "@/lib/utils";
 
 export function ListView({
@@ -25,15 +26,20 @@ export function ListView({
   listId,
   statuses,
   onOpenTask,
-  canEdit,
+  perms,
 }: {
   workspaceId: string;
   listId: string;
   statuses: Status[];
   onOpenTask: (taskId: string) => void;
-  canEdit: boolean;
+  perms: ListPermissions;
 }) {
   const { data, isPending, isError, refetch } = useGroupedTasks(listId);
+  // Roster va teglar bir marta shu yerda olinadi. Ilgari har bir `TaskRow`
+  // `useMembers` + `useTags` chaqirardi: N ta qator ikkita query kalitiga 2N
+  // ta observer yozib, roster yangilanishida butun ro'yxatni qayta chizardi.
+  const { data: members } = useMembers(workspaceId);
+  const { data: tags } = useTags(workspaceId);
 
   if (isPending) return <ListSkeleton />;
   if (isError) {
@@ -54,19 +60,20 @@ export function ListView({
   return (
     <div className="flex-1 overflow-y-auto px-4 py-3">
       {total === 0 && orderedStatuses.length === 0 ? (
-        <EmptyState canEdit={canEdit} />
+        <EmptyState canCreate={perms.canCreateTask} />
       ) : (
         orderedStatuses.map((status) => (
           <StatusGroup
             key={status.id}
-            workspaceId={workspaceId}
             listId={listId}
             status={status}
             statuses={orderedStatuses}
             tasks={groupsByStatus.get(status.id)?.results ?? []}
             count={groupsByStatus.get(status.id)?.count ?? 0}
+            members={members?.results ?? []}
+            tags={tags?.results ?? []}
             onOpenTask={onOpenTask}
-            canEdit={canEdit}
+            perms={perms}
           />
         ))
       )}
@@ -74,11 +81,11 @@ export function ListView({
   );
 }
 
-function EmptyState({ canEdit }: { canEdit: boolean }) {
+function EmptyState({ canCreate }: { canCreate: boolean }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
       <p className="text-sm font-medium">Hozircha vazifalar yo&apos;q.</p>
-      {canEdit ? (
+      {canCreate ? (
         <p className="text-sm text-muted-foreground">
           Holat guruhi ostidagi “+ Vazifa qo&apos;shish” tugmasidan foydalaning.
         </p>
@@ -88,26 +95,29 @@ function EmptyState({ canEdit }: { canEdit: boolean }) {
 }
 
 function StatusGroup({
-  workspaceId,
   listId,
   status,
   statuses,
   tasks,
   count,
+  members,
+  tags,
   onOpenTask,
-  canEdit,
+  perms,
 }: {
-  workspaceId: string;
   listId: string;
   status: Status;
   statuses: Status[];
   tasks: Task[];
   count: number;
+  members: Member[];
+  tags: Tag[];
   onOpenTask: (taskId: string) => void;
-  canEdit: boolean;
+  perms: ListPermissions;
 }) {
   const [collapsed, setCollapsed] = React.useState(false);
   const [composing, setComposing] = React.useState(false);
+  const canCreate = perms.canCreateTask;
 
   return (
     <section className="mb-4" aria-label={status.name}>
@@ -128,7 +138,7 @@ function StatusGroup({
           </span>
           <span className="text-xs text-muted-foreground">{count}</span>
         </button>
-        {canEdit && !collapsed ? (
+        {canCreate && !collapsed ? (
           <Button
             variant="ghost"
             size="xs"
@@ -156,16 +166,17 @@ function StatusGroup({
             tasks.map((task) => (
               <TaskRow
                 key={task.id}
-                workspaceId={workspaceId}
                 listId={listId}
                 task={task}
                 statuses={statuses}
+                members={members}
+                tags={tags}
                 onOpen={() => onOpenTask(task.id)}
-                canEdit={canEdit}
+                perms={perms}
               />
             ))
           )}
-          {canEdit ? (
+          {canCreate ? (
             composing ? (
               <InlineComposer
                 listId={listId}
@@ -188,25 +199,33 @@ function StatusGroup({
 }
 
 function TaskRow({
-  workspaceId,
   listId,
   task,
   statuses,
+  members,
+  tags,
   onOpen,
-  canEdit,
+  perms,
 }: {
-  workspaceId: string;
   listId: string;
   task: Task;
   statuses: Status[];
+  members: Member[];
+  tags: Tag[];
   onOpen: () => void;
-  canEdit: boolean;
+  perms: ListPermissions;
 }) {
-  const { data: members } = useMembers(workspaceId);
-  const { data: tags } = useTags(workspaceId);
   const updateTask = useUpdateTask(listId);
   const status = statuses.find((s) => s.id === task.status_id);
   const closed = status?.type === "closed";
+
+  // Qator bo'yicha qaror: `task.update`, yoki o'ziga biriktirilgan bo'lsa
+  // `task.update_assigned`. Mas'ullarni almashtirish alohida `task.assign`
+  // kodini talab qiladi, o'chirish esa — `task.delete` ni ("o'ziniki"
+  // istisnosi yo'q, server ham bermaydi).
+  const canEdit = perms.canEditTask(task);
+  const canAssign = perms.canAssignTask(task);
+  const editHint = perms.hint(canEdit);
 
   const patch = (p: Parameters<typeof updateTask.mutate>[0]["patch"]) =>
     updateTask.mutate({ taskId: task.id, patch: p });
@@ -223,6 +242,7 @@ function TaskRow({
             <button
               className="shrink-0 rounded-full p-0.5 hover:bg-muted"
               aria-label={`Holat: ${status?.name ?? "noma'lum"}`}
+              title={editHint}
             >
               <StatusDot status={status} />
             </button>
@@ -245,27 +265,31 @@ function TaskRow({
         ) : null}
       </div>
 
-      <AssigneePicker
-        value={task.assignees}
-        members={members?.results ?? []}
-        disabled={!canEdit}
-        onChange={(ids) =>
-          updateTask.mutate({
-            taskId: task.id,
-            patch: { assignee_ids: ids },
-            optimistic: { assignees: resolveAssignees(ids, members?.results ?? []) },
-          })
-        }
-      />
+      <span title={perms.hint(canAssign)}>
+        <AssigneePicker
+          value={task.assignees}
+          members={members}
+          disabled={!canAssign}
+          onChange={(ids) =>
+            updateTask.mutate({
+              taskId: task.id,
+              patch: { assignee_ids: ids },
+              optimistic: { assignees: resolveAssignees(ids, members) },
+            })
+          }
+        />
+      </span>
 
-      <DueDatePicker
-        value={task.due_date}
-        disabled={!canEdit}
-        overdue={!closed && !!task.due_date && new Date(task.due_date) < new Date()}
-        onChange={(iso) => patch({ due_date: iso })}
-      />
+      <span title={editHint}>
+        <DueDatePicker
+          value={task.due_date}
+          disabled={!canEdit}
+          overdue={!closed && !!task.due_date && new Date(task.due_date) < new Date()}
+          onChange={(iso) => patch({ due_date: iso })}
+        />
+      </span>
 
-      <span className="max-lg:hidden">
+      <span className="max-lg:hidden" title={editHint}>
         <PriorityPicker
           value={task.priority}
           disabled={!canEdit}
@@ -273,16 +297,16 @@ function TaskRow({
         />
       </span>
 
-      <span className="max-lg:hidden">
+      <span className="max-lg:hidden" title={editHint}>
         <TagPicker
           value={task.tags}
-          tags={tags?.results ?? []}
+          tags={tags}
           disabled={!canEdit}
           onChange={(ids) =>
             updateTask.mutate({
               taskId: task.id,
               patch: { tag_ids: ids },
-              optimistic: { tags: resolveTags(ids, tags?.results ?? []) },
+              optimistic: { tags: resolveTags(ids, tags) },
             })
           }
         />
@@ -293,7 +317,7 @@ function TaskRow({
           listId={listId}
           taskId={task.id}
           taskTitle={task.title}
-          canDelete={canEdit}
+          canDelete={perms.canDeleteTask}
           className="opacity-0 group-hover:opacity-100 aria-expanded:opacity-100 data-[popup-open]:opacity-100"
         />
       </span>

@@ -78,6 +78,32 @@ function isEditableRole(role: Role): role is AssignableRole {
   return role !== "owner";
 }
 
+/**
+ * Yangi matritsa kelganda qoralamani tashlab yubormaymiz, balki unga
+ * qaytadan "o'tqazamiz": server allaqachon rozi bo'lgan katakchalar olib
+ * tashlanadi, qolganlari saqlanadi.
+ *
+ * Ilgari 409 (boshqa admin oldinroq saqlab yuborgan) `setDraft({})` qilardi —
+ * toast esa "o'zgarishlaringizni ko'rib chiqing" derdi, holbuki ko'rib
+ * chiqadigan narsa qolmasdi. Qoralama faqat serverdan farq qiladigan
+ * katakchalarni saqlashi (`toggle` dagi invariant) shu yerda ham qo'llanadi.
+ */
+function rebaseDraft(draft: Draft, matrix: RolePermissionMatrix): Draft {
+  const out: Draft = {};
+  for (const role of EDITABLE_ROLES) {
+    const cells = draft[role];
+    if (!cells) continue;
+    const serverGrants = new Set(matrix.roles[role]?.permissions ?? []);
+    const kept: Partial<Record<PermissionCode, boolean>> = {};
+    const entries = Object.entries(cells) as [PermissionCode, boolean | undefined][];
+    for (const [code, next] of entries) {
+      if (next !== undefined && serverGrants.has(code) !== next) kept[code] = next;
+    }
+    if (Object.keys(kept).length > 0) out[role] = kept;
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Screen
 // ---------------------------------------------------------------------------
@@ -137,11 +163,13 @@ function MatrixEditor({
     undefined,
   );
 
-  // The server version moved (our own save, a reset, or a 409 refetch) →
-  // the draft was built on top of a state that no longer exists. Drop it.
+  // The server version moved (our own save, a reset, or a 409 refetch) → the
+  // draft was built on a state that no longer exists. Re-base it instead of
+  // dropping it: a successful save leaves nothing behind anyway, while a 409
+  // keeps every edit the winner did not already make.
   if (matrix.version !== baseVersion) {
     setBaseVersion(matrix.version);
-    setDraft({});
+    setDraft((prev) => rebaseDraft(prev, matrix));
   }
 
   /** Server-side grants per role, as sets for O(1) cell lookups. */
@@ -273,7 +301,12 @@ function MatrixEditor({
             if (resetTarget === undefined) return;
             reset.mutate(
               { role: resetTarget },
-              { onSettled: () => setResetTarget(undefined) },
+              {
+                // Standartga qaytarish — ataylab qilingan buzg'unchi amal:
+                // saqlanmagan qoralama ham u bilan birga bekor bo'ladi.
+                onSuccess: () => setDraft({}),
+                onSettled: () => setResetTarget(undefined),
+              },
             );
           }}
         />

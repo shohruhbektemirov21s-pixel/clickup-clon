@@ -6,7 +6,6 @@ import { getRefreshToken, useAuthStore } from "@/stores/auth-store";
 import { useWorkspaces } from "@/hooks/queries";
 import { FullPageSpinner } from "@/components/shared/full-page-spinner";
 import { CreateWorkspaceCard } from "@/components/shared/create-workspace-card";
-import { Landing } from "@/components/marketing/landing";
 
 const subscribeToStorage = (onChange: () => void) => {
   window.addEventListener("storage", onChange);
@@ -22,8 +21,14 @@ const getServerHasStoredSession = () => false;
  * register links. The authenticated redirect is layered on after hydration;
  * a stored refresh token switches to the spinner during session bootstrap so
  * returning signed-in users don't flash the landing.
+ *
+ * The landing arrives as `children` — the same children-as-prop trick
+ * `<AuthGate>` and `<AppShell>` use. Importing it here instead would drag the
+ * whole marketing tree (landing + app-preview + feature-visuals and their
+ * icons) across the client boundary for every signed-out visitor, even though
+ * it is pure static markup.
  */
-export function HomeRedirect() {
+export function HomeRedirect({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const status = useAuthStore((s) => s.status);
   const workspaces = useWorkspaces();
@@ -50,5 +55,5 @@ export function HomeRedirect() {
   // Session restore in flight for a returning user — avoid a landing flash.
   if (status === "loading" && hasStoredSession) return <FullPageSpinner />;
 
-  return <Landing />;
+  return <>{children}</>;
 }

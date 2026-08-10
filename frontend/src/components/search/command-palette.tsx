@@ -103,9 +103,11 @@ function PaletteBody({
 
   const search = useSearch(workspaceId, query);
   const groups = React.useMemo(() => groupResults(search.data?.results), [search.data]);
+  // A'zolar klientda filtrlanadi, lekin ular ham ekrandagi natijalar bilan
+  // bitta so'rovga tegishli bo'lishi kerak — shuning uchun `resultQuery`.
   const members = React.useMemo(
-    () => filterMembers(membersPage?.results ?? [], search.debouncedQuery),
-    [membersPage, search.debouncedQuery],
+    () => filterMembers(membersPage?.results ?? [], search.resultQuery),
+    [membersPage, search.resultQuery],
   );
 
   const listIds = React.useMemo(
@@ -140,7 +142,10 @@ function PaletteBody({
     groups.folders.length +
     groups.spaces.length +
     members.length;
-  const showEmpty = !search.isTooShort && !search.isInitialLoading && resultCount === 0;
+  // `!isError`: xato bo'lganda yuqorida "Qidiruv amalga oshmadi" chiqadi —
+  // uning ostiga yana "hech narsa topilmadi" qo'shish yolg'on bo'lardi.
+  const showEmpty =
+    !search.isTooShort && !search.isInitialLoading && !search.isError && resultCount === 0;
 
   return (
     <Command
@@ -211,7 +216,7 @@ function PaletteBody({
         {search.isError ? (
           <div className="px-3 py-6 text-center text-sm text-danger">
             Qidiruv amalga oshmadi.{" "}
-            <button type="button" className="underline" onClick={search.refetch}>
+            <button type="button" className="underline" onClick={() => search.refetch()}>
               Qayta urinish
             </button>
           </div>
@@ -240,7 +245,7 @@ function PaletteBody({
                   >
                     <SquareCheck className="size-4 text-muted-foreground" />
                     <span className="truncate">
-                      <Highlight text={task.title} query={search.debouncedQuery} />
+                      <Highlight text={task.title} query={search.resultQuery} />
                     </span>
                     {task.priority !== "none" ? (
                       <span className="shrink-0" title={PRIORITY_META[task.priority].label}>
@@ -283,7 +288,7 @@ function PaletteBody({
                   >
                     <ListIcon className="size-4 text-muted-foreground" />
                     <span className="truncate">
-                      <Highlight text={list.name} query={search.debouncedQuery} />
+                      <Highlight text={list.name} query={search.resultQuery} />
                     </span>
                     <span className="ml-auto truncate pl-3 text-xs text-muted-foreground">
                       {path}
@@ -314,7 +319,7 @@ function PaletteBody({
                       style={{ backgroundColor: space.color || "#7B68EE" }}
                     />
                     <span className="truncate">
-                      <Highlight text={space.name} query={search.debouncedQuery} />
+                      <Highlight text={space.name} query={search.resultQuery} />
                     </span>
                     <span className="ml-auto shrink-0 pl-3 text-xs text-muted-foreground">
                       {href ? "Bo'lim" : "Bo'lim — ro'yxat yo'q"}
@@ -334,7 +339,7 @@ function PaletteBody({
                   >
                     <FolderIcon className="size-4 text-muted-foreground" />
                     <span className="truncate">
-                      <Highlight text={folder.name} query={search.debouncedQuery} />
+                      <Highlight text={folder.name} query={search.resultQuery} />
                     </span>
                     <span className="ml-auto truncate pl-3 text-xs text-muted-foreground">
                       {joinPath(indexed?.path ?? []) || "Jild"}
@@ -363,12 +368,12 @@ function PaletteBody({
                     </AvatarFallback>
                   </Avatar>
                   <span className="truncate">
-                    <Highlight text={member.user.full_name} query={search.debouncedQuery} />
+                    <Highlight text={member.user.full_name} query={search.resultQuery} />
                   </span>
                   {/* Mehmonga email `null` keladi (§4) — ustunni bo'sh qoldiramiz. */}
                   {member.user.email ? (
                     <span className="ml-auto truncate pl-3 text-xs text-muted-foreground">
-                      <Highlight text={member.user.email} query={search.debouncedQuery} />
+                      <Highlight text={member.user.email} query={search.resultQuery} />
                     </span>
                   ) : null}
                 </CommandItem>
@@ -380,7 +385,7 @@ function PaletteBody({
         {showEmpty ? (
           <PaletteHint
             icon={<Search className="size-4" />}
-            title={`«${search.debouncedQuery}» bo'yicha hech narsa topilmadi`}
+            title={`«${search.resultQuery}» bo'yicha hech narsa topilmadi`}
           >
             Imloni tekshiring yoki qisqaroq so&apos;z bilan urinib ko&apos;ring.
           </PaletteHint>
@@ -394,6 +399,10 @@ function PaletteBody({
             {/* `alwaysRender`: cmdk ajratgichni matn kiritilganda yashiradi. */}
             <CommandSeparator alwaysRender className="my-1" />
             <CommandGroup>
+              {/* Bu qator — natijalarning tavsifi emas, harakat: u foydalanuvchi
+                  yozgan so'rov bilan to'liq qidiruv sahifasini ochadi. Shuning
+                  uchun bu yerda ataylab `debouncedQuery`, `resultQuery` emas —
+                  havola ham, yozuv ham bir xil matnni ko'rsatadi. */}
               <CommandItem
                 value="see-all-results"
                 onSelect={() =>

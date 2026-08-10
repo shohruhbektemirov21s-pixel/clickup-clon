@@ -69,6 +69,16 @@ export function useWorkspaceChannel(
         void queryClient.invalidateQueries({
           queryKey: keys.workspaceTasksRoot(workspaceId),
         });
+        // The same task write moves the history feed and the per-member
+        // counters (§10.8 / §4.1). Nothing else invalidates them, so without
+        // this they only refresh on remount after `staleTime`. Prefix keys:
+        // every actor filter / every member at once.
+        void queryClient.invalidateQueries({
+          queryKey: keys.activityRoot(workspaceId),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: keys.memberProfileRoot(workspaceId),
+        });
       }
       if (pending.tree) {
         void queryClient.invalidateQueries({ queryKey: keys.tree(workspaceId) });
@@ -149,6 +159,16 @@ export function useWorkspaceChannel(
       }
     };
 
+    /** Exponential backoff 1s → 30s with jitter, shared by every failure path. */
+    const scheduleReconnect = () => {
+      if (closed) return;
+      attempt += 1;
+      setStatus(attempt >= OFFLINE_AFTER_ATTEMPTS ? "offline" : "connecting");
+      const backoff = Math.min(1000 * 2 ** (attempt - 1), 30_000);
+      const jitter = backoff * (0.5 + Math.random() * 0.5);
+      reconnectTimer = setTimeout(() => void connect(), jitter);
+    };
+
     const connect = async () => {
       if (closed) return;
       setStatus(attempt >= OFFLINE_AFTER_ATTEMPTS ? "offline" : "connecting");
@@ -158,8 +178,15 @@ export function useWorkspaceChannel(
         setStatus("offline");
         return;
       }
-      // §15.1 — bir martalik chipta; chipta olinmasa deprecated `?token=`.
-      const query = await realtimeHandshakeQuery(token);
+      // §15.1 — bir martalik chipta; endpoint YO'Q bo'lsagina (404) deprecated
+      // `?token=`. Boshqa nosozlik — oddiy ulanish xatosi, backoff bilan qayta.
+      let query: string;
+      try {
+        query = await realtimeHandshakeQuery(token);
+      } catch {
+        scheduleReconnect();
+        return;
+      }
       if (closed) return;
       socket = new WebSocket(`${WS_BASE_URL}/ws/workspaces/${workspaceId}/?${query}`);
       socket.onmessage = (event) => {
@@ -178,11 +205,7 @@ export function useWorkspaceChannel(
           schedule({ tasks: true, tree: true, permissions: true });
           return;
         }
-        attempt += 1;
-        setStatus(attempt >= OFFLINE_AFTER_ATTEMPTS ? "offline" : "connecting");
-        const backoff = Math.min(1000 * 2 ** (attempt - 1), 30_000);
-        const jitter = backoff * (0.5 + Math.random() * 0.5);
-        reconnectTimer = setTimeout(connect, jitter);
+        scheduleReconnect();
       };
       socket.onerror = () => {
         socket?.close();

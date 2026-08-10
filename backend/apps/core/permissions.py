@@ -44,7 +44,11 @@ from dataclasses import dataclass
 # v3 — `member` defaultlari qisqartirildi (yuqoridagi 2026-08 siyosati);
 #      kod ro'yxati o'zgarmagan, lekin `default_roles` payload'i o'zgardi.
 # v4 — `member.read` guest'ga ham berildi (jamoa ro'yxati hammaga ochiq).
-CATALOG_VERSION = 4
+# v5 — `space.change_visibility` qo'shildi (48 → 49 kod). Bo'limning
+#      `is_private` bayrog'i endi `space.update` dan alohida, admin-only kod
+#      bilan himoyalangan — bo'lim menejeri (PM) yopiq bo'limni butun jamoaga
+#      ocha olmaydi (AppSec, `space.delete` bilan bir xil mantiq).
+CATALOG_VERSION = 5
 
 CODE_RE = re.compile(r"^[a-z_]+\.[a-z_]+$")
 MAX_CODE_LENGTH = 64
@@ -76,6 +80,16 @@ class PermissionDef:
     owner_only: bool = False  # hech qachon grant qilinmaydi (400)
     sensitive: bool = False  # UI ogohlantirish
     deprecated: bool = False
+    #: "E'lon qilingan, lekin hali ULANMAGAN" — katalogda ko'rinadi, ammo
+    #: kodda birorta ham enforcement chaqiruvi bu kodni o'qimaydi. Ya'ni uni
+    #: matritsada yoqib/o'chirib ko'rish REST xatti-harakatini O'ZGARTIRMAYDI.
+    #:
+    #: Bu bayroq yolg'on nazoratni **yashirmaydi, hujjatlashtiradi**:
+    #: `apps/core/tests/test_permission_enforcement.py` har bir faol kodni
+    #: enforcement joyi bilan solishtiradi va faqat shu yerda `staged=True`
+    #: qilingan kodlarni kechiradi — sababi esa quyida, kod yonida yoziladi.
+    #: Yangi kod qo'shib, uni ulashni unutgan odam testni yiqitadi.
+    staged: bool = False
 
 
 #: Guruh kaliti → o'zbekcha yorliq. Tartib UI'dagi tartibni belgilaydi.
@@ -133,6 +147,18 @@ PERMISSIONS: tuple[PermissionDef, ...] = (
         defaults=NONE,
         owner_only=True,
         sensitive=True,
+        # ULANMAGAN. Egalikni o'tkazish uchun alohida endpoint yo'q — u
+        # `PATCH members/{user_id}/` (`role="owner"`) orqali bajariladi va
+        # `member.role_change` + `MemberDetailView` dagi F-1 rank guard bilan
+        # himoyalangan (owner bo'lmagan chaqiruvchi `owner` rolini bera
+        # olmaydi). Ya'ni bu kodni hech kim o'qimaydi.
+        #
+        # `owner_only=True` bo'lgani uchun uni matritsada yoqib bo'lmaydi, ya'ni
+        # "yoqdim — hech nima o'zgarmadi" holati yuzaga kelmaydi; kod faqat
+        # hujjat sifatida turibdi. To'g'ri yechim — `MemberDetailView.patch`
+        # da `owner` ga ko'tarishni aynan shu kod bilan qo'riqlash
+        # (`apps/workspaces/views.py` — boshqa egalik zonasi).
+        staged=True,
     ),
     # ---------------------------------------------------------------- member
     PermissionDef(
@@ -188,6 +214,13 @@ PERMISSIONS: tuple[PermissionDef, ...] = (
         label="Bo'limlarni ko'rish",
         description="Ochiq bo'limlarni va ularning mazmunini ko'rish.",
         defaults=AMG,
+        # ULANMAGAN (§G.2 Faza 4 kutmoqda). Yagona o'quvchi —
+        # `apps.core.access.space_is_visible()` / `visible_spaces_q()`, lekin
+        # ikkalasi ham `_acl_enabled()` shoxida, ya'ni `SPACE_ACL_ENABLED`
+        # sozlamasi mavjud bo'lganda. Bugun bu sozlama `settings.py` da UMUMAN
+        # e'lon qilinmagan (`getattr(..., False)`), demak bayroq doim o'chiq va
+        # bu ikki kod inert: legacy qoida (guest × private) ishlaydi.
+        staged=True,
     ),
     PermissionDef(
         code="space.read_private",
@@ -196,6 +229,8 @@ PERMISSIONS: tuple[PermissionDef, ...] = (
         description="Barcha yopiq bo'limlarni bo'lim a'zosi bo'lmasdan ko'rish.",
         defaults=A,
         sensitive=True,
+        # ULANMAGAN — `space.read` bilan bir xil sabab (yuqoriga qarang).
+        staged=True,
     ),
     PermissionDef(
         code="space.create",
@@ -210,6 +245,17 @@ PERMISSIONS: tuple[PermissionDef, ...] = (
         label="Bo'limni tahrirlash",
         description="Bo'lim nomi, rangi, ikonkasi va arxiv holatini o'zgartirish.",
         defaults=A,
+    ),
+    PermissionDef(
+        code="space.change_visibility",
+        group="space",
+        label="Bo'lim ko'rinuvchanligini o'zgartirish",
+        description="Bo'limni yopiqdan ochiqqa (yoki teskarisiga) o'tkazish, ya'ni "
+        "`is_private` bayrog'ini o'zgartirish. Bu ruxsat `space.update` dan "
+        "ataylab ajratilgan: bo'limni ochish uning butun mazmunini bir "
+        "harakatda barcha ish maydoni a'zolariga oshkor qiladi.",
+        defaults=A,
+        sensitive=True,
     ),
     PermissionDef(
         code="space.delete",
@@ -475,6 +521,13 @@ ALL_CODES: frozenset[str] = frozenset(p.code for p in PERMISSIONS if not p.depre
 
 #: Grant qilib bo'lmaydigan kodlar — `PUT role-permissions/` bularni 400 qiladi.
 OWNER_ONLY_CODES: frozenset[str] = frozenset(p.code for p in PERMISSIONS if p.owner_only)
+
+#: Katalogda bor, lekin hali biror `require_perm`/`has_perm` chaqiruviga
+#: ulanmagan kodlar (`PermissionDef.staged`). "Yolg'on nazorat" guard'i
+#: (`test_permission_enforcement.py`) faqat shu ro'yxatni kechiradi.
+STAGED_CODES: frozenset[str] = frozenset(
+    p.code for p in PERMISSIONS if p.staged and not p.deprecated
+)
 
 
 def grouped_catalog() -> list[dict]:

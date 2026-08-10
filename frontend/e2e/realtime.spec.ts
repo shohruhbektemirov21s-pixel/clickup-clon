@@ -1,11 +1,10 @@
-import { expect, test, type BrowserContext, type Page } from "@playwright/test";
+import { expect, test, type BrowserContext, type Page, type WebSocket } from "@playwright/test";
 import {
   createTask,
-  deleteTaskQuietly,
+  deleteTaskAfterTest,
   firstListId,
   firstWorkspace,
-  login,
-  sessionFor,
+  signedInContext,
   uniqueTitle,
   USERS,
   type AuthSession,
@@ -18,6 +17,8 @@ interface WsFrame {
 
 interface FrameCollector {
   frames: WsFrame[];
+  /** Kuzatilgan `/ws/list/` soketlari — yopilishini kutish uchun. */
+  sockets: WebSocket[];
   reset: () => void;
 }
 
@@ -27,8 +28,10 @@ interface FrameCollector {
  */
 function collectListFrames(page: Page): FrameCollector {
   const frames: WsFrame[] = [];
+  const sockets: WebSocket[] = [];
   page.on("websocket", (ws) => {
     if (!ws.url().includes("/ws/list/")) return;
+    sockets.push(ws);
     ws.on("framereceived", (event) => {
       const payload =
         typeof event.payload === "string"
@@ -41,13 +44,34 @@ function collectListFrames(page: Page): FrameCollector {
       }
     });
   });
-  return { frames, reset: () => frames.splice(0, frames.length) };
+  return { frames, sockets, reset: () => frames.splice(0, frames.length) };
 }
 
 async function waitForFrame(collector: FrameCollector, type: string, timeout = 25_000) {
   await expect
     .poll(() => collector.frames.filter((f) => f.type === type).length, { timeout })
     .toBeGreaterThan(0);
+}
+
+/**
+ * Ro'yxat kanalidagi hamma soket yopilganini kutadi.
+ *
+ * Ilgari bu yerda `waitForTimeout(1_000)` turardi — "soketlar yopilib
+ * presence hisoblagichi nolga tushsin" degan umid bilan. Soketning haqiqiy
+ * holati Playwright'da bor, shuning uchun kutish endi taxminiy emas.
+ */
+async function waitForListSocketsClosed(...collectors: FrameCollector[]) {
+  await expect
+    .poll(
+      () =>
+        collectors.reduce(
+          (open, c) => open + c.sockets.filter((ws) => !ws.isClosed()).length,
+          0,
+        ),
+      { timeout: 15_000 },
+    )
+    .toBe(0);
+  for (const c of collectors) c.sockets.length = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,24 +85,25 @@ let pageB: Page;
 let framesA: FrameCollector;
 let framesB: FrameCollector;
 let session: AuthSession;
+let azizId: string;
 let workspaceId: string;
 let listId: string;
 
 test.beforeAll(async ({ browser }) => {
-  // Two UI logins land in the same per-IP auth throttle bucket as the rest of
-  // the suite, so this hook may have to sit through a 429 back-off window.
-  test.setTimeout(240_000);
-  session = await sessionFor(USERS.demo);
+  // Ikkala kontekst ham sessiyani REST orqali oladi (login formasi emas), ya'ni
+  // bu hook endi throttle back-off kutmaydi va `test.setTimeout(240_000)`
+  // kerak emas.
+  const a = await signedInContext(browser, USERS.demo);
+  const b = await signedInContext(browser, USERS.aziz);
+  contextA = a.context;
+  contextB = b.context;
+  pageA = a.page;
+  pageB = b.page;
+  session = a.session;
+  azizId = b.session.user.id;
+
   workspaceId = (await firstWorkspace(session.access)).id;
   listId = await firstListId(session.access, workspaceId);
-
-  contextA = await browser.newContext();
-  contextB = await browser.newContext();
-  pageA = await contextA.newPage();
-  pageB = await contextB.newPage();
-
-  await login(pageA, USERS.demo);
-  await login(pageB, USERS.aziz);
 
   framesA = collectListFrames(pageA);
   framesB = collectListFrames(pageB);
@@ -96,7 +121,7 @@ test.beforeEach(async () => {
     pageB.goto(`/w/${workspaceId}`),
   ]);
   // Soketlar yopilib, presence hisoblagichi nolga tushishi uchun.
-  await pageA.waitForTimeout(1_000);
+  await waitForListSocketsClosed(framesA, framesB);
   framesA.reset();
   framesB.reset();
 });
@@ -139,7 +164,7 @@ test.describe("realtime list channel", () => {
         timeout: 20_000,
       });
     } finally {
-      if (taskId) await deleteTaskQuietly(session.access, taskId);
+      if (taskId) await deleteTaskAfterTest(session.access, taskId);
     }
   });
 
@@ -156,7 +181,6 @@ test.describe("realtime list channel", () => {
     // Presence payload'ida ATAYLAB email yo'q: mehmon boshqa a'zolarning ish
     // pochtasini WS orqali yig'ib olmasligi uchun server faqat
     // {id, full_name, avatar, avatar_color} yuboradi (§15.3 PresenceUser).
-    const azizId = (await sessionFor(USERS.aziz)).user.id;
     await pageB.goto(listUrl());
     const joinedIds = () =>
       framesA.frames

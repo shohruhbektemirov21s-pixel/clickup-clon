@@ -235,10 +235,17 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 50,
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "EXCEPTION_HANDLER": "config.exceptions.api_exception_handler",
-    # How many *trusted* proxies sit in front of the app. Without this DRF
-    # takes the left-most X-Forwarded-For entry, which the client controls,
-    # so every request can claim a fresh identity and dodge throttling.
-    "NUM_PROXIES": env.int("NUM_PROXIES", default=1),
+    # How many *trusted* proxies sit in front of the app.
+    #
+    # DRF's get_ident() takes addrs[-min(num_proxies, len(addrs))] from
+    # X-Forwarded-For. With NUM_PROXIES=1 and NOTHING actually proxying us,
+    # the header the client sent is the only entry, so it IS the throttle
+    # identity: `X-Forwarded-For: <random>` on every request gives every
+    # request its own bucket and defeats `auth`, `register`, `demo`,
+    # `invite_lookup` and `avatar` alike. The default is therefore 0
+    # (REMOTE_ADDR only, header ignored); a real proxy is an explicit opt-in
+    # and the number must equal the count of proxies you control.
+    "NUM_PROXIES": env.int("NUM_PROXIES", default=0),
     "DEFAULT_THROTTLE_RATES": {
         "auth": env("AUTH_THROTTLE_RATE"),
         "auth_burst": env("AUTH_BURST_THROTTLE_RATE"),
@@ -411,6 +418,53 @@ LOGGING = {
         "apps": {"handlers": ["console"], "level": LOG_LEVEL, "propagate": False},
     },
 }
+
+
+# --------------------------------------------------------------------------
+# Error tracking (Sentry) — opt-in, absent DSN means "not wired at all"
+# --------------------------------------------------------------------------
+
+# Empty DSN: no import, no client, no network, no cost. That is the default,
+# so local development and CI stay exactly as they were.
+SENTRY_DSN = env("SENTRY_DSN", default="").strip()
+SENTRY_ENVIRONMENT = env("SENTRY_ENVIRONMENT", default="development" if DEBUG else "production")
+SENTRY_RELEASE = env("SENTRY_RELEASE", default="") or None
+# Performance tracing is sampled separately from errors; 0.0 = errors only.
+SENTRY_TRACES_SAMPLE_RATE = env.float("SENTRY_TRACES_SAMPLE_RATE", default=0.0)
+
+if SENTRY_DSN:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.django import DjangoIntegration
+        from sentry_sdk.integrations.logging import LoggingIntegration
+    except ImportError:  # pragma: no cover - depends on requirements.txt
+        # `sentry-sdk` is not a hard dependency of this project: a deployment
+        # that sets a DSN without installing the package must still boot.
+        logging.getLogger("config").warning(
+            "SENTRY_DSN is set but sentry-sdk is not installed; error tracking is off. "
+            "Add `sentry-sdk` to backend/requirements.txt to enable it."
+        )
+    else:
+        sentry_sdk.init(
+            dsn=SENTRY_DSN,
+            environment=SENTRY_ENVIRONMENT,
+            release=SENTRY_RELEASE,
+            integrations=[
+                DjangoIntegration(),
+                # Reuse the logging tree above instead of replacing it: INFO+
+                # records become breadcrumbs, ERROR+ records become issues.
+                # config/exceptions.py already logs every unhandled exception
+                # with `request_id`, so the Sentry issue and the JSON log line
+                # can be correlated from either side.
+                LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+            ],
+            traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
+            # No emails, no auth headers, no request bodies, no cookies, no
+            # client IPs. This API's payloads are user content by definition;
+            # an error tracker is not a place to mirror them.
+            send_default_pii=False,
+            max_request_body_size="never",
+        )
 
 
 # Internationalization

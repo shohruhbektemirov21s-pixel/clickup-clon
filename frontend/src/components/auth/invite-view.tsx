@@ -15,20 +15,113 @@ import { ROLE_LABEL } from "@/lib/roles";
 import { useAuthStore } from "@/stores/auth-store";
 import type { AcceptInvitationResponse } from "@/types/api";
 
+// ---------------------------------------------------------------------------
+// Token handoff (§F-6 MUST-5)
+// ---------------------------------------------------------------------------
+
+/**
+ * "Hisobim bor" oqimida foydalanuvchi `/login` ga borib qaytadi. Ilgari bu
+ * `?next=/invite/<token>` orqali qilinardi — ya'ni bearer token yana manzil
+ * qatoriga chiqib, brauzer tarixiga, back/forward stekiga va bir xil manbali
+ * so'rovlarning `Referer` sarlavhasiga tushardi. Sahifa yuklanishidagi
+ * `replaceState` mudofaasi shu bilan butunlay bekor bo'lardi.
+ *
+ * Endi token shu tabning `sessionStorage`'ida qoladi, manzilga esa hech qanday
+ * ma'lumot bermaydigan o'zgarmas bo'lak — `/invite/continue` — yoziladi.
+ * Haqiqiy token `secrets.token_urlsafe(32)`, ya'ni 43 belgi, shuning uchun
+ * sentinel bilan hech qachon to'qnashmaydi.
+ */
+const HANDOFF_KEY = "clickish.invite-handoff";
+const HANDOFF_TTL_MS = 15 * 60_000;
+const HANDOFF_PARAM = "continue";
+
+/** `/login` havolasi — tokensiz, o'zgarmas. */
+const LOGIN_HREF = `/login?next=/invite/${HANDOFF_PARAM}`;
+
+interface Handoff {
+  token: string;
+  exp: number;
+}
+
+function readHandoffToken(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(HANDOFF_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<Handoff>;
+    if (
+      typeof parsed.token !== "string" ||
+      typeof parsed.exp !== "number" ||
+      Date.now() > parsed.exp
+    ) {
+      window.sessionStorage.removeItem(HANDOFF_KEY);
+      return null;
+    }
+    return parsed.token;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Manzildagi bo'lak sentinel bo'lsa tokenni storage'dan olamiz; topilmasa
+ * bo'sh satr qaytadi va sahifa "havola topilmadi" holatini ko'rsatadi.
+ */
+function resolveToken(param: string): string {
+  if (param !== HANDOFF_PARAM) return param;
+  return readHandoffToken() ?? "";
+}
+
+function stashToken(token: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    const handoff: Handoff = { token, exp: Date.now() + HANDOFF_TTL_MS };
+    window.sessionStorage.setItem(HANDOFF_KEY, JSON.stringify(handoff));
+  } catch {
+    // Private rejim / o'chirilgan storage — qaytib kelganda "havola
+    // topilmadi" ko'rsatiladi, lekin token baribir URL'ga chiqmaydi.
+  }
+}
+
+function clearHandoff(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(HANDOFF_KEY);
+  } catch {
+    // Storage yo'q bo'lsa tozalanadigan narsa ham yo'q.
+  }
+}
+
+/** Taklifni ko'rsatib bo'lmaydigan holatlar — ish maydoni nomi oshkor qilinmaydi. */
+function InviteProblem({ title, hint }: { title: string; hint: string }) {
+  return (
+    <div className="flex w-full flex-col gap-4 text-center">
+      <h1 className="text-lg font-semibold">{title}</h1>
+      <p className="text-sm text-muted-foreground">{hint}</p>
+      <Button render={<Link href="/login" />}>Kirish sahifasiga o&apos;tish</Button>
+    </div>
+  );
+}
+
 /**
  * Public taklif sahifasi — `/invite/[token]`.
  *
  * XAVFSIZLIK:
  *  * §F-6 MUST-5 — token URL'da qolmaydi: sahifa yuklangach `replaceState`
  *    bilan `/invite` ga almashtiriladi, token faqat React holatida qoladi.
+ *    `/login` ga o'tishda ham token URL'ga qaytmaydi — yuqoridagi
+ *    sessionStorage almashinuvi ishlatiladi.
  *  * Ish maydoni roli FAQAT O'QISH UCHUN ko'rsatiladi; uni o'zgartiradigan
  *    kiritma yo'q va register so'rovi rol yubormaydi (server `Invitation.role`
  *    dan oladi).
  *  * Token yaroqsiz bo'lsa ish maydoni nomi umuman ko'rsatilmaydi.
  */
-export function InviteView({ token }: { token: string }) {
+export function InviteView({ token: tokenParam }: { token: string }) {
   const router = useRouter();
   const queryClient = useQueryClient();
+  // Manzildagi bo'lak `/login` dan qaytishda sentinel bo'ladi — birinchi
+  // renderdayoq haqiqiy tokenga aylantiramiz, so'rov to'g'ri ketsin.
+  const [token] = React.useState(() => resolveToken(tokenParam));
   const { data, isPending, isError } = useInvitationLookup(token);
   const authStatus = useAuthStore((s) => s.status);
   const me = useAuthStore((s) => s.user);
@@ -36,13 +129,26 @@ export function InviteView({ token }: { token: string }) {
   const [joinError, setJoinError] = React.useState<string | undefined>();
 
   // Tokenni manzil qatoridan olib tashlaymiz (tarix, referer va yelka orqali
-  // o'qishdan himoya). Token komponent props'ida qoladi.
+  // o'qishdan himoya) va `/login` ga borib qaytish uchun uni shu tabda
+  // saqlaymiz. Token komponent holatida qoladi.
   React.useEffect(() => {
     if (typeof window === "undefined") return;
     if (window.location.pathname.startsWith("/invite/")) {
       window.history.replaceState(null, "", "/invite");
     }
-  }, []);
+    if (token) stashToken(token);
+  }, [token]);
+
+  // Sentinel bilan keldik, lekin bu tabda saqlangan token yo'q: boshqa tab,
+  // yopilgan sessiya yoki o'chirilgan storage.
+  if (!token) {
+    return (
+      <InviteProblem
+        title="Taklif havolasi topilmadi"
+        hint="Xavfsizlik uchun taklif kodi manzil qatorida saqlanmaydi. Emaildagi havolani shu brauzerda qaytadan oching."
+      />
+    );
+  }
 
   // Sessiya tiklanmaguncha kutamiz — aks holda kirgan foydalanuvchiga bir
   // lahzaga ro'yxatdan o'tish formasi ko'rinib ketadi.
@@ -59,13 +165,10 @@ export function InviteView({ token }: { token: string }) {
   if (isError || !data) {
     // Ish maydoni nomi OSHKOR QILINMAYDI.
     return (
-      <div className="flex w-full flex-col gap-4 text-center">
-        <h1 className="text-lg font-semibold">Taklif muddati tugagan yoki bekor qilingan</h1>
-        <p className="text-sm text-muted-foreground">
-          Havola ishlamayapti. Ish maydoni administratoridan yangi taklif so&apos;rang.
-        </p>
-        <Button render={<Link href="/login" />}>Kirish sahifasiga o&apos;tish</Button>
-      </div>
+      <InviteProblem
+        title="Taklif muddati tugagan yoki bekor qilingan"
+        hint="Havola ishlamayapti. Ish maydoni administratoridan yangi taklif so'rang."
+      />
     );
   }
 
@@ -80,6 +183,7 @@ export function InviteView({ token }: { token: string }) {
     setJoinError(undefined);
     try {
       const res = await api.post<AcceptInvitationResponse>("invitations/accept/", { token });
+      clearHandoff();
       await queryClient.invalidateQueries({ queryKey: keys.workspaces });
       router.replace(`/w/${res.workspace_id}`);
     } catch {
@@ -132,9 +236,7 @@ export function InviteView({ token }: { token: string }) {
           Siz hozir <span className="font-medium text-foreground">{me.email}</span> hisobi
           bilan kirgansiz. Taklifni qabul qilish uchun {data.email} hisobiga kiring.
         </p>
-        <Button render={<Link href={`/login?next=/invite/${token}`} />}>
-          Boshqa hisob bilan kirish
-        </Button>
+        <Button render={<Link href={LOGIN_HREF} />}>Boshqa hisob bilan kirish</Button>
       </div>
     );
   }
@@ -144,9 +246,7 @@ export function InviteView({ token }: { token: string }) {
     return (
       <div className="flex w-full flex-col gap-5">
         {header}
-        <Button render={<Link href={`/login?next=/invite/${token}`} />}>
-          Kirish va qo&apos;shilish
-        </Button>
+        <Button render={<Link href={LOGIN_HREF} />}>Kirish va qo&apos;shilish</Button>
       </div>
     );
   }
@@ -161,6 +261,7 @@ export function InviteView({ token }: { token: string }) {
           email: data.email,
           workspaceName: data.workspace_name,
           role: data.role,
+          loginHref: LOGIN_HREF,
         }}
       />
     </div>

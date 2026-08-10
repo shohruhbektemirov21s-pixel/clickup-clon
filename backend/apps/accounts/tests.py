@@ -198,7 +198,9 @@ def test_profession_does_not_change_workspace_role(env):
     response = env.guest_client.post(
         f"/api/v1/workspaces/{env.workspace.id}/spaces/", {"name": "PM bo'limi"}, format="json"
     )
-    assert response.status_code == 403, response.content
+    # Butun konvert qulflanadi: bo'sh javob tanasi yoki boshqa `code` bilan
+    # qaytgan 403 ham regressiya (frontend `error.code` bo'yicha ajratadi).
+    assert_error(response, 403, "permission_denied")
 
 
 def test_profession_is_patchable_and_validated(env):
@@ -644,7 +646,11 @@ def test_readonly_account_is_blocked_on_paths_outside_the_matrix(env):
     ]
     for method, url, body in blocked:
         response = getattr(client, method)(url, body, format="json")
-        assert response.status_code == 403, f"{method.upper()} {url} -> {response.status_code}"
+        error = assert_error(response, 403, "permission_denied")
+        # Xabar `BlockReadonlyAccountWrites.message` dan kelishi shart: 403
+        # boshqa sababdan (masalan matritsa) kelib qolsa, bu test qulf
+        # ishlayotganini emas, tasodifni tasdiqlagan bo'lardi.
+        assert "Demo hisob" in error["message"], f"{method.upper()} {url}: {error}"
 
     # O'qish buzilmaydi.
     assert client.get(ME).status_code == 200
@@ -659,3 +665,222 @@ def test_readonly_account_may_still_end_its_own_session(env):
 
     client = env.member_client
     assert client.post(LOGOUT, {"refresh": tokens["refresh"]}, format="json").status_code == 204
+
+
+# ---------------------------------------------------------------------------
+# Throttle scope'lari — har biri o'z chelagi (F-6)
+# ---------------------------------------------------------------------------
+#
+# Nega bu testlar kerak: throttle "bor" bo'lishi yetarli emas, u AYNAN
+# ko'zlangan o'lchov bo'yicha cheklashi kerak. Kirish ikki qavatli:
+# `auth` — manba manzil (IP) bo'yicha, `auth_burst` — HISOB (email) bo'yicha.
+# Faqat IP bo'yicha cheklash proxy pool'i bor buzg'unchini to'xtatmaydi; faqat
+# hisob bo'yicha cheklash esa bitta IP'dan ko'p hisobga urinishni. Ikkalasi
+# ham mustaqil qulflanadi, aks holda birini olib tashlash sezilmay qoladi.
+
+
+def _rates(**overrides):
+    """`SimpleRateThrottle.THROTTLE_RATES` KLASS atributini vaqtincha almashtiradi.
+
+    `override_settings(REST_FRAMEWORK=...)` bu yerga yetib bormaydi: DRF
+    tezliklarni klass atributiga bir marta o'qib oladi.
+    """
+    return mock.patch.dict(SimpleRateThrottle.THROTTLE_RATES, overrides)
+
+
+def test_register_is_throttled(api, db):
+    """`register` (5/hour) — ro'yxatdan o'tish spamiga qarshi."""
+    with _rates(register="1/hour"):
+        first = api.post(
+            REGISTER, {"email": "one@acme.io", "password": PASSWORD}, format="json"
+        )
+        assert first.status_code == 201, first.content
+
+        second = api.post(
+            REGISTER, {"email": "two@acme.io", "password": PASSWORD}, format="json"
+        )
+        assert_error(second, 429, "throttled")
+    assert User.objects.filter(email="two@acme.io").count() == 0
+
+
+def test_password_change_is_throttled(api, db):
+    """`password_change` (5/hour) — joriy parolni taxmin qilishga qarshi."""
+    make_user("pwthrottle@test.dev")
+    tokens = api.post(
+        LOGIN, {"email": "pwthrottle@test.dev", "password": PASSWORD}, format="json"
+    ).json()
+    api.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
+
+    with _rates(password_change="1/hour"):
+        first = api.post(
+            PASSWORD_CHANGE,
+            {"current_password": "wrong-guess", "new_password": "N3w!passw0rd"},
+            format="json",
+        )
+        assert_error(first, 400, "validation_error")
+
+        # Muvaffaqiyatsiz urinish ham chelakni yeydi — aks holda cheklov
+        # aynan brute-force stsenariysida ishlamas edi.
+        second = api.post(
+            PASSWORD_CHANGE,
+            {"current_password": PASSWORD, "new_password": "N3w!passw0rd"},
+            format="json",
+        )
+        assert_error(second, 429, "throttled")
+
+
+def test_login_burst_throttle_is_per_account_not_per_ip(api, db):
+    """`auth_burst` (5/min) — bitta HISOBGA urinishlar soni cheklanadi."""
+    make_user("victim@test.dev")
+    make_user("bystander@test.dev")
+
+    with _rates(auth="1000/min", auth_burst="1/min"):
+        first = api.post(
+            LOGIN, {"email": "victim@test.dev", "password": "guess-1"}, format="json"
+        )
+        assert_error(first, 401, "authentication_failed")
+
+        second = api.post(
+            LOGIN, {"email": "victim@test.dev", "password": "guess-2"}, format="json"
+        )
+        assert_error(second, 429, "throttled")
+
+        # To'g'ri parol ham o'tmaydi: chelak hisobga bog'langan.
+        blocked = api.post(
+            LOGIN, {"email": "victim@test.dev", "password": PASSWORD}, format="json"
+        )
+        assert_error(blocked, 429, "throttled")
+
+        # ...lekin BOSHQA hisob o'sha IP'dan bemalol kiradi — ya'ni chelak
+        # haqiqatan email bo'yicha, IP bo'yicha emas.
+        other = api.post(
+            LOGIN, {"email": "bystander@test.dev", "password": PASSWORD}, format="json"
+        )
+        assert other.status_code == 200, other.content
+
+
+def test_login_ip_throttle_is_per_source_not_per_account(api, db):
+    """`auth` (10/min) — bitta MANBADAN urinishlar soni cheklanadi."""
+    make_user("a1@test.dev")
+    make_user("a2@test.dev")
+
+    with _rates(auth="1/min", auth_burst="1000/min"):
+        first = api.post(LOGIN, {"email": "a1@test.dev", "password": PASSWORD}, format="json")
+        assert first.status_code == 200, first.content
+
+        # Boshqa hisob, o'sha manba -> baribir 429: credential stuffing
+        # (bitta IP, ko'p hisob) shu qavat bilan to'xtaydi.
+        second = api.post(LOGIN, {"email": "a2@test.dev", "password": PASSWORD}, format="json")
+        assert_error(second, 429, "throttled")
+
+
+def test_login_burst_throttle_ignores_a_missing_email(api, db):
+    """Email yo'q bo'lsa `LoginEmailThrottle` kalit yasamaydi (400 chiqadi)."""
+    with _rates(auth="1000/min", auth_burst="1/min"):
+        for _ in range(3):
+            response = api.post(LOGIN, {"password": PASSWORD}, format="json")
+            assert_error(response, 400, "validation_error")
+
+
+def test_refresh_is_throttled(api, db):
+    """AppSec: `auth/refresh/` `AllowAny` va har chaqiruv IKKI yozish qiladi.
+
+    Throttle qo'yilmaguncha anonim mijoz `OutstandingToken` +
+    `BlacklistedToken` jadvallariga cheksiz yozib turardi.
+    """
+    make_user("refresh@test.dev")
+    tokens = api.post(
+        LOGIN, {"email": "refresh@test.dev", "password": PASSWORD}, format="json"
+    ).json()
+
+    with _rates(refresh="1/min"):
+        first = api.post(REFRESH, {"refresh": tokens["refresh"]}, format="json")
+        assert first.status_code == 200, first.content
+
+        second = api.post(REFRESH, {"refresh": first.json()["refresh"]}, format="json")
+        assert_error(second, 429, "throttled")
+
+
+def test_refresh_throttle_falls_back_when_the_scope_is_unconfigured():
+    """`refresh` scope'i hali `settings` da yo'q — 500 emas, fallback bo'lsin.
+
+    `ScopedRateThrottle` sozlanmagan scope'da `ImproperlyConfigured` otadi,
+    ya'ni ochiq endpoint 500 qaytarardi. `RefreshRateThrottle.get_rate()`
+    shuning uchun fallback beradi.
+    """
+    from apps.accounts.throttling import RefreshRateThrottle
+
+    with mock.patch.object(SimpleRateThrottle, "THROTTLE_RATES", {}):
+        throttle = RefreshRateThrottle()
+        assert throttle.rate == RefreshRateThrottle.DEFAULT_RATE
+        assert throttle.num_requests > 0
+
+
+# ---------------------------------------------------------------------------
+# `auth/refresh/` — yaroqsiz va eskirgan tokenlar
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_with_a_foreign_signature_is_401(api, db):
+    """Tuzilishi to'g'ri, imzosi buzilgan token."""
+    user = make_user("sig@test.dev")
+    raw = str(token_pair_for(user)["refresh"])
+    head, payload, _signature = raw.split(".")
+    forged = f"{head}.{payload}.{'A' * 43}"
+
+    assert_error(api.post(REFRESH, {"refresh": forged}, format="json"), 401, "token_not_valid")
+
+
+def test_refresh_rejects_an_access_token(api, db):
+    """`token_type` tekshiriladi — access token refresh o'rnida ishlamaydi."""
+    user = make_user("swap@test.dev")
+    tokens = token_pair_for(user)
+    assert_error(
+        api.post(REFRESH, {"refresh": tokens["access"]}, format="json"),
+        401,
+        "token_not_valid",
+    )
+
+
+def test_refresh_requires_the_field(api, db):
+    assert_error(api.post(REFRESH, {}, format="json"), 400, "validation_error")
+
+
+def test_refresh_after_deactivation_is_refused(api, db):
+    """Hisob bloklangach, qo'ldagi refresh token yangi kirish bermaydi.
+
+    Bu — hisobni bloklashning butun ma'nosi: aks holda chiqarib yuborilgan
+    foydalanuvchi refresh token bilan sessiyasini cheksiz uzaytirardi.
+    """
+    user = make_user("gone@test.dev")
+    tokens = token_pair_for(user)
+
+    user.is_active = False
+    user.save(update_fields=["is_active"])
+
+    assert_error(
+        api.post(REFRESH, {"refresh": tokens["refresh"]}, format="json"),
+        401,
+        "authentication_failed",
+    )
+    # Eski access token ham o'tmaydi.
+    api.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
+    assert_error(api.get(ME), 401, "authentication_failed")
+
+
+def test_refresh_for_a_deleted_user_is_401_not_500(api, db):
+    """O'chirilgan hisobning tokeni — konvert 401, hech qachon 500.
+
+    `TokenRefreshSerializer` foydalanuvchini `objects.get()` bilan qidiradi,
+    ya'ni hisob o'chirilgan bo'lsa `DoesNotExist` ko'tariladi. Ushlanmasa u
+    ochiq endpointda `server_error` bo'lib chiqardi.
+    """
+    user = make_user("deleted@test.dev")
+    tokens = token_pair_for(user)
+    user.delete()
+
+    assert_error(
+        api.post(REFRESH, {"refresh": tokens["refresh"]}, format="json"),
+        401,
+        "token_not_valid",
+    )

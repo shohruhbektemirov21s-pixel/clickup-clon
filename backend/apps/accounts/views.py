@@ -1,6 +1,8 @@
 import io
 
 from django.conf import settings
+from django.contrib.auth.signals import user_logged_in, user_logged_out
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from django.utils import timezone
 from PIL import Image
@@ -23,7 +25,7 @@ from apps.accounts.serializers import (
     UserSerializer,
     token_pair_for,
 )
-from apps.accounts.throttling import LoginEmailThrottle
+from apps.accounts.throttling import LoginEmailThrottle, RefreshRateThrottle
 from apps.core.exceptions import ApiError
 
 MAX_AVATAR_BYTES = 2 * 1024 * 1024
@@ -57,7 +59,9 @@ class LoginView(APIView):
     throttle_scope = "auth"
 
     def post(self, request):
-        serializer = LoginSerializer(data=request.data)
+        # `context` MAJBURIY: serializer autentifikatsiya signallarini aynan shu
+        # `request` bilan yuboradi (audit jurnalidagi IP/User-Agent shundan).
+        serializer = LoginSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data["user"]
         tokens = token_pair_for(user)
@@ -103,6 +107,8 @@ class DemoLoginView(APIView):
 
         user.last_login = timezone.now()
         user.save(update_fields=["last_login"])
+        # Demo ham kirish yo'li — auditda ko'rinishi shart (AppSec B.2.4).
+        user_logged_in.send(sender=user.__class__, request=request, user=user)
 
         membership = (
             WorkspaceMember.objects.filter(user=user).order_by("joined_at").first()
@@ -117,7 +123,16 @@ class DemoLoginView(APIView):
 
 
 class RefreshView(APIView):
+    """`POST auth/refresh/` — rotatsiya + blacklist, ya'ni IKKI yozish.
+
+    Endpoint `AllowAny` (aynan shu yerda mijozda yaroqli access token yo'q),
+    shuning uchun yagona chegara throttle bo'lishi mumkin. Usiz istalgan
+    anonim mijoz `OutstandingToken` + `BlacklistedToken` jadvallariga
+    cheklanmagan yozish yuklamasini bera olardi.
+    """
+
     permission_classes = [AllowAny]
+    throttle_classes = [RefreshRateThrottle]
 
     def post(self, request):
         serializer = TokenRefreshSerializer(data=request.data)
@@ -125,6 +140,12 @@ class RefreshView(APIView):
             serializer.is_valid(raise_exception=True)  # rotates + blacklists (settings)
         except TokenError as exc:
             raise InvalidToken(str(exc)) from exc  # -> 401 token_not_valid
+        except ObjectDoesNotExist as exc:
+            # simplejwt `USER_ID_CLAIM` bo'yicha `objects.get()` qiladi, ya'ni
+            # hisob o'chirilgan bo'lsa `DoesNotExist` ko'tariladi va ochiq
+            # endpoint 500 (`server_error`) qaytarardi. Bu — mijoz uchun
+            # oddiy "token endi yaroqsiz" holati.
+            raise InvalidToken("Token is invalid or expired.") from exc
         return Response(serializer.validated_data)
 
 
@@ -145,6 +166,11 @@ class LogoutView(APIView):
                 code="token_not_valid",
                 status_code=status.HTTP_401_UNAUTHORIZED,
             )
+        # `logout()` chaqirilmaydi (sessiya yo'q), lekin audit jurnali sessiya
+        # yopilishini ko'rishi kerak — signal qo'lda yuboriladi.
+        user_logged_out.send(
+            sender=request.user.__class__, request=request, user=request.user
+        )
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

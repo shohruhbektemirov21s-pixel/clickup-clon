@@ -97,6 +97,22 @@ export function clearRecent(workspaceId: string): void {
   invalidate();
 }
 
+/**
+ * Hammasini o'chiradi — `useLogout` chaqiradi. Yozuvlar `localStorage` da
+ * yashaydi, ya'ni sahifa yangilansa ham qoladi: tozalanmasa shu brauzerda
+ * keyin kirgan foydalanuvchi oldingi odamning vazifa nomlarini "Yaqinda
+ * ochilganlar" ro'yxatida ko'radi.
+ */
+export function clearAllRecent(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Storage bloklangan — chiqish jarayoni baribir to'xtamasligi kerak.
+  }
+  invalidate();
+}
+
 // ---------------------------------------------------------------------------
 // React bilan bog'lash
 // ---------------------------------------------------------------------------

@@ -5,12 +5,45 @@ import {
   DayPicker,
   getDefaultClassNames,
   type DayButton,
+  type Labels,
   type Locale,
 } from "react-day-picker"
+import { format as formatDate } from "date-fns"
+import { uz } from "date-fns/locale"
 
 import { cn } from "@/lib/utils"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon } from "lucide-react"
+
+/**
+ * react-day-picker'ning ARIA yorliqlari standart holda ingliz tilida
+ * ("Go to the Next Month", "Choose the Month", "Today, …"). Ilova butunlay
+ * o'zbek tilida bo'lgani uchun ularni shu yerda almashtiramiz — chaqiruvchi
+ * `labels` bersa, uning qiymatlari ustun turadi.
+ */
+const UZ_LABELS: Partial<Labels> = {
+  labelNav: () => "Oylar bo'ylab o'tish",
+  labelPrevious: () => "Oldingi oy",
+  labelNext: () => "Keyingi oy",
+  labelMonthDropdown: () => "Oyni tanlang",
+  labelYearDropdown: () => "Yilni tanlang",
+  labelWeekNumber: (weekNumber) => `${weekNumber}-hafta`,
+  labelWeekNumberHeader: () => "Hafta raqami",
+  labelDayButton: (date, modifiers, _options, dateLib) => {
+    let label = dateLib
+      ? dateLib.format(date, "PPPP")
+      : formatDate(date, "PPPP", { locale: uz })
+    if (modifiers.today) label = `Bugun, ${label}`
+    if (modifiers.selected) label = `${label}, tanlangan`
+    return label
+  },
+  labelGridcell: (date, modifiers, _options, dateLib) => {
+    const label = dateLib
+      ? dateLib.format(date, "PPPP")
+      : formatDate(date, "PPPP", { locale: uz })
+    return modifiers?.today ? `Bugun, ${label}` : label
+  },
+}
 
 function Calendar({
   className,
@@ -18,7 +51,14 @@ function Calendar({
   showOutsideDays = true,
   captionLayout = "label",
   buttonVariant = "ghost",
-  locale,
+  // Standart o'zbek lokali — chaqiruvchi uni berishni unutib qo'ysa ham
+  // taqvim hech qachon ingliz tiliga (enUS) qaytmaydi.
+  locale = uz,
+  // Hafta dushanbadan boshlanadi — `lib/task-buckets.ts` dagi
+  // `weekStartsOn: 1` bilan bir xil, aks holda "Shu hafta" va taqvim
+  // haftaning oxirini boshqa-boshqa joyda ko'rsatadi.
+  weekStartsOn = 1,
+  labels,
   formatters,
   components,
   ...props
@@ -30,6 +70,8 @@ function Calendar({
   return (
     <DayPicker
       showOutsideDays={showOutsideDays}
+      weekStartsOn={weekStartsOn}
+      labels={{ ...UZ_LABELS, ...labels }}
       className={cn(
         "group/calendar bg-background p-2 [--cell-radius:var(--radius-md)] [--cell-size:--spacing(7)] in-data-[slot=card-content]:bg-transparent in-data-[slot=popover-content]:bg-transparent",
         String.raw`rtl:**:[.rdp-button\_next>svg]:rotate-180`,

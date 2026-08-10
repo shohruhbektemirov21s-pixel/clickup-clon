@@ -25,6 +25,14 @@ export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "offline
 /** Server yopish kodlari (§15.1). 4403 = kirish huquqi bekor qilindi. */
 export const WS_CLOSE_ACCESS_REVOKED = 4403;
 
+/** Chipta olinmadi, lekin endpoint bor — bu ulanish xatosi, downgrade emas. */
+export class RealtimeTicketError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "RealtimeTicketError";
+  }
+}
+
 /**
  * §15.1 — bir martalik WS handshake chiptasini oladi.
  *
@@ -32,27 +40,46 @@ export const WS_CLOSE_ACCESS_REVOKED = 4403;
  * log'iga yozib qo'yadi. Chipta 30 soniya yashaydi va bir marta ishlaydi,
  * shuning uchun log'dan olingan URL bilan soket ochib bo'lmaydi.
  *
- * `null` qaytsa chaqiruvchi eski `?token=` yo'liga tushadi — eskiroq backend
- * bilan ham ulanish uzilib qolmasligi uchun (deprecated fallback).
+ * Shu sababli `null` (ya'ni deprecated `?token=` yo'liga tushish) FAQAT
+ * endpoint umuman yo'q bo'lganda — 404 — qaytadi. 500, throttle, DNS/tarmoq
+ * uzilishi va buzuq javob `RealtimeTicketError` bo'lib chiqadi: chaqiruvchi
+ * uni oddiy ulanish xatosi sifatida qabul qilib backoff bilan qayta uradi.
+ * Vaqtinchalik nosozlik hech qachon tokenni URL'ga chiqarib yubormasin.
  *
  * `use-workspace-channel.ts` ham shu yordamchini import qiladi: mantiq bitta
  * joyda tursin.
  */
 export async function fetchRealtimeTicket(accessToken: string): Promise<string | null> {
+  let res: Response;
   try {
-    const res = await fetch(`${API_BASE_URL}/realtime/ticket/`, {
+    res = await fetch(`${API_BASE_URL}/realtime/ticket/`, {
       method: "POST",
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-    if (!res.ok) return null;
-    const body = (await res.json()) as { ticket?: unknown };
-    return typeof body.ticket === "string" && body.ticket ? body.ticket : null;
-  } catch {
-    return null;
+  } catch (cause) {
+    throw new RealtimeTicketError("Chipta so'rovi tarmoq xatosiga uchradi.", { cause });
   }
+  // Faqat shu holat "backend eski" degani.
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new RealtimeTicketError(`Chipta so'rovi ${res.status} bilan qaytdi.`);
+  }
+  let body: { ticket?: unknown };
+  try {
+    body = (await res.json()) as { ticket?: unknown };
+  } catch (cause) {
+    throw new RealtimeTicketError("Chipta javobi JSON emas.", { cause });
+  }
+  if (typeof body.ticket !== "string" || !body.ticket) {
+    throw new RealtimeTicketError("Chipta javobida `ticket` yo'q.");
+  }
+  return body.ticket;
 }
 
-/** Chipta bo'lsa u bilan, aks holda deprecated token bilan handshake qatori. */
+/**
+ * Chipta bo'lsa u bilan, endpoint yo'q bo'lsagina deprecated token bilan
+ * handshake qatori. Boshqa har qanday nosozlikda `RealtimeTicketError` otiladi.
+ */
 export async function realtimeHandshakeQuery(accessToken: string): Promise<string> {
   const ticket = await fetchRealtimeTicket(accessToken);
   return ticket
@@ -102,6 +129,14 @@ export function useListChannel(listId: string | null) {
 
       switch (type) {
         case "connection.ack": {
+          // Backoff resets HERE, not in `onopen`. A successful HTTP 101 says
+          // nothing about the session being usable: an expired ticket, a
+          // restarting backend or a recycled Daphne worker all open the socket
+          // and then close it. Resetting on `onopen` would pin the backoff at
+          // 500–1000 ms forever, i.e. ~1 ticket POST + handshake per second for
+          // as long as the tab lives. `connection.ack` is the server saying the
+          // channel is actually joined.
+          attempt = 0;
           setStatus("open");
           if (hadConnection) {
             // Refetch is authoritative after a reconnect.
@@ -214,6 +249,16 @@ export function useListChannel(listId: string | null) {
       }
     };
 
+    /** Exponential backoff 1s → 30s with jitter, shared by every failure path. */
+    const scheduleReconnect = () => {
+      if (closed) return;
+      setStatus("reconnecting");
+      const backoff = Math.min(1000 * 2 ** attempt, 30_000);
+      const jitter = backoff * (0.5 + Math.random() * 0.5);
+      attempt += 1;
+      reconnectTimer = setTimeout(() => void connect(), jitter);
+    };
+
     const connect = async () => {
       if (closed) return;
       setStatus(attempt === 0 ? "connecting" : "reconnecting");
@@ -223,7 +268,16 @@ export function useListChannel(listId: string | null) {
         setStatus("offline");
         return;
       }
-      const query = await realtimeHandshakeQuery(token);
+      let query: string;
+      try {
+        query = await realtimeHandshakeQuery(token);
+      } catch {
+        // Chipta endpoint'i bor, lekin javob bermadi (500 / throttle / tarmoq).
+        // Tokenni URL'ga tushirmaymiz — bu oddiy ulanish xatosi, backoff bilan
+        // qaytadan urinamiz.
+        scheduleReconnect();
+        return;
+      }
       if (closed) return;
       socket = new WebSocket(`${WS_BASE_URL}/ws/list/${listId}/?${query}`);
       socket.onmessage = (event) => {
@@ -232,9 +286,6 @@ export function useListChannel(listId: string | null) {
         } catch {
           // Malformed frame — ignore.
         }
-      };
-      socket.onopen = () => {
-        attempt = 0;
       };
       socket.onclose = (event) => {
         if (closed) return;
@@ -247,11 +298,7 @@ export function useListChannel(listId: string | null) {
           void queryClient.invalidateQueries({ queryKey: keys.tasksRoot(listId) });
           return;
         }
-        setStatus("reconnecting");
-        const backoff = Math.min(1000 * 2 ** attempt, 30_000);
-        const jitter = backoff * (0.5 + Math.random() * 0.5);
-        attempt += 1;
-        reconnectTimer = setTimeout(connect, jitter);
+        scheduleReconnect();
       };
       socket.onerror = () => {
         socket?.close();

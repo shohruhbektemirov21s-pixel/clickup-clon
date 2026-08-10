@@ -1,5 +1,9 @@
 version: 2
 
+# Eslatma: `.github/workflows/security.yml` endi BLOKLOVCHI (pip-audit /
+# npm audit / bandit / gitleaks). Dependabot shu darvozaning oqim tomoni —
+# yangilanishlar muntazam kelib tursa, "kritik CVE topildi, lekin yangilash
+# katta sakrash" holati kamayadi.
 updates:
   # Backend — Python bog'liqliklari (backend/requirements.txt)
   - package-ecosystem: pip
@@ -15,6 +19,12 @@ updates:
     labels:
       - dependencies
       - backend
+    # Mayda yangilanishlar bitta PR bo'lib kelsin — haftada 20 ta PR
+    # o'qilmaydi va natijada hech biri ko'rilmaydi.
+    groups:
+      python-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   # Frontend — npm bog'liqliklari (frontend/package.json)
   - package-ecosystem: npm
@@ -30,6 +40,10 @@ updates:
     labels:
       - dependencies
       - frontend
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   # GitHub Actions versiyalari (.github/workflows/*)
   - package-ecosystem: github-actions
@@ -45,3 +59,49 @@ updates:
     labels:
       - dependencies
       - ci
+
+  # Docker bazaviy obrazlari. Bularsiz `python:3.14-slim` / `node:22-slim`
+  # ichidagi OS darajasidagi CVE lar hech qachon yangilanmaydi — pip-audit
+  # ham, npm audit ham OS paketlarini ko'rmaydi.
+  - package-ecosystem: docker
+    directory: "/backend"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Asia/Tashkent
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(docker)"
+    labels:
+      - dependencies
+      - docker
+
+  - package-ecosystem: docker
+    directory: "/frontend"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Asia/Tashkent
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(docker)"
+    labels:
+      - dependencies
+      - docker
+
+  # docker-compose.yml dagi `postgres:16-alpine` / `redis:7-alpine`.
+  - package-ecosystem: docker-compose
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Asia/Tashkent
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(docker)"
+    labels:
+      - dependencies
+      - docker

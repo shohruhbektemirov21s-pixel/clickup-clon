@@ -1,0 +1,61 @@
+# Coverage configuration for the Django backend.
+#
+#   ../.venv/Scripts/python.exe -m pytest --cov --cov-report=term-missing
+#
+# CI (.github/workflows/ci.yml) runs the same thing plus XML/HTML reports and
+# enforces `fail_under` below. The floor is a RATCHET: raise it when coverage
+# rises, never lower it to make a red build green.
+
+[run]
+source = apps, config
+branch = True
+# `apps.*.apps.AppConfig.ready()` matters (signals), so apps.py stays measured.
+omit =
+    */migrations/*
+    */__pycache__/*
+    manage.py
+    conftest.py
+    */tests.py
+    */tests/*
+    */test_*.py
+    config/asgi.py
+    config/wsgi.py
+
+[paths]
+# Windows dev tree and the Linux CI checkout must fold onto the same names,
+# otherwise a combined report double-counts every module.
+source =
+    apps/
+    */apps/
+    backend/apps/
+
+[report]
+show_missing = True
+skip_covered = False
+precision = 2
+# RATCHET. Measured 2026-08-10 at the then-current HEAD: 83.04% total
+# (Windows/SQLite, 4341 statements; 5 tests were failing in another
+# engineer's in-flight apps/accounts/test_admin.py, so the real number is at
+# least this). Floored to the integer below.
+#
+# This is the ONLY place the floor is written: CI just runs `pytest --cov`
+# and coverage enforces it, so a local run and a CI run agree by
+# construction. The project's Definition of Done asks for >= 85% -- this is
+# the floor, not the goal. Re-measure and raise it whenever the number moves
+# up (scripts/README.md has the command). Never lower it to turn a build
+# green.
+fail_under = 83
+exclude_also =
+    if TYPE_CHECKING:
+    if typing\.TYPE_CHECKING:
+    raise NotImplementedError
+    ^\s*\.\.\.$
+    def __repr__
+    def __str__
+    if __name__ == .__main__.:
+
+[html]
+directory = htmlcov
+
+[xml]
+output = coverage.xml

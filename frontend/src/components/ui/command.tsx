@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Command as CommandPrimitive } from "cmdk"
+import { Command as CommandPrimitive, defaultFilter } from "cmdk"
 
 import { cn } from "@/lib/utils"
 import {
@@ -17,13 +17,33 @@ import {
 } from "@/components/ui/input-group"
 import { SearchIcon, CheckIcon } from "lucide-react"
 
+/**
+ * cmdk elementni `value` satri bo'yicha tanidi, shuning uchun bir xil matnli
+ * ikki element (masalan, emaili `null` bo'lgan ikki mehmon) to'qnashadi va
+ * strelka + Enter noto'g'ri qatorni bosadi. `commandValue(label, id)` id'ni
+ * ajratgich orqali qo'shib qiymatni yagona qiladi, `filterByLabel` esa
+ * qidiruvda id'ni hisobga olmaydi.
+ */
+const VALUE_ID_SEPARATOR = "␟"
+
+function commandValue(label: string, id: string) {
+  return `${label}${VALUE_ID_SEPARATOR}${id}`
+}
+
+const filterByLabel: NonNullable<
+  React.ComponentProps<typeof CommandPrimitive>["filter"]
+> = (value, search, keywords) =>
+  defaultFilter(value.split(VALUE_ID_SEPARATOR)[0], search, keywords)
+
 function Command({
   className,
+  filter = filterByLabel,
   ...props
 }: React.ComponentProps<typeof CommandPrimitive>) {
   return (
     <CommandPrimitive
       data-slot="command"
+      filter={filter}
       className={cn(
         "flex size-full flex-col overflow-hidden rounded-xl! bg-popover p-1 text-popover-foreground",
         className
@@ -34,8 +54,8 @@ function Command({
 }
 
 function CommandDialog({
-  title = "Command Palette",
-  description = "Search for a command to run...",
+  title = "Buyruqlar paneli",
+  description = "Ishga tushirish uchun buyruq qidiring…",
   children,
   className,
   showCloseButton = false,
@@ -193,4 +213,6 @@ export {
   CommandItem,
   CommandShortcut,
   CommandSeparator,
+  commandValue,
+  filterByLabel,
 }

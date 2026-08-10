@@ -13,6 +13,7 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
+  commandValue,
 } from "@/components/ui/command";
 import {
   DropdownMenu,
@@ -22,6 +23,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
+  displayName,
   formatDueDate,
   initials,
   isOverdue,
@@ -90,7 +92,8 @@ export function StatusPicker({
               {statuses.map((status) => (
                 <CommandItem
                   key={status.id}
-                  value={status.name}
+                  // Ikki holat bir xil nomlansa cmdk ularni farqlay olmaydi.
+                  value={commandValue(status.name, status.id)}
                   onSelect={() => {
                     setOpen(false);
                     if (status.id !== value) onChange(status.id);
@@ -113,15 +116,29 @@ export function StatusPicker({
 // Priority
 // ---------------------------------------------------------------------------
 
-export function PriorityFlag({ priority, className }: { priority: Priority; className?: string }) {
+export function PriorityFlag({
+  priority,
+  className,
+  decorative,
+}: {
+  priority: Priority;
+  className?: string;
+  /** Yonida bir xil ma'noli matn turgan joylarda — takror e'lon qilinmasin. */
+  decorative?: boolean;
+}) {
+  const classes = cn(
+    "size-3.5",
+    PRIORITY_META[priority].className,
+    priority !== "none" && "fill-current",
+    className,
+  );
+  if (decorative) return <Flag className={classes} aria-hidden />;
+  // `role="img"` shart: ba'zi ekran o'quvchilari rolsiz <svg> dagi
+  // `aria-label` ni umuman o'qimaydi.
   return (
     <Flag
-      className={cn(
-        "size-3.5",
-        PRIORITY_META[priority].className,
-        priority !== "none" && "fill-current",
-        className,
-      )}
+      className={classes}
+      role="img"
       aria-label={`Muhimlik: ${PRIORITY_META[priority].label}`}
     />
   );
@@ -147,17 +164,19 @@ export function PriorityPicker({
             variant="ghost"
             size="sm"
             className="h-7 gap-1.5 px-2 font-normal"
-            aria-label="Muhimlikni tanlash"
+            // Tugmaning nomi ichidagi belgini bosib ketadi, shuning uchun
+            // hozirgi qiymat shu yerda aytiladi.
+            aria-label={`Muhimlikni tanlash — hozirgi: ${PRIORITY_META[value].label}`}
           />
         }
       >
-        <PriorityFlag priority={value} />
+        <PriorityFlag priority={value} decorative />
         {showLabel ? <span className="text-xs">{PRIORITY_META[value].label}</span> : null}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-40">
         {PRIORITIES.map((p) => (
           <DropdownMenuItem key={p} onClick={() => onChange(p)}>
-            <PriorityFlag priority={p} />
+            <PriorityFlag priority={p} decorative />
             {PRIORITY_META[p].label}
             {p === value ? <Check className="ml-auto size-4" /> : null}
           </DropdownMenuItem>
@@ -251,10 +270,20 @@ export function AssigneePicker({
             <CommandGroup>
               {members.map((member) => {
                 const isSelected = selected.has(member.user.id);
+                const name = displayName(member.user);
+                const subtitle = [
+                  member.user.email,
+                  member.role === "guest" ? ROLE_LABEL.guest : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ");
                 return (
                   <CommandItem
                     key={member.id}
-                    value={`${member.user.full_name} ${member.user.email}`}
+                    // Mehmonning emaili `null`, shuning uchun ism + email
+                    // juftligi yagona emas: id qo'shilmasa cmdk ikki bir xil
+                    // qiymatni farqlay olmay noto'g'ri odamni belgilardi.
+                    value={commandValue(`${name} ${member.user.email ?? ""}`, member.user.id)}
                     onSelect={() => toggle(member.user.id)}
                     aria-selected={isSelected}
                   >
@@ -270,13 +299,12 @@ export function AssigneePicker({
                       </AvatarFallback>
                     </Avatar>
                     <span className="flex min-w-0 flex-col">
-                      <span className="truncate text-sm">
-                        {member.user.full_name || member.user.email}
-                      </span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {member.user.email}
-                        {member.role === "guest" ? ` · ${ROLE_LABEL.guest}` : ""}
-                      </span>
+                      <span className="truncate text-sm">{name}</span>
+                      {subtitle ? (
+                        <span className="truncate text-xs text-muted-foreground">
+                          {subtitle}
+                        </span>
+                      ) : null}
                     </span>
                     {isSelected ? <Check className="ml-auto size-4 shrink-0" /> : null}
                   </CommandItem>
@@ -329,6 +357,8 @@ export function DueDatePicker({
         {value ? formatDueDate(value) : "—"}
       </PopoverTrigger>
       <PopoverContent className="w-auto p-0" align="start">
+        {/* Til, ARIA yorliqlari va dushanbadan boshlanadigan hafta
+            `ui/calendar.tsx` da standart qilib qo'yilgan. */}
         <Calendar
           mode="single"
           selected={date}
@@ -448,7 +478,12 @@ export function TagPicker({
             <CommandEmpty>Bu ish maydonida teglar yo&apos;q.</CommandEmpty>
             <CommandGroup>
               {tags.map((tag) => (
-                <CommandItem key={tag.id} value={tag.name} onSelect={() => toggle(tag.id)}>
+                <CommandItem
+                  key={tag.id}
+                  // Teg nomlari takrorlanishi mumkin — id qiymatni yagona qiladi.
+                  value={commandValue(tag.name, tag.id)}
+                  onSelect={() => toggle(tag.id)}
+                >
                   <span
                     className="size-2 rounded-full"
                     style={{ backgroundColor: tag.color || "#FD71AF" }}

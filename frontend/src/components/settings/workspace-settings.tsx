@@ -38,7 +38,7 @@ import {
   useRevokeInvitation,
 } from "@/hooks/mutations";
 import { InviteMemberDialog } from "@/components/workspace/invite-member-dialog";
-import { initials, timeAgo } from "@/lib/format";
+import { displayName, initials, timeAgo } from "@/lib/format";
 import { can } from "@/lib/permissions";
 import type { Member, Role } from "@/types/api";
 
@@ -200,9 +200,9 @@ export function MembersSection({ workspaceId }: { workspaceId: string }) {
                     <Link
                       href={`/w/${workspaceId}/u/${member.user.id}`}
                       className="hover:underline"
-                      title={`${member.user.full_name || member.user.email} profilini ochish`}
+                      title={`${displayName(member.user)} profilini ochish`}
                     >
-                      {member.user.full_name || member.user.email}
+                      {displayName(member.user)}
                     </Link>
                     {member.user.id === me?.id ? (
                       <span className="ml-1 text-xs text-muted-foreground">(siz)</span>
@@ -210,7 +210,9 @@ export function MembersSection({ workspaceId }: { workspaceId: string }) {
                   </span>
                 </TableCell>
                 <TableCell className="text-muted-foreground">
-                  {member.user.email}
+                  {/* Mehmon ko'ruvchiga email `null` keladi (§4) — bo'sh katak
+                      o'rniga chiziqcha. */}
+                  {member.user.email ?? "—"}
                 </TableCell>
                 <TableCell className="text-muted-foreground">
                   {member.user.profession ? (
@@ -264,7 +266,7 @@ export function MembersSection({ workspaceId }: { workspaceId: string }) {
                       variant="ghost"
                       size="icon-xs"
                       className="text-danger"
-                      aria-label={`${member.user.email} a'zoni chiqarish`}
+                      aria-label={`${member.user.email ?? displayName(member.user)} a'zoni chiqarish`}
                       onClick={() => removeMember.mutate(member.user.id)}
                     >
                       <Trash2 />

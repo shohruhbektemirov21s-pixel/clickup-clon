@@ -23,7 +23,7 @@ import type { WorkspaceConnectionStatus } from "@/hooks/use-workspace-channel";
 import { CreateEntityDialog } from "@/components/shell/create-entity-dialog";
 import { TaskRow } from "@/components/shared/task-row";
 import { initials } from "@/lib/format";
-import { can } from "@/lib/permissions";
+import { can, canInSpace } from "@/lib/permissions";
 import { ROLE_LABEL } from "@/lib/roles";
 import {
   BUCKET_LABEL,
@@ -139,7 +139,8 @@ type HomeView = "mine" | "team";
 export function WorkspaceHome({ workspaceId }: { workspaceId: string }) {
   const { data: workspace } = useWorkspace(workspaceId);
   const { data: me } = useMe();
-  const { data: myPermissions } = useMyPermissions(workspaceId);
+  const { data: myPermissions, isPending: permsPending } =
+    useMyPermissions(workspaceId);
   const {
     data: tree,
     isPending: treePending,
@@ -174,7 +175,12 @@ export function WorkspaceHome({ workspaceId }: { workspaceId: string }) {
     [teamTasks.data],
   );
 
-  const isGuest = workspace?.my_role === "guest";
+  // Jamoa bo'limi `GET workspaces/{id}/members/` ni o'qiydi — ya'ni
+  // `member.read`. Ilgari bu yerda `!isGuest` turardi: mehmon standart
+  // matritsada shu kodni olmagani uchun natija TASODIFAN to'g'ri edi, lekin
+  // kodni boshqa rolga berish yoki mehmondan olib qo'yish UI ga ta'sir
+  // qilmasdi.
+  const canReadMembers = can(myPermissions, "member.read");
 
   const showMember = React.useCallback((userId: string) => {
     setView("team");
@@ -184,7 +190,13 @@ export function WorkspaceHome({ workspaceId }: { workspaceId: string }) {
     );
   }, []);
 
-  if (treePending) return <HomeSkeleton />;
+  // `permsPending` ham shu yerda, `HomeSkeleton` ortida. Bu — kirishdan
+  // keyingi BIRINCHI ekran: ruxsatlar yetib kelmagunicha yozish
+  // affordance'larini chizsak, ular ko'z oldida "sakrab" paydo bo'ladi
+  // (403 beradigan tugmaning ko'zgudagi aksi). Sahifa darajasidagi bitta
+  // barqaror skeleton har bir bo'limga alohida placeholder qo'yishdan
+  // arzon va butun ekranni bir vaqtda hal qilingan holatda chizadi.
+  if (treePending || permsPending) return <HomeSkeleton />;
 
   if (treeError) {
     return (
@@ -200,11 +212,20 @@ export function WorkspaceHome({ workspaceId }: { workspaceId: string }) {
   }
 
   if (summary.listNames.size === 0) {
+    // Tugma ikki xil narsa yaratadi, demak ikki xil kod bilan gate qilinadi:
+    // bo'lim bor bo'lsa — o'sha bo'lim ichida ro'yxat (`list.create`,
+    // bo'lim doirasida), bo'lim yo'q bo'lsa — bo'limning o'zi
+    // (`space.create`, ish maydoni darajasida — hali hech qanday bo'lim yo'q).
+    const firstSpaceId = summary.spaceCount > 0 ? summary.firstSpaceId : null;
     return (
       <EmptyWorkspace
         workspaceId={workspaceId}
-        firstSpaceId={summary.spaceCount > 0 ? summary.firstSpaceId : null}
-        canCreate={!isGuest}
+        firstSpaceId={firstSpaceId}
+        canCreate={
+          firstSpaceId
+            ? canInSpace(myPermissions, firstSpaceId, "list.create")
+            : can(myPermissions, "space.create")
+        }
       />
     );
   }
@@ -304,7 +325,7 @@ export function WorkspaceHome({ workspaceId }: { workspaceId: string }) {
           )}
         </div>
 
-        {workspace && !isGuest ? (
+        {canReadMembers ? (
           <TeamSection
             workspaceId={workspaceId}
             meId={me?.id ?? null}
@@ -846,6 +867,11 @@ function EmptyWorkspace({
 }: {
   workspaceId: string;
   firstSpaceId: string | null;
+  /**
+   * `firstSpaceId` bo'lsa — o'sha bo'limdagi `list.create`, aks holda ish
+   * maydoni darajasidagi `space.create`. Chaqiruvchi hal qiladi, chunki
+   * tugmaning maqsadi ham o'sha yerda tanlanadi.
+   */
   canCreate: boolean;
 }) {
   const [creating, setCreating] = React.useState(false);

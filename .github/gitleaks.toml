@@ -1,0 +1,55 @@
+# gitleaks konfiguratsiyasi — `.github/workflows/security.yml` (BLOKLOVCHI).
+#
+# Standart qoidalar to'liq meros qilib olinadi; bu yerda faqat NAMUNA/DUMMY
+# qiymatlar ro'yxatga olinadi. Har bir yozuv uchun: SANA + NEGA bu haqiqiy sir
+# EMAS. Sanasiz yozuv — bypass, uni qo'shmang.
+#
+# Skaner yiqilsa tartib: (1) topilgan qiymatni DARHOL aylantiring —
+# tarixdan o'chirish yetarli emas, u allaqachon oshkor; (2) keyin tuzating.
+# `continue-on-error` QAYTARILMAYDI.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Namuna fayllar va CI uchun dummy kredensiallar"
+
+paths = [
+  # 2026-08-10 — `.env` shablonlari. Barcha qiymatlar joy egallovchi
+  # ("dev-only-change-me"), ular hech qachon hech qayerda ishlatilmaydi.
+  '''backend/\.env\.example''',
+  '''frontend/\.env\.example''',
+  '''\.env\.docker\.example''',
+
+  # 2026-08-10 — CI workflow'laridagi dummy SECRET_KEY va Postgres paroli
+  # ("clickup"). Ular efemer runner konteynerida, faqat run davomida
+  # yashaydigan bazaga tegishli. Haqiqiy sirlar `secrets.*` orqali keladi.
+  '''\.github/workflows/.*\.yml''',
+
+  # 2026-08-10 — demo ma'lumot: `seed_demo` ekadigan hisoblarning paroli
+  # ("clickish-demo-2026"). U ATAYLAB ochiq: demo hisoblari ommaviy va
+  # `is_readonly`. E2E to'plami ham shu qiymatni ishlatadi.
+  '''backend/apps/core/management/commands/seed_demo\.py''',
+  '''frontend/e2e/fixtures\.ts''',
+  '''frontend/e2e/README\.md''',
+
+  # 2026-08-10 — test kredensiallari (`PASSWORD = "S3cure!passw0rd"` va h.k.).
+  # Faqat test bazasida mavjud.
+  '''backend/conftest\.py''',
+  '''backend/apps/.*/tests?\.py''',
+  '''backend/apps/.*/test_.*\.py''',
+  '''backend/apps/.*/tests/.*\.py''',
+
+  # 2026-08-10 — hujjatlardagi misol tokenlar/JWT namunalari.
+  '''docs/API_CONTRACT\.md''',
+]
+
+# Alohida qiymatlar (yo'l bo'yicha emas, matn bo'yicha) — yo'l ro'yxati
+# yetmagan joylar uchun.
+regexes = [
+  # 2026-08-10 — CI dummy kalitining o'zi. Nomida "not-a-real-secret" bor;
+  # boshqa joyda uchrasa ham xavf yo'q.
+  '''ci-dummy-not-a-real-secret-[0-9a-f]+''',
+  # 2026-08-10 — Docker build bosqichidagi joy egallovchi (backend/Dockerfile).
+  '''build-stage-placeholder-not-used-at-runtime-0+''',
+]

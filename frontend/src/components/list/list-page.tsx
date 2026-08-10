@@ -5,9 +5,10 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Columns3, Rows3 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { useList, useStatusSet, useWorkspace } from "@/hooks/queries";
+import { useList, useStatusSet } from "@/hooks/queries";
 import { useListChannel } from "@/hooks/use-list-channel";
 import { ListView } from "@/components/list/list-view";
+import { useListPermissions } from "@/components/list/use-list-permissions";
 import { BoardView } from "@/components/board/board-view";
 import { TaskPanel } from "@/components/task/task-panel";
 import { SpaceTeamStrip } from "@/components/workspace/space-team-strip";
@@ -27,8 +28,12 @@ export function ListPage({
 
   const { data: list } = useList(listId);
   const { data: statusSet } = useStatusSet(listId);
-  const { data: workspace } = useWorkspace(workspaceId);
   const connection = useListChannel(listId);
+
+  // Yagona qaror manbai: ro'yxat, doska va vazifa paneli bir xil fasaddan
+  // chiziladi. `list.space_id` kelmaguncha fasad `isLoading` — yozish
+  // boshqaruvlari yoniq holda "chaqnab" ketmaydi.
+  const perms = useListPermissions(workspaceId, list?.space_id);
 
   const view: ViewKind =
     searchParams.get("view") === "board"
@@ -56,7 +61,6 @@ export function ListPage({
   );
   const closeTask = React.useCallback(() => setParam("task", null), [setParam]);
 
-  const isGuest = workspace?.my_role === "guest";
   const statuses = statusSet?.statuses ?? [];
 
   return (
@@ -108,10 +112,11 @@ export function ListPage({
 
       {view === "board" ? (
         <BoardView
+          workspaceId={workspaceId}
           listId={listId}
+          spaceId={list?.space_id}
           statuses={statuses}
           onOpenTask={openTask}
-          canEdit={!isGuest}
         />
       ) : (
         <ListView
@@ -119,7 +124,7 @@ export function ListPage({
           listId={listId}
           statuses={statuses}
           onOpenTask={openTask}
-          canEdit={!isGuest}
+          perms={perms}
         />
       )}
 
@@ -128,6 +133,7 @@ export function ListPage({
         listId={listId}
         taskId={openTaskId}
         statuses={statuses}
+        perms={perms}
         onClose={closeTask}
       />
     </div>

@@ -8,9 +8,15 @@ export const keys = {
   /** A'zo profili (§4.1) — bitta a'zoning statistikasi va bo'limlari. */
   memberProfile: (workspaceId: string, userId: string) =>
     ["workspace", workspaceId, "member-profile", userId] as const,
+  /** Har bir a'zo profilining prefiksi — bitta invalidatsiya hammasini qamraydi. */
+  memberProfileRoot: (workspaceId: string) =>
+    ["workspace", workspaceId, "member-profile"] as const,
   /** Ish maydoni faoliyat tasmasi (§10.8). `actorId: null` — hamma aktyorlar. */
   activity: (workspaceId: string, actorId: string | null) =>
     ["workspace", workspaceId, "activity", actorId ?? "all"] as const,
+  /** Har bir aktyor filtrining prefiksi — bitta invalidatsiya hammasini qamraydi. */
+  activityRoot: (workspaceId: string) =>
+    ["workspace", workspaceId, "activity"] as const,
   invitations: (workspaceId: string) =>
     ["workspace", workspaceId, "invitations"] as const,
   tags: (workspaceId: string) => ["workspace", workspaceId, "tags"] as const,

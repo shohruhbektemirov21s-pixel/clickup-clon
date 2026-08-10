@@ -6,8 +6,9 @@ import {
   apiRequest,
   collectPageErrors,
   firstWorkspace,
-  login,
-  sessionFor,
+  resetRolePermissions,
+  signIn,
+  signedInContext,
 } from "./fixtures";
 
 /**
@@ -16,9 +17,17 @@ import {
  * Egasi (demo) matritsani ko'radi va tahrirlaydi; `workspace.manage_permissions`
  * huquqiga ega bo'lmagan admin (aziz) uchun bo'lim umuman mavjud emas.
  *
- * Login `auth`/`auth_burst` throttle'iga tushadi, shuning uchun egasi uchun
- * bitta kontekst `beforeAll` da ochiladi va barcha testlar shuni bo'lishadi.
- * Har bir test o'zidan keyin matritsani standart holatga qaytaradi.
+ * ⚠ Bu spec ish maydonining HAQIQIY rol-huquq matritsasini o'zgartiradi va
+ * fayllar alifbo tartibida ishlagani uchun `realtime` va `smoke` dan OLDIN
+ * yuradi. Shu sababli tozalash uch qavatli:
+ *
+ *   1. har bir yozadigan test o'zidan keyin `resetRolePermissions` chaqiradi;
+ *   2. `afterAll` yana bir marta qaytaradi va xatoni **yutmaydi** — reset
+ *      yiqilsa spec qizil bo'ladi (ilgari `.catch(() => {})` bor edi va
+ *      yiqilgan reset demo ish maydonini butunlay o'zgargan holda qoldirardi);
+ *   3. `e2e/global-teardown.ts` butun run oxirida yakuniy kafolat sifatida
+ *      yana qaytaradi, `e2e/global-setup.ts` esa run boshida — shunda oldingi
+ *      uzilib qolgan run keyingisini ifloslantirmaydi.
  */
 
 const NAV_PERMISSIONS = "Huquqlar";
@@ -42,13 +51,6 @@ let ownerPage: Page;
 let access: string;
 let workspaceId: string;
 
-async function resetMatrix() {
-  await apiRequest<void>(access, `workspaces/${workspaceId}/role-permissions/reset/`, {
-    method: "POST",
-    body: { role: null },
-  });
-}
-
 function readMatrix() {
   return apiRequest<Matrix>(access, `workspaces/${workspaceId}/role-permissions/`);
 }
@@ -63,21 +65,21 @@ test.describe.configure({ mode: "serial" });
 
 test.describe("permissions matrix", () => {
   test.beforeAll(async ({ browser }) => {
-    // Bu login butun to'plam bilan bitta per-IP auth throttle chelagini
-    // bo'lishadi, shuning uchun hook 429 back-off oynasini kutishi mumkin.
-    test.setTimeout(240_000);
-    const session = await sessionFor(USERS.demo);
-    access = session.access;
+    const signedIn = await signedInContext(browser, USERS.demo);
+    ownerContext = signedIn.context;
+    ownerPage = signedIn.page;
+    access = signedIn.session.access;
     workspaceId = (await firstWorkspace(access)).id;
-
-    ownerContext = await browser.newContext();
-    ownerPage = await ownerContext.newPage();
-    await login(ownerPage, USERS.demo);
   });
 
   test.afterAll(async () => {
-    await resetMatrix().catch(() => {});
-    await ownerContext?.close();
+    try {
+      // Xato ATAYLAB yutilmaydi — yutilgan reset keyingi spec'larni sababsiz
+      // yiqitadi va demo ish maydonini o'zgargan holda qoldiradi.
+      await resetRolePermissions(access, workspaceId);
+    } finally {
+      await ownerContext?.close();
+    }
   });
 
   test("owner sees every role column and the whole catalog is rendered", async () => {
@@ -111,28 +113,33 @@ test.describe("permissions matrix", () => {
   });
 
   test("toggling a permission persists across a reload and lands in overrides", async () => {
-    await resetMatrix();
+    await resetRolePermissions(access, workspaceId);
     await openPermissions(ownerPage);
 
     const cell = ownerPage.getByLabel(MEMBER_SPACE_CREATE);
     await expect(cell).not.toBeChecked();
 
-    await cell.check();
-    await ownerPage.getByRole("button", { name: SAVE }).click();
+    try {
+      await cell.check();
+      await ownerPage.getByRole("button", { name: SAVE }).click();
 
-    await expect
-      .poll(async () => (await readMatrix()).roles.member.permissions.includes("space.create"))
-      .toBe(true);
+      await expect
+        .poll(async () => (await readMatrix()).roles.member.permissions.includes("space.create"))
+        .toBe(true);
 
-    const matrix = await readMatrix();
-    expect(
-      matrix.overrides.some(
-        (row) => row.role === "member" && row.permission === "space.create" && row.allowed
-      )
-    ).toBe(true);
+      const matrix = await readMatrix();
+      expect(
+        matrix.overrides.some(
+          (row) => row.role === "member" && row.permission === "space.create" && row.allowed
+        )
+      ).toBe(true);
 
-    await ownerPage.reload();
-    await expect(ownerPage.getByLabel(MEMBER_SPACE_CREATE)).toBeChecked();
+      await ownerPage.reload();
+      await expect(ownerPage.getByLabel(MEMBER_SPACE_CREATE)).toBeChecked();
+    } finally {
+      // Keyingi test toza matritsadan boshlansin.
+      await resetRolePermissions(access, workspaceId);
+    }
   });
 
   test("reset returns the matrix to its defaults", async () => {
@@ -147,7 +154,7 @@ test.describe("permissions matrix", () => {
     await openPermissions(ownerPage);
     await expect(ownerPage.getByLabel(MEMBER_SPACE_CREATE)).toBeChecked();
 
-    await resetMatrix();
+    await resetRolePermissions(access, workspaceId);
 
     const matrix = await readMatrix();
     expect(matrix.overrides).toHaveLength(0);
@@ -156,7 +163,7 @@ test.describe("permissions matrix", () => {
 
   test("an admin without manage_permissions cannot reach the section", async ({ page }) => {
     const collected = collectPageErrors(page);
-    await login(page, USERS.aziz);
+    await signIn(page, USERS.aziz);
 
     await page.goto(`/w/${workspaceId}/settings`);
     await expect(page.getByRole("link", { name: NAV_PERMISSIONS })).toHaveCount(0);

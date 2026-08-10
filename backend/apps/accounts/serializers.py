@@ -1,7 +1,8 @@
 import re
 import zoneinfo
 
-from django.contrib.auth import password_validation
+from django.contrib.auth import authenticate, password_validation
+from django.contrib.auth.signals import user_logged_in
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone as dj_timezone
@@ -304,15 +305,57 @@ class RegisterSerializer(serializers.Serializer):
 
 
 class LoginSerializer(serializers.Serializer):
+    """`POST auth/login/` — Django auth qatlami orqali (AppSec 2026-08).
+
+    Ilgari bu yerda `User.objects.filter(...).first()` + `check_password()`
+    qo'lda bajarilardi. Ikkita muammo bor edi:
+
+    1. **Audit teshigi.** `django.contrib.auth.authenticate()` chaqirilmagani
+       uchun `user_login_failed` / `user_logged_in` signallari chiqmasdi, ya'ni
+       `apps/accounts/signals.py` dagi jurnal ilovaning ASOSIY kirish nuqtasini
+       ko'rmasdi — faqat `/admin/` formasi yozilardi. Per-IP brute-force alerti
+       shu tufayli deyarli foydasiz edi.
+    2. **Foydalanuvchi mavjudligini timing orqali oshkor qilish.**
+       `user is None or not user.check_password(...)` short-circuit qiladi:
+       noma'lum email uchun parol hash'i UMUMAN hisoblanmaydi, ya'ni javob
+       o'lchanadigan darajada tezroq qaytadi. `ModelBackend` aynan shu sabab
+       (Django #20760) mavjud bo'lmagan foydalanuvchi uchun soxta hash
+       hisoblaydi — endi biz o'sha yo'ldan boramiz.
+
+    `login()` ataylab chaqirilmaydi: bu stateless JWT endpoint, unga sessiya
+    cookie'si kerak emas. Muvaffaqiyat signali `user_logged_in` qo'lda,
+    haqiqiy `request` bilan yuboriladi (`last_login` ni Django'ning
+    `update_last_login` receiver'i o'zi yangilaydi).
+    """
+
     email = serializers.EmailField()
     password = serializers.CharField(trim_whitespace=False)
 
     def validate(self, attrs):
-        user = User.objects.filter(email__iexact=attrs["email"].lower()).first()
-        if user is None or not user.check_password(attrs["password"]) or not user.is_active:
+        request = self.context.get("request")
+        email = attrs["email"].lower()
+
+        # `ModelBackend` `get_by_natural_key()` bilan ANIQ moslikni qidiradi,
+        # bizning kirish esa tarixan case-insensitive. Saqlangan yozuvni
+        # oldindan topib, uning o'z yozilishini uzatamiz — email bazada
+        # `create_user()` orqali kelmagan bo'lsa (masalan `/admin/` formasi)
+        # ham kirish ishlayveradi. Topilmasa lowercase variant uzatiladi va
+        # backend soxta hash'ni hisoblaydi.
+        stored_email = (
+            User.objects.filter(email__iexact=email)
+            .values_list("email", flat=True)
+            .first()
+        )
+        user = authenticate(
+            request=request,
+            email=stored_email or email,
+            password=attrs["password"],
+        )
+        if user is None:
+            # `authenticate()` allaqachon `user_login_failed` ni chiqardi.
             raise AuthenticationFailed("Invalid email or password.")
-        user.last_login = dj_timezone.now()
-        user.save(update_fields=["last_login"])
+
+        user_logged_in.send(sender=user.__class__, request=request, user=user)
         attrs["user"] = user
         return attrs
 

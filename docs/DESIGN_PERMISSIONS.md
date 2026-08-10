@@ -1,7 +1,10 @@
 # Granular Ruxsatlar Matritsasi, Space-darajali Assignment va Invite-Register — Dizayn Hujjati
 
 **Status: binding spetsifikatsiya — implementatsiya shu hujjatga qat'iy amal qiladi**
-**Versiya:** 2.0.0-draft · **Sana:** 2026-08-10
+**Versiya:** 2.0.0 · **Sana:** 2026-08-10
+<!-- 2026-08-10: "2.0.0-draft" + "binding" bir vaqtda turgan edi. Hujjat
+     implementatsiya qilingan va kod unga amal qiladi, shuning uchun `-draft`
+     olib tashlandi: `binding` bo'lgan hujjat draft bo'la olmaydi. -->
 **Upstream:** `docs/API_CONTRACT.md` v1.0.0, `docs/DATA_MODEL.md`, `CLAUDE.md`
 **Downstream:** `API_CONTRACT.md` → v1.1.0 (§17 ga R18–R23 qo'shiladi)
 
@@ -53,7 +56,7 @@ class PermissionDef:
 > `comment.update_own`, `comment.delete_own`, `attachment.read`,
 > `attachment.create`, `attachment.delete_own`, `tag.create`.
 > `admin`, `guest` va `owner` ustunlariga **tegilmadi**. Monotonlik saqlanadi:
-> guest (9) ⊆ member (14) ⊆ admin (44) ⊆ owner (48).
+> guest (9) ⊆ member (14) ⊆ admin (44) ⊆ owner (48). *(v4/v5 dan keyin: guest 10, member 14, admin 45, owner 49.)*
 >
 > **"Loyiha menejeri" alohida workspace roli emas.** U bo'lim darajasidagi
 > `SpaceAccess.MANAGER` (`SPACE_MANAGER_GRANTS`, §B.5/§F-5) — yuqorida olib
@@ -77,6 +80,23 @@ class PermissionDef:
 > qo'yadigan `_current_membership` orqali olinadi (`remember_membership`) —
 > har bir view'ga `context` uzatish shart emas, ya'ni "bitta joyni unutdim →
 > email sizdi" xatosi tuzilmaviy ravishda mumkin emas.
+>
+> **2026-08 (katalog v5) — `space.change_visibility` (AppSec).** Bo'limning
+> `is_private` bayrog'i `space.update` dan **ajratildi**. Sabab: `space.update`
+> `SPACE_MANAGER_GRANTS` ichida, ya'ni bo'lim menejeri (PM) `PATCH spaces/{id}/`
+> bilan yopiq loyihaning butun mazmunini bir so'rovda barcha ish maydoni
+> a'zolariga ocha olardi (yoki teskarisi — ochiq bo'limni yopib, unga tayangan
+> mehmon/kontraktorlarni chiqarib yuborardi). Yangi kod `admin` default'da,
+> `sensitive=True`, va `space.delete` bilan bir xil mantiqda
+> `SPACE_MANAGER_GRANTS` ga **kirmaydi**. Kodlar 48 → **49**, admin 44 → **45**.
+> `member`/`guest` ustunlariga tegilmadi, monotonlik saqlanadi.
+>
+> **Migratsiya SHART EMAS.** `_build_matrix()` `DEFAULT_MATRIX` dan boshlanadi
+> va DB qatorlarini ustiga yopishtiradi; yangi kod uchun `RolePermission`
+> qatori YO'Q → default (`admin`) amal qiladi. `ensure_role_permissions()`
+> (bootstrap + `role-permissions/` resolver fallback + admin action) qatorni
+> keyinroq lazily materializatsiya qiladi. Migratsiya 0003/0005 tarixiy
+> snapshot bo'lgani uchun ularga tegilmaydi.
 
 ### Guruh `workspace` — Ish maydoni
 | Kod | Tavsif | O | A | M | G | Flag |
@@ -104,6 +124,7 @@ class PermissionDef:
 | `space.read_private` | Barcha yopiq bo'limlarni `SpaceMember`siz ko'rish | ✔ | ✔ | ✕ | ✕ |
 | `space.create` | Bo'lim yaratish | ✔ | ✔ | ✕ | ✕ |
 | `space.update` | Bo'limni tahrirlash/arxivlash | ✔ | ✔ | ✕ | ✕ |
+| `space.change_visibility` | **`is_private` ni o'zgartirish** (sensitive) | ✔ | ✔ | ✕ | ✕ |
 | `space.delete` | Bo'limni o'chirish | ✔ | ✔ | ✕ | ✕ |
 | `space.manage_members` | **PM huquqi:** bo'limga odam biriktirish | ✔ | ✔ | ✕ | ✕ |
 | `space.manage_statuses` | Status to'plamini almashtirish | ✔ | ✔ | ✕ | ✕ |
@@ -151,6 +172,24 @@ class PermissionDef:
 
 > Kontrakt §12: **hech kim** (owner ham) boshqaning izohini tahrirlay olmaydi — `comment.update_any` kodi ataylab **mavjud emas**.
 
+### Guruh `attachment` — Biriktirmalar
+| Kod | Tavsif | O | A | M | G |
+|---|---|:-:|:-:|:-:|:-:|
+| `attachment.read` | Biriktirmalar ro'yxatini ko'rish va yuklab olish | ✔ | ✔ | ✔ | ✔ |
+| `attachment.create` | Vazifaga fayl biriktirish | ✔ | ✔ | ✔ | ✕ |
+| `attachment.delete_own` | O'zi yuklagan faylni o'chirish | ✔ | ✔ | ✔ | ✕ |
+| `attachment.delete_any` | **Boshqaning faylini o'chirish** (moderatsiya, sensitive) | ✔ | ✔ | ✕ | ✕ |
+
+> Bu guruh katalog v2 da qo'shilgan, lekin §A jadvallariga hech qachon
+> yozilmagan — "9 guruh" deb yozilib, 8 tasi ko'rsatilib turgan edi.
+> `attachment.delete_any` — `comment.delete_any` bilan bir xil naqsh: egasi
+> `*_own` bilan o'chiradi, moderator `*_any` bilan. Ikkalasi ham
+> `SPACE_MANAGER_GRANTS` ga **kirmaydi**: moderatsiya huquqi bo'lim menejeriga
+> lokal berilmaydi (`apps/core/access.py`).
+>
+> **Bajarilgan vazifaga ham fayl biriktiriladi** (kontrakt R24): biriktirma
+> endpointlari `completed_at` / `status.type` ni umuman tekshirmaydi.
+
 ### Guruh `tag` — Teglar
 | Kod | O | A | M | G |
 |---|:-:|:-:|:-:|:-:|
@@ -158,7 +197,7 @@ class PermissionDef:
 | `tag.update` | ✔ | ✔ | ✕ | ✕ |
 | `tag.delete` | ✔ | ✔ | ✕ | ✕ |
 
-**Jami: 48 kod, 9 guruh** (v2 da `attachment` guruhi qo'shilgan). Defaultlar monotonlik shartini qanoatlantiradi — CI testi `test_default_matrix_is_monotonic` tekshiradi; aniq ro'yxatni `test_member_defaults_are_exactly_the_policy_set` qulflaydi.
+**Jami: 49 kod, 9 guruh** (v2 da `attachment` guruhi, v5 da `space.change_visibility` qo'shilgan). Defaultlar monotonlik shartini qanoatlantiradi — CI testi `test_default_matrix_is_monotonic` tekshiradi; aniq ro'yxatni `test_member_defaults_are_exactly_the_policy_set` qulflaydi.
 
 ---
 
@@ -235,7 +274,7 @@ class RolePermission(UUIDModel, TimeStampedModel):
             raise ValidationError({"permission": "Bu ruxsat faqat owner uchun."})
 ```
 
-`permission` — `CharField`, FK emas (AD-1). Bir workspace uchun to'liq matritsa = 3 rol × 44 kod = **132 qator**.
+`permission` — `CharField`, FK emas (AD-1). Bir workspace uchun to'liq matritsa = 3 rol × butun katalog (v5: 49 kod) = **147 qator**.
 
 ### B.4 `SpaceMember` — `apps/workspaces/models.py`
 
@@ -288,7 +327,7 @@ Space ichidagi yozish:
 - `access == viewer` → space ichidagi barcha yozish `403` (**eng past huquq g'olib**).
 - `access == contributor` → workspace roli bo'yicha odatiy `has_perm`.
 - `access == manager` (PM) → contributor + shu space uchun `space.update`, `space.manage_members`, `space.manage_statuses`, `folder.*`, `list.*`, `task.*` lokal yoqiladi.
-- `space.delete` **hech qachon** manager orqali berilmaydi.
+- `space.delete` va `space.change_visibility` **hech qachon** manager orqali berilmaydi: PM bo'lim **ichida** hokim, bo'limning ish maydoniga nisbatan **chegarasini** o'zgartira olmaydi.
 
 ### B.6 Defaultlar qanday to'ldiriladi
 
@@ -457,13 +496,13 @@ Barchasi `/api/v1/` ostida, trailing slash bilan, xato formati `{"error":{"code"
 Auth required, rol talab qilinmaydi, **pagination yo'q**.
 ```json
 {
-  "catalog_version": 1,
+  "catalog_version": 5,
   "groups": [{
     "key": "task", "label": "Vazifalar",
     "permissions": [{
       "code": "task.delete", "label": "Vazifani o'chirish",
       "description": "Vazifani soft-delete qiladi; 30 kun ichida tiklash mumkin.",
-      "default_roles": ["admin", "member"], "owner_only": false, "sensitive": false
+      "default_roles": ["admin"], "owner_only": false, "sensitive": false
     }]
   }]
 }
@@ -474,9 +513,9 @@ Auth required, rol talab qilinmaydi, **pagination yo'q**.
 Ruxsat: `workspace.manage_permissions` (default: faqat owner).
 ```json
 {
-  "workspace_id": "…", "version": 7, "catalog_version": 1,
+  "workspace_id": "…", "version": 7, "catalog_version": 5,
   "roles": {
-    "owner":  { "locked": true,  "permissions": ["…barcha 44 kod…"] },
+    "owner":  { "locked": true,  "permissions": ["…barcha 49 kod…"] },
     "admin":  { "locked": false, "permissions": ["…"] },
     "member": { "locked": false, "permissions": ["…"] },
     "guest":  { "locked": false, "permissions": ["…"] }
@@ -769,7 +808,7 @@ export function canInSpace(
 
 **F-4 · Stale grant.** Cache kaliti `permissions_version` ni o'z ichiga oladi va version har request'da DB'dan o'qiladi → **bekor qilish bir zumda**. Qolgan xavf: ochiq WS soketlari → `access.revoked` / `permission.updated` frame'lari.
 
-**F-5 · Space manager (PM) eskalatsiyasi.** `manager` lokal yoqishlari qat'iy `SPACE_MANAGER_GRANTS` frozenset bilan cheklangan. `space.delete`, `member.*`, `workspace.*`, `tag.*` **hech qachon** kirmaydi. `viewer` bo'lsa hammasi kesiladi.
+**F-5 · Space manager (PM) eskalatsiyasi.** `manager` lokal yoqishlari qat'iy `SPACE_MANAGER_GRANTS` frozenset bilan cheklangan. `space.delete`, **`space.change_visibility`**, `member.*`, `workspace.*`, `tag.*` **hech qachon** kirmaydi. `viewer` bo'lsa hammasi kesiladi. CI: `apps/core/tests/test_security_followups.py::test_change_visibility_is_admin_only_and_never_local_to_a_manager`.
 
 **F-6 · Invite token brute-force.** `lookup/` public va **throttlesiz** — register-with-invite bu yo'lni kengaytiradi. Majburiy: `invite_lookup` 30/min per IP; register xatosi ham `register` throttle'iga kiradi. Token entropiyasi `token_urlsafe(32)` = 256 bit — yetarli. Keyingi sprint: `token_hash` (sha256) + `token_prefix`.
 
@@ -778,6 +817,10 @@ export function canInSpace(
 **F-8 · Mass assignment.** `PUT role-permissions/` payload'i `PERMISSION_BY_CODE` va `AssignableRole.values` bo'yicha **whitelist**. Noma'lum kalit → `400` (silent ignore EMAS).
 
 **F-9 · Monotonlik** `PUT` da, `clean()` da va admin formda tekshiriladi.
+
+**F-10 · Chiqarilgan a'zoning ochiq WebSocket'i.** Consumer a'zolikni faqat `connect()` da bir marta tekshiradi, shuning uchun `_remove_member()` (`members/{id}/` DELETE va `members/leave/`) `transaction.on_commit` ichida `emit_access_revoked(user_id, workspace_id=…, space_id=None)` chiqaradi. `space_id=None` `revocation_applies()` bo'yicha **ikkala** consumer'ni ham (ro'yxat va ish maydoni) `4403` bilan yopadi. `user_id` `membership.delete()` dan **oldin** olinadi.
+
+**F-11 · `assignee_ids` orqali `task.assign` ni chetlab o'tish.** `POST lists/{id}/tasks/` va `PATCH tasks/{id}/` biriktirishlar to'plami **chaqiruvchidan boshqa odam uchun o'zgarganda** qo'shimcha `require_space_perm(…, "task.assign")` talab qiladi. Ikki holat ataylab tekshirilmaydi: (1) to'plam umuman o'zgarmagan (frontend to'liq obyektni qaytarib yuboradi), (2) farq faqat chaqiruvchining o'zi — "vazifani olaman" / "tashlab ketaman" oqimlari admin aralashuvisiz ishlashi kerak va ular hech kimga yangi kirish bermaydi (chaqiruvchi bo'limni allaqachon ko'rmoqda, `_grant_assignee_space_access` esa ko'rayotgan odamga qator yozmaydi). Ikkinchi qavat: `_grant_assignee_space_access()` `SpaceMember` qatorini faqat aktyor `space.manage_members` ga ega bo'lganda yozadi, aks holda `400 validation_error` (`details.assignee_ids`). Aks holda `space.manage_members` (admin-only) `task.update_assigned` (guest-level) orqali aylanib o'tilardi.
 
 ---
 

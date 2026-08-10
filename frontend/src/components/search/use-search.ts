@@ -4,13 +4,21 @@
  * Qidiruv so'rovi uchun umumiy klient mantiq: 250 ms debounce, "kamida 2 belgi"
  * qoidasi va miltillashga qarshi "oldingi natijani saqlab turish".
  *
- * Tarmoq qatlami — mavjud `useWorkspaceSearch` (`hooks/` fayllariga tegilmaydi).
- * Eskirgan so'rovni TanStack Query o'zi bekor qiladi, ya'ni kech kelgan javob
- * hech qachon yangisini bosib ketmaydi. Lekin so'rov kaliti o'zgarganda hook
- * bir lahzaga `data: undefined` qaytaradi va ro'yxat miltillaydi — `hooks/`
- * ichida `placeholderData: keepPreviousData` qo'sha olmaganimiz uchun oxirgi
- * muvaffaqiyatli javob shu modulning kichik tashqi store'ida saqlanadi va
- * `useSyncExternalStore` orqali o'qiladi.
+ * Tarmoq qatlami — `useWorkspaceSearch`. Eskirgan so'rovni TanStack Query o'zi
+ * bekor qiladi, ya'ni kech kelgan javob hech qachon yangisini bosib ketmaydi.
+ * Miltillashni esa o'sha hook'dagi `placeholderData: keepPreviousData` to'xtatib
+ * turadi: so'rov kaliti o'zgarganda `data: undefined` bo'lib qolmaydi, oldingi
+ * javob yangisi kelguncha ekranda qoladi.
+ *
+ * Muhimi — javob **qaysi so'rovga tegishli ekani** (`SearchResult.query`)
+ * javobning o'zi bilan birga keladi va bu yerdan {@link SearchState.resultQuery}
+ * bo'lib chiqadi. Sarlavha, `Highlight` va a'zolar filtri o'sha matnni ishlatadi,
+ * `debouncedQuery` ni emas — aks holda ekranda `abc` ning natijalari turib,
+ * sarlavha «abcd» bo'yicha 12 ta natija deb yozib qo'yardi.
+ *
+ * Bu yerda modul darajasidagi kesh yo'q: hamma narsa TanStack Query ichida
+ * yashaydi, ya'ni `useLogout` dagi `queryClient.clear()` bitta brauzerda ketma-ket
+ * kirgan ikki foydalanuvchi orasida hech narsa qoldirmasligiga kafolat beradi.
  */
 
 import * as React from "react";
@@ -40,30 +48,19 @@ export function useDebouncedValue<T>(value: T, delay: number = SEARCH_DEBOUNCE_M
   return debounced;
 }
 
-// ---------------------------------------------------------------------------
-// `keepPreviousData` o'rnini bosuvchi mayda tashqi store
-// ---------------------------------------------------------------------------
-
-const lastResponse = new Map<string, SearchResponse>();
-const responseListeners = new Set<() => void>();
-
-function rememberResponse(workspaceId: string, data: SearchResponse): void {
-  if (lastResponse.get(workspaceId) === data) return;
-  lastResponse.set(workspaceId, data);
-  for (const listener of responseListeners) listener();
-}
-
-function subscribeResponse(listener: () => void): () => void {
-  responseListeners.add(listener);
-  return () => {
-    responseListeners.delete(listener);
-  };
-}
-
 export interface SearchState {
-  /** Ko'rsatiladigan javob — yangisi hali kelmagan bo'lsa, oldingisi. */
+  /** Ko'rsatiladigan javob — doim {@link SearchState.resultQuery} ga tegishli. */
   data: SearchResponse | undefined;
-  /** Debounce'dan o'tgan, haqiqatda so'ralgan matn. */
+  /**
+   * `data` aynan qaysi so'rovga tegishli. Ekranga chiqadigan hamma narsa —
+   * sarlavha, `Highlight`, a'zolar filtri — shu matnni ishlatishi kerak.
+   */
+  resultQuery: string;
+  /**
+   * Debounce'dan o'tgan, haqiqatda so'ralgan matn. Foydalanuvchi nimani
+   * so'raganini bildiradi (URL sinxroni, "barcha natijalar" havolasi), ekranda
+   * nima turganini emas — buning uchun {@link SearchState.resultQuery} bor.
+   */
   debouncedQuery: string;
   /** So'rov 2 belgidan qisqa (bo'sh so'rov ham shu holatda). */
   isTooShort: boolean;
@@ -71,7 +68,7 @@ export interface SearchState {
   isInitialLoading: boolean;
   /** Yozilyapti yoki so'rov uchmoqda — kichik spinner chiqadi. */
   isSyncing: boolean;
-  /** Ekrandagi natijalar eskirgan (yangi so'rov javobini kutmoqda). */
+  /** Ekranda oldingi so'rov natijalari turibdi (xiralashtirib ko'rsatiladi). */
   isStale: boolean;
   isError: boolean;
   refetch: () => void;
@@ -84,26 +81,23 @@ export function useSearch(workspaceId: string, rawQuery: string): SearchState {
 
   const query = useWorkspaceSearch(workspaceId, debouncedQuery);
 
-  const cached = React.useSyncExternalStore(
-    subscribeResponse,
-    () => lastResponse.get(workspaceId),
-    () => undefined,
-  );
-
-  React.useEffect(() => {
-    if (query.data) rememberResponse(workspaceId, query.data);
-  }, [query.data, workspaceId]);
+  // `keepPreviousData` kalit o'zgarganda oldingi javobni qaytaradi — shu
+  // jumladan ish maydoni almashganda ham. Boshqa ish maydonining natijasini
+  // ko'rsatmaymiz.
+  const result =
+    query.data && query.data.workspaceId === workspaceId ? query.data : undefined;
 
   const isSettling = debouncedQuery !== trimmed;
-  const data = isTooShort ? undefined : (query.data ?? cached);
+  const data = isTooShort ? undefined : result?.response;
 
   return {
     data,
+    resultQuery: data ? (result?.query ?? "") : "",
     debouncedQuery,
     isTooShort,
     isInitialLoading: !isTooShort && !data && !query.isError,
     isSyncing: !isTooShort && (isSettling || query.isFetching),
-    isStale: !isTooShort && !query.data && !!cached,
+    isStale: !!data && result?.query !== debouncedQuery,
     isError: query.isError,
     refetch: () => void query.refetch(),
   };

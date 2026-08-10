@@ -16,6 +16,10 @@ import { cn } from "@/lib/utils";
 /**
  * "…" menu for a task (list row + task panel). Delete is a soft delete per
  * contract §10.2 and always goes through the confirmation dialog.
+ *
+ * `canDelete` **must** come from the `task.delete` code, not from a role and
+ * not from "can I edit this task": the server has no own-task exception for
+ * deletion (`TaskDetailView.delete` → `require_space_perm(…, "task.delete")`).
  */
 export function TaskActionsMenu({
   listId,
@@ -28,6 +32,7 @@ export function TaskActionsMenu({
   listId: string;
   taskId: string;
   taskTitle: string;
+  /** `task.delete`, bo'lim doirasida hal qilingan. */
   canDelete: boolean;
   className?: string;
   onDeleted?: () => void;
@@ -37,10 +42,21 @@ export function TaskActionsMenu({
 
   if (!canDelete) return null;
 
+  /**
+   * `ConfirmDeleteDialog.onConfirm` `() => void` — qaytgan promise tashlab
+   * yuboriladi, shuning uchun bu funksiya HECH QACHON reject qilmasligi
+   * kerak. Aks holda 403/404/409 da dialog ochiq qolib, konsolga
+   * "unhandled rejection" tushardi (`invite-member-dialog` dagi naqsh).
+   */
   const onConfirm = async () => {
-    await deleteTask.mutateAsync(taskId);
-    setConfirmOpen(false);
-    onDeleted?.();
+    try {
+      await deleteTask.mutateAsync(taskId);
+      setConfirmOpen(false);
+      onDeleted?.();
+    } catch {
+      // Xato toast'i mutatsiyadan chiqadi; dialog ochiq qoladi, chunki
+      // 409 (masalan, allaqachon o'chirilgan) qayta urinishga arziydi.
+    }
   };
 
   return (

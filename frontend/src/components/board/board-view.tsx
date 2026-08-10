@@ -43,19 +43,25 @@ type OverData =
   | undefined;
 
 export function BoardView({
+  workspaceId,
   listId,
+  spaceId,
   statuses,
   onOpenTask,
-  canEdit,
 }: {
+  workspaceId: string;
   listId: string;
+  /** `List.space_id`. `undefined` bo'lsa sudrash umuman yoqilmaydi. */
+  spaceId: string | undefined;
   statuses: Status[];
   onOpenTask: (taskId: string) => void;
-  canEdit: boolean;
 }) {
   const { data, isPending, isError, isFetching, refetch } = useGroupedTasks(listId);
   const moveTask = useMoveTask(listId);
-  const { canCreate, canDragSome, canMoveTask } = useBoardPermissions(canEdit);
+  const { canCreateTask, canDragSome, canMoveTask } = useBoardPermissions(
+    workspaceId,
+    spaceId,
+  );
 
   const [activeTask, setActiveTask] = React.useState<Task | null>(null);
   const [dropTarget, setDropTarget] = React.useState<DropTarget | null>(null);
@@ -245,7 +251,7 @@ export function BoardView({
             dropIndex={dropTarget?.statusId === status.id ? dropTarget.index : null}
             isDropTarget={dropTarget?.statusId === status.id}
             isDragActive={activeTask !== null}
-            canCreate={canCreate}
+            canCreate={canCreateTask}
             canMoveTask={canMoveTask}
             focusTaskId={focusTaskId}
             onOpenTask={onOpenTask}

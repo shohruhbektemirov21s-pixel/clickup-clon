@@ -36,7 +36,6 @@ from apps.core.permissions import (
     PERMISSION_BY_CODE,
     grouped_catalog,
 )
-from apps.realtime import events
 from apps.workspaces import services
 from apps.workspaces.models import (
     Folder,
@@ -64,6 +63,7 @@ from apps.workspaces.serializers import (
     StatusSetSerializer,
     WorkspaceSerializer,
 )
+from config.pagination import StandardPagination
 
 # ---------------------------------------------------------------- resolvers
 
@@ -147,7 +147,12 @@ class WorkspaceListCreateView(APIView):
 
 class WorkspaceDetailView(APIView):
     def get(self, request, workspace_id):
-        membership = require_membership(request.user, workspace_id)
+        # `workspace.read` matritsada bor va uni o'chirib bo'ladi — demak u
+        # ISHLASHI shart. Faqat `require_membership` chaqirilsa kod soxta
+        # boshqaruv bo'lib qolardi: matritsada o'chirasan, hech narsa
+        # o'zgarmaydi. Tartib §C.4 bo'yicha saqlanadi — `require_membership_perm`
+        # avval a'zolikni tekshiradi (404), keyin ruxsatni (403).
+        membership = require_membership_perm(request.user, workspace_id, "workspace.read")
         data = WorkspaceSerializer(
             membership.workspace, context={"request": request, "membership": membership}
         ).data
@@ -176,7 +181,7 @@ class WorkspaceDetailView(APIView):
 
 class WorkspaceTreeView(APIView):
     def get(self, request, workspace_id):
-        membership = require_membership(request.user, workspace_id)
+        membership = require_membership_perm(request.user, workspace_id, "workspace.read")
         include_archived = parse_bool(request.query_params.get("archived"), False)
         archived_q = Q() if include_archived else Q(archived=False)
 
@@ -250,32 +255,10 @@ def _owner_count(workspace_id):
     ).count()
 
 
-def _remove_member(membership):
-    """Delete a membership + their assignee/watcher rows in this workspace."""
-    from apps.tasks.models import TaskAssignee, TaskWatcher
-
-    workspace = membership.workspace
-    TaskAssignee.objects.filter(
-        user=membership.user, task__list__space__workspace=workspace
-    ).delete()
-    TaskWatcher.objects.filter(
-        user=membership.user, task__list__space__workspace=workspace
-    ).delete()
-    # DESIGN_PERMISSIONS.md §B.4 invariant: SpaceMember never outlives the
-    # WorkspaceMember it depends on.
-    SpaceMember.objects.filter(
-        user=membership.user, space__workspace=workspace
-    ).delete()
-    user_id = membership.user_id
-    membership.delete()
-    services.refresh_member_count(workspace)
-    # REST endi 404 qaytaradi, lekin ochiq WebSocket soketi a'zolikni faqat
-    # `connect()` da bir marta tekshirgan — xabarsiz u chiqarilgan odamga
-    # `task.*`/`comment.*` freymlarini oqizishda davom etardi. `space_id=None`
-    # ikkala consumer'ni ham (workspace va list) 4403 bilan yopadi.
-    transaction.on_commit(
-        lambda: events.emit_access_revoked(user_id, workspace_id=workspace.id, space_id=None)
-    )
+#: A'zoni chiqarish servis qatlamiga ko'chdi (bitta tranzaksiya + haqiqiy
+#: `on_commit`) — `apps/core/tests/test_access.py` import qiladigan nom
+#: o'zgarishsiz qoldi.
+_remove_member = services.remove_workspace_member
 
 
 ROSTER_RANK = Case(
@@ -458,7 +441,7 @@ class MemberDetailView(APIView):
         # F-2 oxirgi owner invarianti — permission matritsasidan ustun.
         if target.role == WorkspaceRole.OWNER and _owner_count(workspace_id) == 1:
             raise Conflict("Cannot remove the last owner.")
-        _remove_member(target)
+        services.remove_workspace_member(target)
         return Response(status=http.HTTP_204_NO_CONTENT)
 
 
@@ -467,7 +450,7 @@ class MemberLeaveView(APIView):
         membership = require_membership(request.user, workspace_id)
         if membership.role == WorkspaceRole.OWNER and _owner_count(workspace_id) == 1:
             raise Conflict("The last owner cannot leave; transfer ownership first.")
-        _remove_member(membership)
+        services.remove_workspace_member(membership)
         return Response(status=http.HTTP_204_NO_CONTENT)
 
 
@@ -602,19 +585,7 @@ class InvitationAcceptView(APIView):
     def post(self, request):
         invitation = _resolve_invitation_for_token(request)
         workspace = invitation.workspace
-        if WorkspaceMember.objects.filter(workspace=workspace, user=request.user).exists():
-            raise Conflict("You are already a member of this workspace.")
-        member = WorkspaceMember.objects.create(
-            workspace=workspace,
-            user=request.user,
-            role=invitation.role,
-            invited_by=invitation.invited_by,
-        )
-        invitation.status = InvitationStatus.ACCEPTED
-        invitation.accepted_at = timezone.now()
-        invitation.accepted_by = request.user
-        invitation.save(update_fields=["status", "accepted_at", "accepted_by", "updated_at"])
-        services.refresh_member_count(workspace)
+        member = services.accept_invitation(invitation, request.user)
         return Response(
             {
                 "workspace_id": str(workspace.id),
@@ -672,7 +643,18 @@ class SpaceDetailView(APIView):
         return Response(SpaceSerializer(space, context={"request": request}).data)
 
     def patch(self, request, space_id):
-        space, _ = _get_space(request.user, space_id, perm="space.update")
+        space, membership = _get_space(request.user, space_id, perm="space.update")
+        # AppSec: `is_private` — bo'limning ish maydoniga nisbatan CHEGARASI,
+        # oddiy atribut emas. `space.update` (PM `SPACE_MANAGER_GRANTS` orqali
+        # oladi) uni o'zgartirishga yetmaydi, aks holda bo'lim menejeri yopiq
+        # loyihani butun jamoaga ocha olardi. Tekshiruv validatsiyadan OLDIN
+        # (§1.7 "permission before validation") va faqat qiymat HAQIQATAN
+        # o'zgarayotgan bo'lsa — aks holda nomni o'zgartirayotgan PM ning
+        # to'liq obyekt yuboradigan PATCH'i buzilardi.
+        if "is_private" in request.data:
+            wanted = parse_bool(request.data.get("is_private"), space.is_private)
+            if wanted != space.is_private:
+                require_space_perm(membership, space, "space.change_visibility")
         serializer = SpaceSerializer(
             space, data=request.data, partial=True, context={"request": request}
         )
@@ -687,8 +669,19 @@ class SpaceDetailView(APIView):
             raise Conflict("A space with this name already exists in the workspace.")
         if "archived" in request.data:
             serializer.validated_data["archived"] = parse_bool(request.data.get("archived"))
-        serializer.save()
-        return Response(serializer.data)
+        # `is_private` alohida yo'ldan boradi: u atribut emas, CHEGARA.
+        # `serializer.save()` uni jimgina yozib qo'ysa backfill,
+        # `permissions_version` va `access.revoked` tushib qolardi — ochiq
+        # soket endi yopiq bo'lgan bo'limning freymlarini oqizishda davom
+        # etardi. Bitta tranzaksiya: nom/rang va ko'rinish birga yoziladi.
+        wanted_private = serializer.validated_data.pop("is_private", None)
+        with transaction.atomic():
+            serializer.save()
+            if wanted_private is not None and wanted_private != space.is_private:
+                services.set_space_visibility(
+                    space, is_private=wanted_private, actor=request.user
+                )
+        return Response(SpaceSerializer(space, context={"request": request}).data)
 
     def delete(self, request, space_id):
         space, _ = _get_space(request.user, space_id, perm="space.delete")
@@ -717,9 +710,13 @@ class FolderListCreateView(APIView):
         name = serializer.validated_data["name"].strip()
         if Folder.objects.filter(space=space, name__iexact=name).exists():
             raise Conflict("A folder with this name already exists in the space.")
-        services.check_client_id(Folder, request.data.get("id") or None)
+        folder_id = services.check_client_id(
+            Folder,
+            request.data.get("id") or None,
+            scope=Folder.objects.filter(space=space),
+        )
         folder = Folder.objects.create(
-            id=request.data.get("id") or uuid.uuid4(),
+            id=folder_id or uuid.uuid4(),
             space=space,
             name=name,
             color=serializer.validated_data.get("color", "#7B68EE"),
@@ -762,8 +759,7 @@ class FolderDetailView(APIView):
         perm = "folder.delete_cascade" if strategy == "cascade" else "folder.delete"
         folder, _ = _get_folder(request.user, folder_id, perm=perm)
         if strategy == "detach":
-            services.detach_folder_lists(folder)
-            folder.delete()
+            services.detach_folder(folder)
         else:
             services.hard_delete_folder(folder)
         return Response(status=http.HTTP_204_NO_CONTENT)
@@ -802,9 +798,13 @@ class ListListCreateView(APIView):
         )
         if scope.filter(name__iexact=name).exists():
             raise Conflict("A list with this name already exists in this scope.")
-        services.check_client_id(TaskList, request.data.get("id") or None)
+        list_id = services.check_client_id(
+            TaskList,
+            request.data.get("id") or None,
+            scope=TaskList.objects.filter(space=space),
+        )
         task_list = TaskList.objects.create(
-            id=request.data.get("id") or uuid.uuid4(),
+            id=list_id or uuid.uuid4(),
             space=space,
             folder=folder,
             name=name,
@@ -842,9 +842,13 @@ class ListDetailView(APIView):
             )
             if scope.filter(name__iexact=new_name).exclude(pk=task_list.pk).exists():
                 raise Conflict("A list with this name already exists in this scope.")
-        serializer.save()
-        events.emit_list_updated(task_list, actor=request.user, client_id=client_id_of(request))
-        return Response(serializer.data)
+        services.update_list(
+            task_list,
+            serializer.validated_data,
+            actor=request.user,
+            client_id=client_id_of(request),
+        )
+        return Response(ListSerializer(task_list, context={"request": request}).data)
 
     def delete(self, request, list_id):
         task_list, _ = get_list(request.user, list_id, perm="list.delete")
@@ -1085,22 +1089,31 @@ class RolePermissionMatrixView(APIView):
 
         changes = _validate_role_changes(serializer.validated_data["roles"])
         _rank_guard(membership, {role for role, _ in changes})
-
         expected = serializer.validated_data["expected_version"]
-        if workspace.permissions_version != expected:
-            raise Conflict(
-                "The permission matrix changed since you loaded it.",
-                details={
-                    "expected_version": expected,
-                    "current_version": workspace.permissions_version,
-                },
-            )
 
-        services.ensure_role_permissions(workspace)
-        _check_monotonic(_resulting_matrix(workspace, changes))
-        _write_matrix(workspace, changes, request.user)
-        bump_permissions_version(workspace, actor=request.user)
-        return Response(_matrix_payload(workspace))
+        # `expected_version` — optimistik qulf, va u FAQAT qatorni band qilgan
+        # holda o'qilsa ma'noga ega. Tekshiruv tranzaksiyadan tashqarida
+        # bo'lsa, bir xil `expected_version` bilan kelgan ikkita PUT ham
+        # o'tib ketadi va ikkinchisi birinchisini jimgina bosib ketadi —
+        # ya'ni "matritsa siz yuklaganidan keyin o'zgardi" xatosi hech qachon
+        # chiqmaydi. `select_for_update()` SQLite'da no-op (Django uni
+        # tashlab yuboradi), PostgreSQL'da esa ikkinchi PUT birinchisining
+        # commit'ini kutadi va 409 oladi.
+        with transaction.atomic():
+            locked = Workspace.objects.select_for_update().get(pk=workspace.pk)
+            if locked.permissions_version != expected:
+                raise Conflict(
+                    "The permission matrix changed since you loaded it.",
+                    details={
+                        "expected_version": expected,
+                        "current_version": locked.permissions_version,
+                    },
+                )
+            services.ensure_role_permissions(locked)
+            _check_monotonic(_resulting_matrix(locked, changes))
+            _write_matrix(locked, changes, request.user)
+            bump_permissions_version(locked, actor=request.user)
+        return Response(_matrix_payload(locked))
 
 
 class RolePermissionResetView(APIView):
@@ -1136,7 +1149,20 @@ class MyPermissionsView(APIView):
             {
                 "workspace_id": str(workspace_id),
                 "role": membership.role,
+                # IKKI XIL HISOBLAGICH, ATAYLAB ALOHIDA:
+                #   `version`          — SHU ish maydonining matritsa/ko'rinish
+                #                        hisoblagichi, har tahrirda oshadi;
+                #   `catalog_version`  — KOD bilan birga keladigan ruxsat
+                #                        katalogining versiyasi, faqat deploy
+                #                        bilan o'zgaradi.
+                # Ularni solishtirish yoki birlashtirish xato bo'lardi. Katalog
+                # `staleTime/gcTime: Infinity` bilan keshlanadi, shuning uchun
+                # deploy'dan keyin ochiq qolgan tab uni faqat shu maydon orqali
+                # bekor qila oladi. `role-permissions/` da ham bor, lekin u
+                # `workspace.manage_permissions` talab qiladi (default: owner) —
+                # `my-permissions/` esa har bir a'zoda, har ekranda o'qiladi.
                 "version": membership.workspace.permissions_version,
+                "catalog_version": CATALOG_VERSION,
                 "permissions": sorted(my_permissions(membership)),
                 "spaces": [
                     {"space_id": str(space_id), "access": access}
@@ -1149,57 +1175,153 @@ class MyPermissionsView(APIView):
 # ---------------------------------------------------------------- search
 
 
+#: `q` shu uzunlikdan qisqa bo'lsa qidiruv umuman ishga tushmaydi (§13):
+#: bitta harf butun ish maydonini skanerlashga arziydigan so'rov emas.
+SEARCH_MIN_LENGTH = 2
+
+
+class _SearchBucket:
+    """Bitta natija turi: queryset + uni `{"type", "item"}` ga aylantirish."""
+
+    __slots__ = ("type", "queryset", "serializer_class", "_count")
+
+    def __init__(self, type_name, queryset, serializer_class):
+        self.type = type_name
+        self.queryset = queryset
+        self.serializer_class = serializer_class
+        self._count = None
+
+    def count(self) -> int:
+        if self._count is None:
+            self._count = self.queryset.count()
+        return self._count
+
+    def window(self, start, stop, context):
+        rows = list(self.queryset[start:stop])
+        serializer = self.serializer_class(rows, many=True, context=context)
+        return [{"type": self.type, "item": item} for item in serializer.data]
+
+
+class _SearchResults:
+    """Bir necha queryset'ning DANGASA, chegaralangan ketma-ketligi.
+
+    `Paginator` bu obyektdan faqat ikki narsa so'raydi: `count()` va BITTA
+    kesma. Shuning uchun bu yerda hech qachon butun natija to'plami xotiraga
+    olinmaydi: `count` — har bir turdan bittadan `COUNT(*)`, kesma esa faqat
+    joriy sahifadagi qatorlarni `LIMIT/OFFSET` bilan oladi.
+
+    Turlar ketma-ketligi qat'iy (vazifa → ro'yxat → jild → bo'lim), har bir
+    queryset esa yakuniy `id` bo'yicha tartiblangan — aks holda bir xil
+    `updated_at`/`name` li qatorlar sahifalar orasida sakrab, ba'zilari
+    ikki marta, ba'zilari umuman ko'rinmasdi.
+    """
+
+    def __init__(self, buckets, context):
+        self._buckets = buckets
+        self._context = context
+
+    def count(self) -> int:
+        return sum(bucket.count() for bucket in self._buckets)
+
+    def __len__(self) -> int:
+        return self.count()
+
+    def __getitem__(self, window):
+        start, stop = window.start or 0, window.stop
+        results = []
+        offset = 0
+        for bucket in self._buckets:
+            size = bucket.count()
+            lo, hi = max(start - offset, 0), min(stop - offset, size)
+            if lo < hi:
+                results.extend(bucket.window(lo, hi, self._context))
+            offset += size
+            if offset >= stop:
+                break
+        return results
+
+
 class WorkspaceSearchView(APIView):
+    """`GET workspaces/{id}/search/?q=` — docs/API_CONTRACT.md §13.
+
+    UNUMDORLIK (bu endpoint ilgari ish maydoni o'sishi bilan chiziqli edi).
+    Uch narsa qat'iy:
+
+    1. **Sahifalash DB'da.** Ilgari to'rttala queryset to'liq Python
+       ro'yxatiga aylantirilib, keyin `StandardPagination` undan 50 tasini
+       kesib olardi: 50 000 mos vazifa 50 tasini qaytarish uchun 50 000 dict
+       quriladi. Endi `_SearchResults` faqat `COUNT(*)` va bitta
+       `LIMIT/OFFSET` kesmasini ishlatadi.
+    2. **Prefetch.** `TaskSerializer` biriktirilganlar / teglar /
+       kuzatuvchilarni o'qiydi — prefetch'siz bu har bir vazifa uchun 4 ta
+       so'rov (`ListTasksView` buni to'g'ri qiladi, qidiruv qilmasdi).
+    3. **Doira o'zgarmaydi.** `visible_spaces_q(membership)` — mehmon yopiq
+       bo'limni ham, undagi vazifalarni ham, hatto ularning NOMINI ham
+       ko'rmaydi. `count` sahifalashdan oldin filtrlangan (§13).
+
+    FTS haqida (§13 "PostgreSQL full-text"). `Q(title__icontains=q)` —
+    oldingi joker belgili LIKE, uni hech qanday indeks tutolmaydi. To'g'ri
+    yechim `SearchVector`ni GIN indeksli `SearchVectorField` ustida ishlatish,
+    ammo bu `apps/tasks/models.py` ga migratsiya talab qiladi (boshqa
+    muhandisning fayli); indekssiz FTS esa aynan shu sekvensial skanerlashni
+    beradi, ustiga natija TO'PLAMINI ham o'zgartiradi (stemming + so'z
+    chegarasi: "Bosh" endi "Boshlash" ni topmaydi), bu esa §13 dagi "result
+    sets must be equivalent" bandini buzardi. Shuning uchun bu yerda ikkala
+    DB uchun bir xil, chegaralangan `icontains` yo'li qoldi.
+    """
+
     def get(self, request, workspace_id):
-        membership = require_membership(request.user, workspace_id)
+        membership = require_membership_perm(request.user, workspace_id, "workspace.read")
         q = request.query_params.get("q")
         if q is None or q.strip() == "":
             _validation_error("q", "q is required.")
         q = q.strip()
 
+        context = {"request": request}
+        buckets = (
+            self._buckets(membership, workspace_id, q)
+            if len(q) >= SEARCH_MIN_LENGTH
+            else []
+        )
+        paginator = StandardPagination()
+        page = paginator.paginate_queryset(_SearchResults(buckets, context), request)
+        return paginator.get_paginated_response(page)
+
+    def _buckets(self, membership, workspace_id, q):
         from apps.tasks.models import Task
         from apps.tasks.serializers import TaskSerializer
+        from apps.tasks.views import TASK_PREFETCH, TASK_SELECT
 
-        results = []
-        if len(q) >= 2:
-            space_scope = Space.objects.filter(workspace_id=workspace_id).filter(
-                visible_spaces_q(membership)
+        # `visible_spaces_q` mehmon uchun `space_members` ga JOIN qo'shadi,
+        # ya'ni bir bo'lim uning a'zolari soniga qarab takrorlanishi mumkin —
+        # `distinct()` bo'lmasa "Bo'lim" natijasi ro'yxatda bir necha marta
+        # chiqar va `count` ham shishardi.
+        space_scope = (
+            Space.objects.filter(workspace_id=workspace_id)
+            .filter(visible_spaces_q(membership))
+            .distinct()
+        )
+        tasks = (
+            Task.objects.filter(
+                list__space__in=space_scope,
+                archived=False,
+                list__archived=False,
             )
-            tasks = (
-                Task.objects.filter(
-                    list__space__in=space_scope,
-                    archived=False,
-                    list__archived=False,
-                )
-                .filter(Q(title__icontains=q) | Q(description_html__icontains=q))
-                .select_related("status", "list", "created_by", "updated_by")
-                .order_by("-updated_at")
-            )
-            lists = TaskList.objects.filter(
-                space__in=space_scope, archived=False, name__icontains=q
-            ).order_by("name")
-            folders = Folder.objects.filter(
-                space__in=space_scope, archived=False, name__icontains=q
-            ).order_by("name")
-            spaces = space_scope.filter(archived=False, name__icontains=q).order_by("name")
-
-            ctx = {"request": request}
-            results.extend(
-                {"type": "task", "item": TaskSerializer(t, context=ctx).data} for t in tasks
-            )
-            results.extend(
-                {"type": "list", "item": ListSerializer(x, context=ctx).data} for x in lists
-            )
-            results.extend(
-                {"type": "folder", "item": FolderSerializer(f, context=ctx).data}
-                for f in folders
-            )
-            results.extend(
-                {"type": "space", "item": SpaceSerializer(s, context=ctx).data} for s in spaces
-            )
-
-        from config.pagination import StandardPagination
-
-        paginator = StandardPagination()
-        page = paginator.paginate_queryset(results, request)
-        return paginator.get_paginated_response(page)
+            .filter(Q(title__icontains=q) | Q(description_html__icontains=q))
+            .select_related(*TASK_SELECT)
+            .prefetch_related(*TASK_PREFETCH)
+            .order_by("-updated_at", "id")
+        )
+        lists = TaskList.objects.filter(
+            space__in=space_scope, archived=False, name__icontains=q
+        ).order_by("name", "id")
+        folders = Folder.objects.filter(
+            space__in=space_scope, archived=False, name__icontains=q
+        ).order_by("name", "id")
+        spaces = space_scope.filter(archived=False, name__icontains=q).order_by("name", "id")
+        return [
+            _SearchBucket("task", tasks, TaskSerializer),
+            _SearchBucket("list", lists, ListSerializer),
+            _SearchBucket("folder", folders, FolderSerializer),
+            _SearchBucket("space", spaces, SpaceSerializer),
+        ]

@@ -36,16 +36,22 @@ export function CreateEntityDialog({
     e.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) return;
-    if (target.kind === "space") {
-      await createSpace.mutateAsync({ name: trimmed });
-    } else {
-      await createList.mutateAsync({
-        spaceId: target.spaceId,
-        name: trimmed,
-        folderId: target.folderId ?? null,
-      });
+    try {
+      if (target.kind === "space") {
+        await createSpace.mutateAsync({ name: trimmed });
+      } else {
+        await createList.mutateAsync({
+          spaceId: target.spaceId,
+          name: trimmed,
+          folderId: target.folderId ?? null,
+        });
+      }
+      onClose();
+    } catch {
+      // Xato toast'ini mutatsiyaning o'zi ko'rsatadi. Oynani ochiq
+      // qoldiramiz — 403/409 dan keyin foydalanuvchi nomni tuzata olsin va
+      // `mutateAsync` ushlanmagan rejection tashlamasin.
     }
-    onClose();
   };
 
   return (

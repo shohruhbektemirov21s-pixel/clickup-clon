@@ -64,7 +64,10 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
   }, [urlQuery]);
 
   const search = useSearch(workspaceId, value);
-  const { debouncedQuery } = search;
+  // `debouncedQuery` — foydalanuvchi nimani so'radi (URL shu bilan sinxron).
+  // `resultQuery` — ekranda kimning natijalari turibdi. Yangi javob kelguncha
+  // ular farq qiladi, va ko'rinadigan hamma matn `resultQuery` dan olinadi.
+  const { debouncedQuery, resultQuery } = search;
 
   React.useEffect(() => {
     if (debouncedQuery === syncedQuery.current) return;
@@ -81,8 +84,8 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
 
   const groups = React.useMemo(() => groupResults(search.data?.results), [search.data]);
   const members = React.useMemo(
-    () => filterMembers(membersPage?.results ?? [], debouncedQuery, 10),
-    [membersPage, debouncedQuery],
+    () => filterMembers(membersPage?.results ?? [], resultQuery, 10),
+    [membersPage, resultQuery],
   );
 
   const listIds = React.useMemo(
@@ -141,18 +144,23 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
             <p className="mt-1 text-muted-foreground">
               Tarmoqni tekshirib, qayta urinib ko&apos;ring.
             </p>
-            <Button variant="outline" size="sm" className="mt-3" onClick={search.refetch}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={() => search.refetch()}
+            >
               Qayta urinish
             </Button>
           </div>
         ) : search.isInitialLoading ? (
           <ResultsSkeleton />
         ) : total === 0 ? (
-          <NoResultsState query={debouncedQuery} />
+          <NoResultsState query={resultQuery} />
         ) : (
           <div className={cn("space-y-6", search.isStale && "opacity-60 transition-opacity")}>
             <p className="text-sm text-muted-foreground" aria-live="polite">
-              «{debouncedQuery}» bo&apos;yicha {total} ta natija
+              «{resultQuery}» bo&apos;yicha {total} ta natija
             </p>
 
             <ResultGroup title="Vazifalar" count={groups.tasks.length}>
@@ -163,7 +171,7 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
                   task={task}
                   status={statusById.get(task.status_id)}
                   path={taskPath(index, task.list_id)}
-                  query={debouncedQuery}
+                  query={resultQuery}
                 />
               ))}
             </ResultGroup>
@@ -176,7 +184,7 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
                   icon={<ListIcon className="size-4 text-muted-foreground" />}
                   name={list.name}
                   path={joinPath(index.lists.get(list.id)?.path ?? [])}
-                  query={debouncedQuery}
+                  query={resultQuery}
                   meta={
                     <span className="text-xs text-muted-foreground">
                       {list.open_task_count} ochiq / {list.task_count} vazifa
@@ -206,7 +214,7 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
                     icon={<FolderIcon className="size-4 text-muted-foreground" />}
                     name={folder.name}
                     path={joinPath(indexed?.path ?? [])}
-                    query={debouncedQuery}
+                    query={resultQuery}
                   />
                 );
               })}
@@ -226,7 +234,7 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
                   }
                   name={space.name}
                   path=""
-                  query={debouncedQuery}
+                  query={resultQuery}
                 />
               ))}
             </ResultGroup>
@@ -237,7 +245,7 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
                   key={member.user.id}
                   workspaceId={workspaceId}
                   member={member}
-                  query={debouncedQuery}
+                  query={resultQuery}
                 />
               ))}
             </ResultGroup>

@@ -39,7 +39,7 @@ import {
   useWorkspaceActivity,
   useWorkspaceTree,
 } from "@/hooks/queries";
-import { formatDueDate, initials, PRIORITY_META, timeAgo } from "@/lib/format";
+import { displayName, formatDueDate, initials, PRIORITY_META, timeAgo } from "@/lib/format";
 import { can } from "@/lib/permissions";
 import { PROFESSION_LABEL, ROLE_LABEL } from "@/lib/roles";
 import { BUCKET_LABEL, BUCKET_ORDER, groupByDue } from "@/lib/task-buckets";
@@ -183,7 +183,8 @@ export function MemberProfile({
   userId: string;
 }) {
   const { data: me } = useMe();
-  const { data: myPermissions } = useMyPermissions(workspaceId);
+  const permissions = useMyPermissions(workspaceId);
+  const myPermissions = permissions.data;
   const canReadMembers = can(myPermissions, "member.read");
   const canReadTasks = can(myPermissions, "task.read");
 
@@ -193,7 +194,20 @@ export function MemberProfile({
   // Ruxsat javobi kelmaguncha skeleton; ruxsat yo'q bo'lsa profil so'rovi
   // umuman yubormaydi, shuning uchun `isPending` dan OLDIN tekshiriladi —
   // aks holda skeleton abadiy qotib qolardi.
-  if (!myPermissions) return <ProfileSkeleton />;
+  if (permissions.isPending) return <ProfileSkeleton />;
+
+  // 500, uzilgan tarmoq yoki tugagan retry byudjeti: `data` abadiy `undefined`
+  // qoladi. Skeletonda qotib qolmaslik uchun xato holati va qayta urinish.
+  if (permissions.isError || !myPermissions) {
+    return (
+      <ProfileMessage
+        workspaceId={workspaceId}
+        title="Profilni yuklab bo'lmadi."
+        hint="Aloqada muammo bo'lishi mumkin. Qayta urinib ko'ring."
+        onRetry={() => permissions.refetch()}
+      />
+    );
+  }
 
   if (!canReadMembers) {
     return (
@@ -219,7 +233,7 @@ export function MemberProfile({
 
   const { user, role, joined_at, last_active_at, stats, spaces } = profile.data;
   // Mehmonga email `null` keladi (§4) — ism har doim to'ldirilgan.
-  const name = user.full_name || user.email || "Foydalanuvchi";
+  const name = displayName(user);
   const isMe = me?.id === user.id;
 
   return (
@@ -261,7 +275,10 @@ export function MemberProfile({
                 </Badge>
               ) : null}
             </h1>
-            <p className="truncate text-sm text-muted-foreground">{user.email}</p>
+            {/* Mehmon ko'ruvchiga email `null` keladi — bo'sh qator chizmaymiz. */}
+            {user.email ? (
+              <p className="truncate text-sm text-muted-foreground">{user.email}</p>
+            ) : null}
             <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
               <span>
                 Qo&apos;shilgan:{" "}
@@ -639,24 +656,33 @@ function ProfileMessage({
   workspaceId,
   title,
   hint,
+  onRetry,
 }: {
   workspaceId: string;
   title: string;
   hint: string;
+  /** Berilsa — xato holati: qaytadan so'rash tugmasi ham chiqadi. */
+  onRetry?: () => void;
 }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-2 p-16 text-center">
       <h1 className="text-lg font-semibold">{title}</h1>
       <p className="max-w-sm text-sm text-muted-foreground">{hint}</p>
-      <Button
-        className="mt-2"
-        variant="outline"
-        size="sm"
-        nativeButton={false}
-        render={<Link href={`/w/${workspaceId}`} />}
-      >
-        Bosh sahifaga qaytish
-      </Button>
+      <div className="mt-2 flex flex-wrap justify-center gap-2">
+        {onRetry ? (
+          <Button size="sm" onClick={onRetry}>
+            Qayta urinish
+          </Button>
+        ) : null}
+        <Button
+          variant="outline"
+          size="sm"
+          nativeButton={false}
+          render={<Link href={`/w/${workspaceId}`} />}
+        >
+          Bosh sahifaga qaytish
+        </Button>
+      </div>
     </div>
   );
 }

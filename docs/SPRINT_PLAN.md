@@ -1,4 +1,32 @@
-# Clickish — MVP Sprint Plan (binding)
+# Clickish — MVP Sprint Plan (historical, INCOMPLETE)
+
+> ## ⚠️ Read this before citing anything below
+>
+> **This document is incomplete and is no longer binding.** It ends at the heading `## 5. Sprints`
+> with an empty `<!-- CONT -->` marker: **the sprint-by-sprint ticket breakdown was never written.**
+> Everything above §5 — team model, cadence, Definition of Ready/Done, the parallelisation strategy
+> and the Sprint 0 checklist — is real and still worth reading. Everything §5 promises is absent.
+>
+> Consequences you must know before you rely on a sentence in here:
+>
+> - **The "126 tickets / 397 story points" are not in this file.** Only 23 ticket IDs appear
+>   anywhere, all as incidental cross-references. The ID *ranges* on the Conventions line sum to 126
+>   and the per-sprint points sum to 397, but no ticket list exists to check them against. Treat both
+>   numbers as unverifiable. `RISK-01` is cited three times and defined nowhere.
+> - **Four "authoritative" artefacts referenced here do not exist** and never did: `DECISIONS.md`,
+>   `CONTRIBUTING.md`, `CODEOWNERS` (in any location) and `docs/adr/`. Where this plan says a rule is
+>   "documented in `CONTRIBUTING.md`" or "enforced by `CODEOWNERS`", **it is not enforced at all.**
+> - **The `openapi-typescript` pipeline was never built** — see the note in §3. `frontend/src/types/api.ts`
+>   is hand-written and correct; `docs/API_CONTRACT.md` **R32** rules that the hand-written file wins.
+> - **The MSW mock-server workflow was never built** either: there is no `frontend/src/mocks/`, no
+>   `msw` dependency and no `dev:mock` script. The parallelisation strategy in §3 describes a way of
+>   working the team did not end up using.
+> - The plan predates the permission matrix, space members, attachments, activity feeds and the
+>   read-only demo account, none of which appear in its scope.
+>
+> **Do not complete §5 retroactively.** Inventing 126 tickets after the fact would produce a plan
+> that documents nothing that happened. For what actually shipped, read `docs/API_CONTRACT.md` and
+> the git history.
 
 ## Document control
 
@@ -6,11 +34,11 @@
 |---|---|
 | Document | `docs/SPRINT_PLAN.md` |
 | Product | Clickish (ClickUp clone MVP) |
-| Version | 1.0.0 |
-| Status | Binding — supersedes any informal plan |
+| Version | 1.0.0 (incomplete — §5 was never written) |
+| Status | **Historical / incomplete.** Not binding. §1–§4 are accurate as a description of intent; §5 is empty. |
 | Author | Delivery Lead / Engineering Manager |
 | Date issued | 2026-08-07 |
-| Authoritative inputs | `DECISIONS.md` (decision sheet), `docs/API_CONTRACT.md` (to be produced in Sprint 1), `CLAUDE.md` |
+| Authoritative inputs | ~~`DECISIONS.md` (decision sheet)~~ — **this file does not exist in the repo**; `docs/API_CONTRACT.md` (produced, now at v1.3.4 and genuinely binding); `CLAUDE.md` |
 | Sprint 0 | 2026-08-07 (half day) |
 | Delivery window | 2026-08-10 → 2026-09-11 (5 x 1-week sprints) |
 | MVP demo / go-no-go | 2026-09-11, 15:00 |
@@ -25,9 +53,9 @@
 
 ## TL;DR
 
-We ship a working Clickish MVP in five one-week sprints: 15 models, all 64 REST endpoints, both views (List and Board), drag & drop with fractional indexing, comments, realtime over Channels, workspace members/roles/invitations, and search/filtering — behind a versioned API contract that lets frontend and backend run fully in parallel from day two.
+We ship a working Clickish MVP in five one-week sprints: 15 models, all 64 REST endpoints,  <!-- shipped: 19 models, 84 endpoints --> both views (List and Board), drag & drop with fractional indexing, comments, realtime over Channels, workspace members/roles/invitations, and search/filtering — behind a versioned API contract that lets frontend and backend run fully in parallel from day two.
 
-- **126 tickets, 397 story points**, committed against a nominal capacity of 84 points/sprint across 6 people.
+- **126 tickets, 397 story points**, committed against a nominal capacity of 84 points/sprint across 6 people. — *Unverifiable: the ticket list is the §5 that was never written.*
 - **Sprint 1** produces the OpenAPI schema and an MSW mock server, so the frontend never waits on the backend again.
 - **Sprint 2** builds the hierarchy (Workspace → Space → Folder → TaskList) and the status-set system.
 - **Sprint 3** delivers the Task model, the task endpoints and the List view.
@@ -43,7 +71,7 @@ These facts differ from the briefing that produced this plan and are reflected i
 |---|---|
 | `frontend/` already exists and is scaffolded (Next.js 15, TypeScript, Tailwind, ESLint, `components.json` for shadcn/ui, `node_modules` installed) | FE-01/FE-02 are *configure and verify* tickets, not *create the project* tickets. Sprint 0 does not need `create-next-app`. |
 | `backend/` has `manage.py`, `config/` (`settings.py`, `urls.py`, `asgi.py`, `wsgi.py`) and empty apps `accounts`, `comments`, `realtime`, `tasks`, `workspaces` | INF-01 converts the single `settings.py` into a settings package; INF-02 creates the two missing apps. |
-| Apps `core` and `spaces` do **not** exist | INF-02 creates them. Per the decision sheet, `Space`, `Folder`, `TaskList`, `StatusSet`, `Status` live in `apps.spaces`, **not** in `apps.workspaces` as `CLAUDE.md` currently states. DOC-04 fixes `CLAUDE.md`. |
+| Apps `core` and `spaces` do **not** exist | ~~INF-02 creates them… `Space`, `Folder`, `TaskList`, `StatusSet`, `Status` live in `apps.spaces`~~ — **this was decided the other way.** `apps.core` was created; **`apps.spaces` never was**. The hierarchy lives in `apps.workspaces`, exactly as `CLAUDE.md` said. `API_CONTRACT.md` **R1** is the ruling and `docs/DATA_MODEL.md` §1 now matches. `CLAUDE.md` needed no fix. |
 | `requirements.txt` contains `model-bakery`, **not** `factory_boy`; it has no `pytest-cov`, no `ruff`, no `locust` | QA-01 adds `factory_boy` + `pytest-cov`, INF-06 adds `ruff`, INF-16 adds the load-smoke tool. `model-bakery` stays installed but is not used, to avoid two competing fixture idioms. |
 | `.venv` is Python 3.14 with all backend deps installed; there is no global activation | Every command in tickets uses `../.venv/Scripts/python.exe` explicitly. |
 | No Docker | See RISK-01, INF-10, INF-13. |
@@ -142,8 +170,12 @@ Mechanically:
 
 1. **Sprint 1, day 1–2:** PM-1 and BE-1 write `docs/API_CONTRACT.md` v1.0.0 (DOC-01) covering all 64 endpoints — path, method, auth, permitted roles, request body, success envelope, every error code, and one worked example per endpoint.
 2. **Sprint 1, day 2–3:** BE-1 stands up `drf-spectacular` (INF-03). `GET /api/schema/` emits OpenAPI 3.1. Even for endpoints that are not implemented yet, serializers and view stubs are declared so the schema is complete-by-shape. The schema is exported to `docs/openapi.json` by CI on every merge to `main`.
-3. **Sprint 1, day 3:** FE-1 wires `openapi-typescript` (FE-03). `npm run gen:api` reads `docs/openapi.json` and writes `frontend/src/types/api.ts`. This file is generated and never hand-edited.
-4. **Sprint 1, day 3–4:** FE-2 builds the MSW mock server (FE-04) in `frontend/src/mocks/`, with handlers typed by `src/types/api.ts`. Handlers return contract-accurate payloads including the collection envelope and the error envelope.
+3. ~~**Sprint 1, day 3:** FE-1 wires `openapi-typescript` (FE-03). `npm run gen:api` reads `docs/openapi.json` and writes `frontend/src/types/api.ts`. This file is generated and never hand-edited.~~
+   > **NOT BUILT.** There is no `docs/openapi.json`, no `gen:api` script and no `openapi-typescript`
+   > dependency. `frontend/src/types/api.ts` is **hand-written** and mirrors `docs/API_CONTRACT.md`
+   > directly — which is also what `CLAUDE.md` says to do. `API_CONTRACT.md` **R32** rules for the
+   > hand-written file. **This bullet must not be used to reject a hand edit to that file.**
+4. ~~**Sprint 1, day 3–4:** FE-2 builds the MSW mock server (FE-04) in `frontend/src/mocks/`…~~ — **NOT BUILT.** No `msw` dependency, no `frontend/src/mocks/`. Every mention of "mock mode" below is therefore aspirational.
 5. **From then on:** `npm run dev:mock` runs the whole frontend against MSW with zero backend. `npm run dev` runs against `http://localhost:8000`. A single env var `NEXT_PUBLIC_API_MODE=mock|live` selects which. Every FE ticket's DoD says the feature works in **mock** mode; the FE ticket is not blocked on the matching BE ticket.
 6. **Integration** happens continuously, not at the end. From Sprint 2 the Playwright E2E suite runs in `live` mode against a real Django server seeded with `seed_demo`. Any divergence between MSW and the real server is a bug in one of them, and QA-04 (contract-lint) catches the structural half of it automatically.
 
@@ -162,8 +194,8 @@ Mechanically:
 `docs/API_CONTRACT.md` carries a semantic version in its header: `1.0.0` at the end of Sprint 1, incremented every sprint (`1.1.0` S2, `1.2.0` S3, `1.3.0` S4, `1.4.0` S5).
 
 1. **The contract is versioned and the version is in the file header.** Every change bumps it: PATCH for typos/clarifications, MINOR for additive changes (new optional field, new endpoint), MAJOR for breaking changes (renamed/removed field, changed status code, changed error code).
-2. **A change requires a PR that touches `docs/API_CONTRACT.md`.** A PR that changes a serializer, a URL, a status code or an error code without touching the contract is rejected at review. CI enforces the mechanical part: QA-04 fails the build if the generated OpenAPI schema drifts from the committed `docs/openapi.json` without a contract version bump in the same commit.
-3. **Both leads are notified and must approve.** The PR must request review from BE-1 **and** FE-1. GitHub `CODEOWNERS` maps `docs/API_CONTRACT.md` and `docs/openapi.json` to both. No self-merge.
+2. **A change requires a PR that touches `docs/API_CONTRACT.md`.** A PR that changes a serializer, a URL, a status code or an error code without touching the contract is rejected at review. CI enforces the mechanical part: QA-04 fails the build if the generated OpenAPI schema drifts from the committed `docs/openapi.json` without a contract version bump in the same commit. **— NOT IMPLEMENTED.** There is no `docs/openapi.json` and no such CI check; rule 2 is honoured by review only.
+3. **Both leads are notified and must approve.** The PR must request review from BE-1 **and** FE-1. GitHub `CODEOWNERS` maps `docs/API_CONTRACT.md` and `docs/openapi.json` to both. No self-merge. **— NOT IMPLEMENTED.** No `CODEOWNERS` file exists anywhere in the repo, so nothing is auto-requested.
 4. **Breaking changes are forbidden after Sprint 3** unless the EM signs off in writing in the PR. After Sprint 3 the frontend has too much surface built on the contract for a rename to be cheap.
 5. **The MSW handlers must be updated in the same PR** as any contract change, so mock mode never lags the contract.
 6. **Announcement:** the PR author posts the diff summary in the team channel and it is the first item at the next contract sync.
@@ -198,5 +230,21 @@ Not point-estimated; this is setup, done by BE-1, FE-1 and PM-1 together in a ha
 ---
 
 ## 5. Sprints
+
+> **This section was never written, and it is not going to be written retroactively.**
+>
+> The document ended here with a `<!-- CONT -->` continuation marker that was never picked up. The
+> 126 tickets and 397 points cited in the TL;DR and in §2 (Capacity) would have been enumerated in
+> this section; they exist nowhere in the repository. Sprints 1–5 as planned covered roughly:
+> contract + schema (S1), hierarchy and status sets (S2), tasks and the List view (S3), Board view,
+> drag & drop and comments (S4), realtime, search, members/roles/invitations and hardening (S5).
+> That outline is all this section ever contained in any reviewable form.
+>
+> **What actually shipped is a superset of the plan** and includes work the plan never scoped: the
+> granular permission matrix and per-workspace `RolePermission` overrides, space members / PM
+> assignment, task attachments, task and workspace activity feeds, member work profiles, a read-only
+> demo account, WebSocket handshake tickets and space-scoped broadcast. The authoritative records of
+> that work are `docs/API_CONTRACT.md` (§17 rulings R1–R32 in particular),
+> `docs/DESIGN_PERMISSIONS.md` and the git history — not this file.
 
 <!-- CONT -->

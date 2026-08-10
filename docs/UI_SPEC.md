@@ -1,5 +1,60 @@
 # Clickish — UI Specification (MVP)
 
+> # ⛔ SUPERSEDED — HISTORICAL, NOT BINDING
+>
+> **Do not implement from this document, and do not cite it in review.** It was written on
+> 2026-08-07 against a plan the product then diverged from, and it has not been maintained since.
+> `API_CONTRACT.md` **R31** demotes it: where this file disagrees with `docs/API_CONTRACT.md` or with
+> the code, **it loses, silently and always**. Rewriting 193 KB to match reality is not worth it, so
+> it is being kept as a design-history record and marked instead. It is still genuinely useful for
+> *design intent* — spacing, wireframes, interaction detail, drag & drop semantics, accessibility
+> notes — and those parts have largely survived contact with the implementation.
+>
+> ## What is stale (verified against the code on 2026-08-10)
+>
+> | Area | This document says | Reality |
+> |---|---|---|
+> | **CSS framework** | Tailwind **v3**: a `tailwind.config.ts` (§2.2) and `hsl(var(--x) / <alpha-value>)` tokens (26 occurrences), `@tailwind base/components/utilities` (§2.3) | Tailwind **v4**, CSS-first. **There is no `tailwind.config.*` file anywhere in `frontend/`.** `frontend/src/app/globals.css` starts `@import "tailwindcss"` and declares tokens in `@theme`. `<alpha-value>` is a v3-only token and is meaningless in v4. The token *values* are still broadly right; the mechanism is not. |
+> | **UI copy language** | **English** throughout every wireframe (`Log in`, `Add a description…`, `Search members…`) | The shipped product is **entirely Uzbek** (`<html lang="uz">`). Treat every string here as a placeholder for the Uzbek copy in the components. |
+> | **WebSocket auth** | `ws://<host>/ws/list/{list_id}/?token=<access>` (TL;DR) | `?ticket=<opaque>` — a single-use 30-second handshake ticket from `POST /api/v1/realtime/ticket/`. `?token=` still works but is **deprecated** (it puts a full access token in every proxy log). See `API_CONTRACT.md` §15.1. |
+> | **WebSocket channels** | one list socket only | Two channels: `/ws/list/{list_id}/` **and** `/ws/workspaces/{workspace_id}/`, over four server-side groups. Frames are space-scoped and never carry `email`. `API_CONTRACT.md` §15. |
+> | **Permission model** | roles gate the UI: "`owner > admin > member > guest` gate UI affordances" (TL;DR) | The UI gates on **permission codes** from `GET workspaces/{id}/my-permissions/` (`frontend/src/lib/permissions.ts::can` / `canInSpace`), because the role→permission matrix is **editable per workspace**. Space-local `manager`/`viewer` access has no representation here at all. As of 2026-08-10 exactly one component still branches on `my_role` (`shell/workspace-home.tsx`); that is the tail of a migration, not the design. |
+> | **Framework version** | Next.js 15 (doc control, §3.1) | Next **16.3.0**, React **19.2.8**. |
+> | **Drag & drop deps** | mandates `@dnd-kit/accessibility` | Not a dependency. Shipped: `@dnd-kit/core`, `/sortable`, `/modifiers`, `/utilities`. |
+> | **Task detail route** | intercepting route `/w/[id]/l/[listId]/t/[taskId]` with an `@panel` slot | Shipped as a **`?task=` search param** on the list page — same slide-over, different routing. |
+> | **Error/loading boundaries** | §3.2 mandates `loading.tsx` / `error.tsx` / `not-found.tsx` / `global-error.tsx` per segment | **None of these files exist.** |
+>
+> ## Screens that shipped and are specified NOWHERE here
+>
+> This document contains **zero** occurrences of `attachment`, `profession`, `ticket`,
+> `permission matrix` or `member profile`. The following are live product surfaces with no spec:
+>
+> - **Permission matrix editor** — `/w/[id]/settings/permissions` (`components/settings/permissions-matrix.tsx`)
+> - **Member profile** — `/w/[id]/u/[userId]` (role, tenure, counters, per-space breakdown)
+> - **Space members / PM assignment** — `/w/[id]/s/[spaceId]/members`
+> - **Task attachments** — upload, list and delete inside the task panel
+> - **Workspace activity feed** — `GET workspaces/{id}/activity/`
+> - **Demo login** — the read-only demo account entry point
+> - **Marketing landing page** — `components/marketing/`
+>
+> Conversely, several routes specified in §3.1 were never built (`/settings/general`,
+> `/settings/tags`, the two status-editor routes, `/settings/account`, `/logout`).
+>
+> ## The document is also incomplete
+>
+> It **ends at §6.8** (drag & drop). §7–§18 do not exist, yet §21 of the doc-control block cites
+> "§10" for the component inventory and the TL;DR cites "§5" for query keys. Any cross-reference in
+> this file to a section above §6 is a dangling pointer.
+>
+> ## What to read instead
+>
+> | For | Read |
+> |---|---|
+> | Endpoints, payloads, permissions, WebSocket frames | **`docs/API_CONTRACT.md`** (binding) |
+> | The permission model in depth | `docs/DESIGN_PERMISSIONS.md` |
+> | Persistence, field names and types | `docs/DATA_MODEL.md` |
+> | What the UI actually does | **the components under `frontend/src/`** — they are the only current UI truth |
+
 Binding front-end specification. Derived from and subordinate to the **Decision Sheet** and `docs/API_CONTRACT.md`.
 Every field name, role, priority value, status type, endpoint, WebSocket event and design token used here is copied verbatim from the Decision Sheet.
 
@@ -9,17 +64,18 @@ Every field name, role, priority value, status type, endpoint, WebSocket event a
 | --- | --- |
 | Document | `docs/UI_SPEC.md` |
 | Product | Clickish (ClickUp clone MVP) |
-| Version | 1.0.0 |
-| Status | Binding |
-| Date | 2026-08-07 |
+| Version | 1.0.0 (frozen) |
+| Status | **SUPERSEDED — historical, not binding** (`API_CONTRACT.md` R31). Frozen 2026-08-10. |
+| Date | 2026-08-07 (last substantive edit); superseded 2026-08-10 |
 | Owner | Product Design + Frontend Architecture |
-| Authority | Decision Sheet > `docs/API_CONTRACT.md` > this document > implementation |
-| Stack | Next.js 15 (App Router), TypeScript, Tailwind CSS, shadcn/ui, TanStack Query, Zustand, native WebSocket |
+| Authority | **None.** Formerly "Decision Sheet > `docs/API_CONTRACT.md` > this document > implementation". `docs/API_CONTRACT.md` and the code both outrank it now. |
+| Stack | ~~Next.js 15, Tailwind CSS (v3 config)~~ → **Next.js 16.3, React 19.2, Tailwind v4 (CSS-first, no config file)**, TypeScript, shadcn/ui, TanStack Query, Zustand, native WebSocket |
 | Drag & drop library | **dnd-kit** (`@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/modifiers`, `@dnd-kit/accessibility`) — chosen, no alternative permitted |
 | Icon set | `lucide-react` (ships with shadcn/ui) |
 | Screens specced | 12 (S1–S12) |
 | Reusable components | 68 (see §10) |
 | Supersedes | none |
+| Superseded by | `docs/API_CONTRACT.md` (contract) + `frontend/src/` (UI truth) |
 
 ## TL;DR
 
@@ -27,9 +83,9 @@ Every field name, role, priority value, status type, endpoint, WebSocket event a
 * Task detail is **never a full page navigation**; it is a **720px slide-over panel from the right** at route `/w/[workspaceId]/l/[listId]/t/[taskId]`, rendered as an intercepting route so the underlying list/board stays mounted.
 * Server state lives **exclusively** in TanStack Query, keyed by the canonical keys in §5. UI state (sidebar open, active view, panel state, drag state, filter draft) lives in Zustand. There is no third state container.
 * Drag & drop is **optimistic**: compute neighbours in the client, send `before_id`/`after_id` to `PATCH /api/v1/tasks/{id}/move/`, reconcile with the server-returned `position`, roll back on error. Cross-column drops also change `status_id`.
-* Realtime is a native `WebSocket` to `ws://<host>/ws/list/{list_id}/?token=<access>` with exponential-backoff reconnect and a full refetch on resume. Own echoes are suppressed with `X-Client-Id` matched against `actor.client_id`.
+* Realtime is a native `WebSocket` to `ws://<host>/ws/list/{list_id}/?token=<access>` with exponential-backoff reconnect and a full refetch on resume. Own echoes are suppressed with `X-Client-Id` matched against `actor.client_id`. — **STALE:** auth is now `?ticket=<opaque>` (single-use, 30 s) and there is a second `/ws/workspaces/{id}/` channel. Echo suppression is still correct. See `API_CONTRACT.md` §15.
 * Design system is shadcn/ui over Tailwind with the ClickUp-purple `#7B68EE` primary, HSL-channel CSS variables, and a `dark` class strategy. Brand purple does not invert.
-* Roles `owner > admin > member > guest` gate UI affordances; the client hides what the API would reject, and always still handles a `403 permission_denied` envelope.
+* Roles `owner > admin > member > guest` gate UI affordances; the client hides what the API would reject, and always still handles a `403 permission_denied` envelope. — **STALE:** gating is by **permission code** from `GET workspaces/{id}/my-permissions/`, not by role name, because the role→permission matrix is editable per workspace. "Still handles the `403`" remains correct and is still mandatory.
 
 ---
 

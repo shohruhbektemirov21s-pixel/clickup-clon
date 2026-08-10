@@ -1,7 +1,28 @@
 name: Security
 
-# Xavfsizlik skanerlari. Hozircha HAMMASI non-blocking (continue-on-error),
-# chunki mavjud kod bazasi hali to'liq tozalanmagan. Natijalar Job Summary'da.
+# Xavfsizlik skanerlari — HAMMASI BLOKLOVCHI.
+#
+# Ilgari bu faylda oltita `continue-on-error: true` bor edi (bog'liqliklarni
+# o'rnatish qadamining o'zi ham), ya'ni workflow HAR QANDAY holatda yashil
+# bo'lardi: commit qilingan sir ham, kritik CVE ham, `DEBUG=True` ham
+# main'ga bemalol tushardi. "Hozircha" deb yozilgan, muddati ko'rsatilmagan
+# istisno — bu doimiy istisno.
+#
+# Endi tartib boshqacha:
+#
+#   * lint / statik tahlil / sir skaneri — bloklovchi, istisnosiz;
+#   * CVE skanerlari — bloklovchi, LEKIN chegara (severity) va ANIQ,
+#     SANALI, IZOHLI ruxsat ro'yxati bilan. Har qanday advisory'da yiqilish
+#     ishlamaydi (upstream bir kechada CVE e'lon qiladi va butun jamoa
+#     to'xtaydi), butunlay o'chirib qo'yish esa skanerni ma'nosiz qiladi.
+#     O'rtadagi yagona halol variant — ro'yxatga yozilgan, sababi va sanasi
+#     ko'rsatilgan istisno.
+#
+# Ruxsat ro'yxatiga yozish tartibi (har uch skaner uchun bir xil):
+#   1. advisory ID sini pastdagi mos ro'yxatga qo'shing;
+#   2. yoniga SANA + NEGA (nima uchun bizga ta'sir qilmaydi yoki nega hozir
+#      tuzatib bo'lmaydi) yozing;
+#   3. qayta ko'rib chiqish sanasini yozing. Sanasiz istisno — bypass.
 on:
   schedule:
     # Har dushanba 04:00 UTC
@@ -18,6 +39,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ==========================================================================
+  # Python — pip-audit / bandit / check --deploy
+  # ==========================================================================
   python:
     name: Python — pip-audit / bandit / check --deploy
     runs-on: ubuntu-latest
@@ -26,11 +50,29 @@ jobs:
     # CI-only dummy qiymatlar; hech qanday haqiqiy sir yo'q.
     env:
       DEBUG: "False"
-      SECRET_KEY: "ci-dummy-not-a-real-secret-3f8a1c9e4b7d2056"
+      SECRET_KEY: "ci-dummy-not-a-real-secret-3f8a1c9e4b7d2056-padded-to-fifty-plus"
       ALLOWED_HOSTS: "localhost,127.0.0.1"
       DATABASE_URL: "sqlite:///ci-check.sqlite3"
       REDIS_URL: ""
       CORS_ALLOWED_ORIGINS: "http://localhost:3000"
+
+      # ------------------------------------------------------------------
+      # pip-audit ruxsat ro'yxati — bo'sh joy bilan ajratilgan advisory ID lar.
+      #
+      # pip-audit'da severity filtri YO'Q (PyPI/OSV advisory'larining ko'pida
+      # CVSS umuman bo'lmaydi), shuning uchun "chegara" aynan shu ro'yxat:
+      # topilgan har bir zaiflik yo tuzatiladi, yo bu yerda sanasi bilan
+      # yoziladi. Boshqa yo'l yo'q.
+      #
+      # 2026-08-10: ro'yxat BO'SH. Diqqat — bu sana holatiga skanerni CI'dan
+      # tashqarida ishga tushirib bo'lmadi (korporativ TLS proksisi pypi.org
+      # sertifikatini almashtiradi), ya'ni birinchi CI runi yangi zaiflik
+      # ko'rsatishi mumkin. Ko'rsatsa: tuzating yoki pastga sanasi bilan
+      # yozing — `continue-on-error` ni QAYTARMANG.
+      #
+      # Format: PYSEC-0000-000 / GHSA-xxxx-xxxx-xxxx
+      #   <ID>   # 2026-08-10 sabab ... ; qayta ko'rish: 2026-09-10
+      PIP_AUDIT_IGNORE: ""
 
     steps:
       - name: Checkout
@@ -43,42 +85,127 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
+      # Bloklovchi. Ilgari bu qadam ham `continue-on-error` edi — o'rnatish
+      # yiqilsa keyingi skanerlar "buyruq topilmadi" bilan YASHIL bo'lardi.
       - name: Bog'liqliklarni o'rnatish
-        continue-on-error: true
         run: |
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
           pip install pip-audit bandit
 
-      - name: pip-audit (Python bog'liqliklari)
-        continue-on-error: true
+      - name: pip-audit (bloklovchi, ruxsat ro'yxati bilan)
+        shell: bash
         run: |
-          echo "## pip-audit (backend/requirements.txt)" >> "$GITHUB_STEP_SUMMARY"
+          ignore_args=""
+          for id in ${PIP_AUDIT_IGNORE}; do
+            ignore_args="${ignore_args} --ignore-vuln ${id}"
+          done
+          {
+            echo "## pip-audit (backend/requirements.txt)"
+            echo ""
+            echo "Ruxsat ro'yxati: \`${PIP_AUDIT_IGNORE:-(bo'sh)}\`"
+            echo ""
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          status=0
+          pip-audit -r backend/requirements.txt --progress-spinner off ${ignore_args} > audit.txt 2>&1 || status=$?
+          cat audit.txt
+          cat audit.txt >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          pip-audit -r backend/requirements.txt --progress-spinner off 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" -ne 0 ]; then
+            echo "::error::pip-audit zaiflik topdi. Tuzating yoki security.yml dagi PIP_AUDIT_IGNORE ga SANASI va SABABI bilan yozing."
+          fi
+          exit "$status"
 
-      - name: bandit (statik xavfsizlik tahlili)
-        continue-on-error: true
+      # Chegara: `-ll` = MEDIUM va undan yuqori jiddiylik, `-ii` = MEDIUM va
+      # undan yuqori ishonch. 2026-08-10 da o'lchandi: bu chegarada NOL topilma.
+      #
+      # Chegaradan pastda qolgani (ataylab kechiktirilgan):
+      #   990 x B101 assert_used   — testlardagi `assert`, bandit ularni
+      #                              farqlamaydi. Ma'nosiz shovqin.
+      #    15 x B105 + 1 x B106    — "hardcoded password": aslida throttle
+      #                              scope nomlari va test konstantalari.
+      #     3 x B311 random        — avatar rangi tanlashda, kriptografiya emas.
+      # Hammasi LOW. Ularni yopish uchun `# nosec` izohlari kerak, ular esa
+      # `backend/apps/**` egalarining ishi.
+      - name: bandit (bloklovchi, MEDIUM+)
+        shell: bash
         run: |
-          echo "## bandit (backend/apps, backend/config)" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## bandit (backend/apps, backend/config · severity>=MEDIUM, confidence>=MEDIUM)"
+            echo ""
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          status=0
+          bandit -r backend/apps backend/config -ll -ii > bandit.txt 2>&1 || status=$?
+          cat bandit.txt
+          cat bandit.txt >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          bandit -r backend/apps backend/config -ll 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
-      - name: Django check --deploy
-        continue-on-error: true
+      # Bloklovchi, `--fail-level WARNING` bilan: `check --deploy` ning butun
+      # ma'nosi OGOHLANTIRISHLARDA (SECURE_SSL_REDIRECT, HSTS, cookie
+      # bayroqlari, DEBUG). Ular xato darajasiga ko'tarilmaydi, ya'ni
+      # `--fail-level` siz bu qadam hech qachon yiqilmaydi.
+      #
+      # Yagona istisno — `drf_spectacular.W002` (2026-08-10 holatiga 55 ta,
+      # hammasi "unable to guess serializer"). U xavfsizlik emas, sxema
+      # backlog'i va o'zining ratchet'i bor: `.github/workflows/ci.yml` →
+      # "OpenAPI sxemasi (ratchet)" qadami sonining oshishiga yo'l qo'ymaydi.
+      - name: Django check --deploy (bloklovchi)
         working-directory: backend
         run: |
-          echo "## manage.py check --deploy" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          python manage.py check --deploy 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          python manage.py check --deploy 2>&1 | tee deploy-check.log || true
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import sys
 
+          log = pathlib.Path("deploy-check.log").read_text(encoding="utf-8", errors="replace")
+          issues = re.findall(r"^\?: \((?P<code>[\w.]+)\)\s*(?P<msg>.*)$", log, re.MULTILINE)
+
+          # Ataylab kechiktirilgan, sanasi bilan: sxema backlog'i ci.yml da
+          # ratchet qilingan. Boshqa hech nima bu yerda kechirilmaydi.
+          ALLOWED_PREFIXES = ("drf_spectacular.",)  # 2026-08-10; qayta ko'rish: DoD 85% bilan birga
+
+          blocking = [(c, m) for c, m in issues if not c.startswith(ALLOWED_PREFIXES)]
+          allowed = [c for c, _ in issues if c.startswith(ALLOWED_PREFIXES)]
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+              fh.write("## manage.py check --deploy\n\n")
+              fh.write(f"Kechirilgan (sxema backlog'i): {len(allowed)}\n\n")
+              if blocking:
+                  fh.write("**Bloklovchi topilmalar:**\n\n```\n")
+                  fh.write("\n".join(f"{c}: {m}" for c, m in blocking))
+                  fh.write("\n```\n")
+              else:
+                  fh.write("Bloklovchi topilma yo'q.\n")
+
+          for code, msg in blocking:
+              print(f"::error::check --deploy: {code} {msg}")
+          sys.exit(1 if blocking else 0)
+          PY
+
+  # ==========================================================================
+  # Frontend — npm audit
+  # ==========================================================================
   frontend:
     name: Frontend — npm audit
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
+    env:
+      # npm audit ruxsat ro'yxati — vergul bilan ajratilgan GHSA ID lar.
+      # `npm audit` da `--ignore` yo'q, shuning uchun filtrlash `--json`
+      # chiqishi ustidan qilinadi (pastdagi skript).
+      #
+      # 2026-08-10: ro'yxat BO'SH. pip-audit'dagi kabi, bu sana holatiga
+      # skanerni CI'dan tashqarida ishga tushirib bo'lmadi (korporativ TLS
+      # proksisi registry.npmjs.org sertifikatini almashtiradi).
+      #
+      # Format: GHSA-xxxx-xxxx-xxxx  # 2026-08-10 sabab...; qayta ko'rish: ...
+      NPM_AUDIT_ALLOW: ""
 
     steps:
       - name: Checkout
@@ -91,36 +218,105 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: npm audit (--audit-level=high)
-        continue-on-error: true
+      # Chegara: HIGH va CRITICAL. MODERATE/LOW ni bloklash — bu o'lchamdagi
+      # `node_modules` uchun kunlik shovqin; ular Job Summary'da ko'rinadi va
+      # Dependabot orqali oqim bilan tuzatiladi (.github/dependabot.yml).
+      - name: npm audit (bloklovchi, HIGH+)
         working-directory: frontend
         run: |
-          echo "## npm audit (frontend, level=high)" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          npm audit --audit-level=high 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          npm audit --json > audit.json || true
+          node - <<'JS'
+          const fs = require("fs");
 
+          const allow = (process.env.NPM_AUDIT_ALLOW || "")
+            .split(",").map((s) => s.trim()).filter(Boolean);
+          const report = JSON.parse(fs.readFileSync("audit.json", "utf8"));
+
+          if (report.error) {
+            console.log(`::error::npm audit ishlamadi: ${report.error.summary ?? "noma'lum xato"}`);
+            process.exit(1);
+          }
+
+          const BLOCKING = new Set(["high", "critical"]);
+          const rows = [];
+          for (const [name, v] of Object.entries(report.vulnerabilities ?? {})) {
+            if (!BLOCKING.has(v.severity)) continue;
+            const ids = (v.via ?? [])
+              .filter((x) => typeof x === "object" && x.url)
+              .map((x) => String(x.url).split("/").pop());
+            if (ids.length > 0 && ids.every((id) => allow.includes(id))) continue;
+            rows.push({ name, severity: v.severity, ids: ids.join(", ") || "(transitive)" });
+          }
+
+          const meta = report.metadata?.vulnerabilities ?? {};
+          const summary = [
+            "## npm audit (frontend)",
+            "",
+            `Chegara: **high+**. Ruxsat ro'yxati: \`${allow.join(", ") || "(bo'sh)"}\``,
+            "",
+            "| severity | soni |",
+            "|---|---|",
+            ...["critical", "high", "moderate", "low", "info"].map(
+              (s) => `| ${s} | ${meta[s] ?? 0} |`,
+            ),
+            "",
+          ];
+          if (rows.length > 0) {
+            summary.push("**Bloklovchi:**", "", "| paket | severity | advisory |", "|---|---|---|");
+            for (const r of rows) summary.push(`| ${r.name} | ${r.severity} | ${r.ids} |`);
+          } else {
+            summary.push("Bloklovchi zaiflik yo'q.");
+          }
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary.join("\n") + "\n");
+
+          for (const r of rows) {
+            console.log(`::error::npm audit ${r.severity}: ${r.name} (${r.ids})`);
+          }
+          process.exit(rows.length > 0 ? 1 : 0);
+          JS
+
+  # ==========================================================================
+  # Sirlar — gitleaks
+  # ==========================================================================
   secrets:
     name: Sirlar — gitleaks
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
+      # `fetch-depth: 0` kerak: `schedule` / `workflow_dispatch` da gitleaks
+      # BUTUN tarixni skanerlaydi. `pull_request` da esa u faqat shu PR ning
+      # commitlarini ko'radi — bu ataylab shunday: tarixdagi eski sir har bir
+      # PR ni abadiy bloklab qo'ymasligi kerak, lekin haftalik audit uni
+      # baribir ko'rsatadi.
       - name: Checkout (to'liq tarix)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: gitleaks
-        continue-on-error: true
+      # BLOKLOVCHI. Sir — tuzatib bo'lmaydigan hodisa: u commit qilingan
+      # zahoti "aylantirish kerak" holatiga o'tadi. Uni yashil o'tkazib
+      # yuborishning hech qanday oqlanishi yo'q.
+      #
+      # Namuna/dummy qiymatlar `.github/gitleaks.toml` da SANASI bilan
+      # ro'yxatga olingan.
+      - name: gitleaks (bloklovchi)
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: ${{ github.workspace }}/.github/gitleaks.toml
           # Faqat GitHub Organization repolari uchun kerak (public/shaxsiy repo — bepul).
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
       - name: Natijani Job Summary'ga yozish
         if: always()
         run: |
-          echo "## gitleaks" >> "$GITHUB_STEP_SUMMARY"
-          echo "Skaner holati: \`${{ job.status }}\`. Batafsil log yuqoridagi 'gitleaks' qadamida." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## gitleaks"
+            echo ""
+            echo "Holat: \`${{ job.status }}\` (BLOKLOVCHI)."
+            echo ""
+            echo "Yiqilgan bo'lsa: topilgan qiymatni **darhol aylantiring**, keyin"
+            echo "tuzating. Agar bu haqiqiy sir bo'lmasa — \`.github/gitleaks.toml\`"
+            echo "ga sanasi va sababi bilan yozing, \`continue-on-error\` qo'shmang."
+          } >> "$GITHUB_STEP_SUMMARY"
