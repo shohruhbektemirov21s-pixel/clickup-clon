@@ -219,11 +219,33 @@ def clear_permission_cache():
 # --------------------------------------------------------------- has / require
 
 
+#: Faqat o'qish hisobiga (`User.is_readonly`, ya'ni demo) ruxsat etilgan kodlar.
+#: Bu ro'yxatga kirmagan HAR QANDAY kod rad etiladi — yangi yozish kodi
+#: qo'shilganda u avtomatik taqiqlanadi, ya'ni ro'yxat "fail-closed".
+READONLY_ALLOWED_CODES = frozenset(
+    {
+        "workspace.read",
+        "member.read",
+        "invitation.read",
+        "space.read",
+        "space.read_private",
+        "task.read",
+        "task.view_deleted",
+        "attachment.read",
+    }
+)
+
+
 def has_perm(membership, code: str) -> bool:
     from apps.core.permissions import PERMISSION_BY_CODE
 
     if settings.DEBUG and code not in PERMISSION_BY_CODE:
         raise ImproperlyConfigured(f"Noma'lum ruxsat kodi: {code}")
+    # Demo hisobi rolidan qat'i nazar hech narsani o'zgartira olmaydi. Bayroq
+    # faqat CHEKLAYDI: rol bermagan o'qish huquqini qo'shib qo'ymaslik uchun
+    # tekshiruv davom etadi va natija kesishma bo'ladi.
+    if getattr(membership.user, "is_readonly", False) and code not in READONLY_ALLOWED_CODES:
+        return False
     if membership.role == WorkspaceRole.OWNER:
         return True  # AD-3 — owner lock, DB'ga qaralmaydi
     cached = getattr(membership, "_perm_set", None)
@@ -248,9 +270,16 @@ def require_membership_perm(user, workspace_id, code: str):
 def my_permissions(membership) -> frozenset[str]:
     from apps.core.permissions import ALL_CODES
 
-    if membership.role == WorkspaceRole.OWNER:
-        return ALL_CODES
-    return effective_permissions(membership.workspace).get(membership.role, frozenset())
+    granted = (
+        ALL_CODES
+        if membership.role == WorkspaceRole.OWNER
+        else effective_permissions(membership.workspace).get(membership.role, frozenset())
+    )
+    # `has_perm` bilan bir xil kesishma: aks holda UI yozish tugmalarini
+    # ko'rsatib, bosilganda 403 olardi.
+    if getattr(membership.user, "is_readonly", False):
+        return granted & READONLY_ALLOWED_CODES
+    return granted
 
 
 # ------------------------------------------------------------- space scoping
@@ -279,6 +308,10 @@ def has_space_perm(membership, space, code: str) -> bool:
     - `contributor` → workspace roli bo'yicha odatiy `has_perm`
     - `manager`  → contributor + `SPACE_MANAGER_GRANTS` lokal yoqiladi
     """
+    # Faqat o'qish bayrog'i owner va manager short-circuit'laridan ham ustun —
+    # aks holda demo hisob bo'lim ichida yozib yuborardi.
+    if getattr(membership.user, "is_readonly", False) and code not in READONLY_ALLOWED_CODES:
+        return False
     if membership.role == WorkspaceRole.OWNER:
         return True
     access = space_access_of(membership, space)

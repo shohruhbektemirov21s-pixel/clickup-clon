@@ -489,11 +489,19 @@ def _demo_rate(rate):
     return mock.patch.dict(SimpleRateThrottle.THROTTLE_RATES, {"demo": rate})
 
 
+def make_demo_user(email=None, full_name=""):
+    """Demo tugmasi faqat `is_readonly` hisobga kiritadi (views.DemoLoginView)."""
+    user = make_user(email or DEMO_EMAIL, full_name)
+    user.is_readonly = True
+    user.save(update_fields=["is_readonly"])
+    return user
+
+
 @override_settings(DEMO_MODE=True, DEMO_USER_EMAIL=DEMO_EMAIL)
 def test_demo_login_returns_tokens(api, db):
     from apps.workspaces.services import bootstrap_workspace
 
-    user = make_user(DEMO_EMAIL, "Demo Foydalanuvchi")
+    user = make_demo_user(DEMO_EMAIL, "Demo Foydalanuvchi")
     workspace = bootstrap_workspace(user, name="Demo ish maydoni")
 
     response = api.post(DEMO, {}, format="json")
@@ -512,7 +520,7 @@ def test_demo_login_returns_tokens(api, db):
 
 @override_settings(DEMO_MODE=False, DEMO_USER_EMAIL=DEMO_EMAIL)
 def test_demo_login_disabled_is_404(api, db):
-    make_user(DEMO_EMAIL)
+    make_demo_user()
     response = api.post(DEMO, {}, format="json")
     assert_error(response, 404, "not_found")
 
@@ -526,7 +534,7 @@ def test_demo_login_missing_user_is_404(api, db):
 @override_settings(DEMO_MODE=True, DEMO_USER_EMAIL=DEMO_EMAIL)
 def test_demo_login_refuses_staff_account(api, db):
     """Eskalatsiya bloki: demo tugmasi hech qachon staff hisob bermaydi."""
-    user = make_user(DEMO_EMAIL)
+    user = make_demo_user()
     user.is_staff = True
     user.save(update_fields=["is_staff"])
     assert_error(api.post(DEMO, {}, format="json"), 404, "not_found")
@@ -543,15 +551,69 @@ def test_demo_login_refuses_staff_account(api, db):
 
 @override_settings(DEMO_MODE=True, DEMO_USER_EMAIL=DEMO_EMAIL)
 def test_demo_login_inactive_user_is_404(api, db):
-    user = make_user(DEMO_EMAIL)
+    user = make_demo_user()
     user.is_active = False
     user.save(update_fields=["is_active"])
     assert_error(api.post(DEMO, {}, format="json"), 404, "not_found")
 
 
 def test_demo_login_is_throttled(api, db):
-    make_user(DEMO_EMAIL)
+    make_demo_user()
     with override_settings(DEMO_MODE=True, DEMO_USER_EMAIL=DEMO_EMAIL), _demo_rate("2/hour"):
         assert api.post(DEMO, {}, format="json").status_code == 200
         assert api.post(DEMO, {}, format="json").status_code == 200
         assert_error(api.post(DEMO, {}, format="json"), 429, "throttled")
+
+
+# ---------------------------------------------------------------------------
+# Faqat o'qish hisobi (`is_readonly`) — demo tugmasi shunga kiritadi
+# ---------------------------------------------------------------------------
+
+
+def test_readonly_account_cannot_write_even_as_owner(env):
+    """Bayroq rolidan ustun: egasi bo'lsa ham hech narsa o'zgartira olmaydi."""
+    from apps.core.access import get_membership, has_perm
+
+    env.owner.is_readonly = True
+    env.owner.save(update_fields=["is_readonly"])
+    membership = get_membership(env.owner, env.workspace.id)
+
+    assert has_perm(membership, "task.read") is True
+    for code in ("task.create", "task.delete", "space.create", "workspace.delete"):
+        assert has_perm(membership, code) is False, code
+
+    response = env.owner_client.post(
+        f"/api/v1/lists/{env.list.id}/tasks/", {"title": "Yozmoqchi"}, format="json"
+    )
+    assert_error(response, 403, "permission_denied")
+
+
+def test_readonly_flag_only_removes_permissions(env):
+    """Rol bermagan o'qish huquqi bayroq tufayli QO'SHILIB qolmasin."""
+    from apps.core.access import get_membership, has_perm, my_permissions
+
+    env.guest.is_readonly = True
+    env.guest.save(update_fields=["is_readonly"])
+    membership = get_membership(env.guest, env.workspace.id)
+
+    # Mehmon roli yopiq bo'limlarni ko'rmaydi — bayroq buni o'zgartirmaydi.
+    assert has_perm(membership, "space.read_private") is False
+    assert has_perm(membership, "member.read") is False  # guest'da yo'q
+
+    codes = my_permissions(membership)
+    assert "task.read" in codes
+    assert not any(c.endswith((".create", ".update", ".delete")) for c in codes)
+
+
+def test_readonly_account_still_reads_tasks(env):
+    env.member.is_readonly = True
+    env.member.save(update_fields=["is_readonly"])
+    response = env.member_client.get(f"/api/v1/workspaces/{env.workspace.id}/tasks/")
+    assert response.status_code == 200
+
+
+@override_settings(DEMO_MODE=True, DEMO_USER_EMAIL=DEMO_EMAIL)
+def test_demo_login_refuses_a_writable_account(api, db):
+    """Noto'g'ri sozlama ochiq eshikka aylanmasin: hisob readonly bo'lishi shart."""
+    make_user(DEMO_EMAIL)  # is_readonly=False
+    assert_error(api.post(DEMO, {}, format="json"), 404, "not_found")

@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Playwright artefaktlari — bundled minified JS, bizning kodimiz emas.
+    // `.gitignore` da bor, lekin ESLint uni o'zi chetlab o'tmaydi, shuning
+    // uchun bitta E2E yugurishidan keyin `npm run lint` qizil bo'lib qolardi.
+    "playwright-report/**",
+    "test-results/**",
   ]),
 ]);
 

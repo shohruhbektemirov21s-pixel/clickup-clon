@@ -5,11 +5,20 @@ export const keys = {
   workspace: (id: string) => ["workspace", id] as const,
   tree: (workspaceId: string) => ["workspace", workspaceId, "tree"] as const,
   members: (workspaceId: string) => ["workspace", workspaceId, "members"] as const,
+  /** A'zo profili (§4.1) — bitta a'zoning statistikasi va bo'limlari. */
+  memberProfile: (workspaceId: string, userId: string) =>
+    ["workspace", workspaceId, "member-profile", userId] as const,
+  /** Ish maydoni faoliyat tasmasi (§10.8). `actorId: null` — hamma aktyorlar. */
+  activity: (workspaceId: string, actorId: string | null) =>
+    ["workspace", workspaceId, "activity", actorId ?? "all"] as const,
   invitations: (workspaceId: string) =>
     ["workspace", workspaceId, "invitations"] as const,
   tags: (workspaceId: string) => ["workspace", workspaceId, "tags"] as const,
-  /** Workspace-wide task reads (dashboard). `scope` keeps the filter sets apart. */
-  workspaceTasks: (workspaceId: string, scope: "all" | "mine") =>
+  /**
+   * Workspace-wide task reads (dashboard, member profile). `scope` keeps the
+   * filter sets apart: `all`, `mine`, or `user:<uuid>` for one assignee.
+   */
+  workspaceTasks: (workspaceId: string, scope: "all" | "mine" | `user:${string}`) =>
     ["workspace", workspaceId, "tasks", scope] as const,
   /** Prefix of every `workspaceTasks` scope — one invalidation covers them all. */
   workspaceTasksRoot: (workspaceId: string) =>

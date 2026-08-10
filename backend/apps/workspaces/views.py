@@ -2,7 +2,7 @@ import uuid
 from datetime import timedelta
 
 from django.db import transaction
-from django.db.models import Case, IntegerField, Q, Value, When
+from django.db.models import Case, Count, IntegerField, Q, Value, When
 from django.utils import timezone
 from rest_framework import status as http
 from rest_framework.exceptions import NotFound, PermissionDenied, Throttled, ValidationError
@@ -22,7 +22,13 @@ from apps.core.access import (
     visible_spaces_q,
 )
 from apps.core.api import client_id_of, paginate, parse_bool
-from apps.core.enums import AssignableRole, InvitationStatus, ROLE_RANK, WorkspaceRole
+from apps.core.enums import (
+    AssignableRole,
+    InvitationStatus,
+    ROLE_RANK,
+    StatusType,
+    WorkspaceRole,
+)
 from apps.core.exceptions import ApiError, Conflict
 from apps.core.permissions import (
     ALL_CODES,
@@ -48,6 +54,7 @@ from apps.workspaces.serializers import (
     InvitationCreateSerializer,
     InvitationSerializer,
     ListSerializer,
+    MemberProfileSerializer,
     MemberSerializer,
     ResetRolePermissionsSerializer,
     RolePermissionRowSerializer,
@@ -282,6 +289,102 @@ class MemberListView(APIView):
             .order_by("rank", "user__email")
         )
         return paginate(request, members, MemberSerializer)
+
+
+class MemberProfileView(APIView):
+    """`GET workspaces/{id}/members/{user_id}/profile/` — docs/API_CONTRACT.md §4.1.
+
+    "Bu odam nima qilyapti" savoliga bitta javob: rol, qo'shilgan sana,
+    statistika va bo'limlar kesimi.
+
+    XAVFSIZLIK (binding). Har bir raqam **chaqiruvchining** ko'rish doirasida
+    hisoblanadi — `visible_spaces_q(caller_membership)`. Mehmon yopiq
+    bo'limdagi vazifalarni ko'rmaydi, demak ular hisobga ham kirmaydi; aks
+    holda profil sahifasi yopiq bo'lim mavjudligini raqam orqali oshkor
+    qilardi. A'zo bo'lmagan `user_id` (yoki boshqa workspace a'zosi) → 404.
+
+    UNUMDORLIK. Barcha agregatlar `annotate`/`aggregate` bilan olinadi:
+    a'zoga yoki bo'limga qarab so'rov ko'paymaydi (N+1 yo'q).
+    """
+
+    def get(self, request, workspace_id, user_id):
+        membership = require_membership_perm(request.user, workspace_id, "member.read")
+        target = (
+            WorkspaceMember.objects.select_related("user")
+            .filter(workspace_id=workspace_id, user_id=user_id)
+            .first()
+        )
+        if target is None:
+            raise NotFound()
+
+        # Bitta so'rov: ko'rinadigan bo'limlar + a'zoning har biridagi ochiq
+        # vazifalari. `distinct=True` — `visible_spaces_q` qo'shadigan
+        # `space_members` JOIN'i sanoqni shishirmasligi uchun.
+        space_open = Q(
+            lists__tasks__deleted_at__isnull=True,
+            lists__tasks__archived=False,
+            lists__tasks__task_assignees__user_id=user_id,
+        ) & ~Q(lists__tasks__status__type=StatusType.CLOSED)
+        spaces = list(
+            Space.objects.filter(workspace_id=workspace_id)
+            .filter(visible_spaces_q(membership))
+            .annotate(open_tasks=Count("lists__tasks", filter=space_open, distinct=True))
+            .order_by("position", "name")
+        )
+        space_ids = {space.id for space in spaces}
+
+        stats = _member_stats(space_ids, user_id, caller=request.user)
+        payload = {
+            "user": target.user,
+            "role": target.role,
+            "joined_at": target.joined_at,
+            "last_active_at": target.last_active_at,
+            "stats": stats,
+            "spaces": spaces,
+        }
+        return Response(MemberProfileSerializer(payload, context={"request": request}).data)
+
+
+def _member_stats(space_ids, user_id, *, caller):
+    """§4.1 statistikalari — 3 ta so'rov, a'zolar soniga bog'liq emas.
+
+    `due_today` va `overdue_tasks` ATAYLAB kesishmaydi: bugun soat 09:00 ga
+    qo'yilgan va allaqachon o'tib ketgan vazifa faqat "muddati o'tgan" bo'lib
+    sanaladi — bosh sahifadagi guruhlash bilan bir xil qoida (§10.5).
+    Kun chegarasi chaqiruvchining vaqt mintaqasida hisoblanadi.
+    """
+    import zoneinfo
+
+    from apps.comments.models import Comment
+    from apps.tasks.models import Task
+
+    now = timezone.now()
+    try:
+        tz = zoneinfo.ZoneInfo(getattr(caller, "timezone", None) or "UTC")
+    except Exception:  # noqa: BLE001 — noto'g'ri saqlangan tz profilni buzmasin
+        tz = zoneinfo.ZoneInfo("UTC")
+    local_now = now.astimezone(tz)
+    day_end = (local_now + timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+
+    base = Task.objects.filter(list__space_id__in=space_ids)
+    open_q = ~Q(status__type=StatusType.CLOSED) & Q(archived=False)
+    agg = base.filter(task_assignees__user_id=user_id).aggregate(
+        open_tasks=Count("id", filter=open_q, distinct=True),
+        overdue_tasks=Count("id", filter=open_q & Q(due_date__lt=now), distinct=True),
+        due_today=Count(
+            "id",
+            filter=open_q & Q(due_date__gte=now, due_date__lt=day_end),
+            distinct=True,
+        ),
+        completed_tasks=Count("id", filter=Q(completed_at__isnull=False), distinct=True),
+    )
+    agg["created_tasks"] = base.filter(created_by_id=user_id).count()
+    agg["comments"] = Comment.objects.filter(
+        author_id=user_id, task__list__space_id__in=space_ids
+    ).count()
+    return agg
 
 
 class MemberDetailView(APIView):

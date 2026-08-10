@@ -3,17 +3,19 @@
 | | |
 |---|---|
 | **Document** | API_CONTRACT.md |
-| **Version** | 1.1.0 |
+| **Version** | 1.2.0 |
 | **Date** | 2026-08-10 |
 | **Status** | **Binding** — backend and frontend implement against this document in parallel. Changes require a PR that updates this file in the same commit. |
 | **Authority** | This doc > PRD.md for API surface. `docs/DATA_MODEL.md` is authoritative for field names/types; this doc mirrors it field-for-field. |
 | **Upstream** | `docs/DATA_MODEL.md`, `docs/PRD.md`, `docs/DESIGN_PERMISSIONS.md`, `backend/config/{settings,pagination,exceptions}.py`, `backend/apps/realtime/middleware.py` |
 
-**Inventory: 70 REST endpoints + 2 WebSocket channels.** Adding an endpoint requires amending this doc in the same commit.
+**Inventory: 78 REST endpoints + 2 WebSocket channels.** Adding an endpoint requires amending this doc in the same commit.
 
 > **v1.1.0 changelog.** Adds §18 (granular permission matrix, `docs/DESIGN_PERMISSIONS.md` §A–D.5) and rulings R18–R23. The role table in §1.7 now describes the **default** matrix, not a hard-coded one. Space-member endpoints (`DESIGN_PERMISSIONS.md` §D.6) and the extended `invitations/lookup/` payload (§D.7) are specified there but **not yet implemented**; they will land with their own contract bump.
 >
 > **v1.1.1 changelog (§2 only).** Register-with-invite (`DESIGN_PERMISSIONS.md` §D.8) is now **implemented**: `auth/register/` accepts `invite_token` and may answer with `workspace_id` (R21). The `User`/`UserSummary` objects gain `profession` — a **profile label, never a permission**. New dev-only endpoint `POST auth/demo/` (endpoint #70).
+
+> **v1.2.0 changelog (member profile & activity feed).** Adds §4.1 `GET workspaces/{id}/members/{user_id}/profile/` (endpoint #75) and §10.8 `GET workspaces/{id}/activity/` (endpoint #77), and **documents §10.6 `GET tasks/{id}/activity/`** (endpoint #76), which shipped in the code but was missing from this file. The §4 Member object now shows `profession` explicitly (it always travelled inside `UserSummary`). The inventory is corrected to **78** — the previous header said 70 while the §16 table summed to 75.
 
 ---
 
@@ -284,6 +286,7 @@ The new member's role comes **only** from `Invitation.role`. A client-supplied `
 | 16 | PATCH | `workspaces/{id}/members/{user_id}/` | owner; admin (non-owner targets, non-owner roles only) | `200` Member |
 | 17 | DELETE | `workspaces/{id}/members/{user_id}/` | owner; admin (non-owner targets) | `204` empty |
 | 18 | POST | `workspaces/{id}/members/leave/` | any member | `204` empty |
+| 75 | GET | `workspaces/{id}/members/{user_id}/profile/` | `member.read` (owner/admin/member by default) | `200` MemberProfile |
 
 - `{user_id}` in the path is the **user's** id, not the membership row id.
 - `PATCH` body: `{"role": "owner"|"admin"|"member"|"guest"}`. Rules: only an owner may grant `owner` or touch an owner; admin may change roles among `admin`/`member`/`guest` for non-owners; member/guest → `403`.
@@ -296,7 +299,7 @@ The new member's role comes **only** from `Invitation.role`. A client-supplied `
 ```json
 {
   "id": "…membership uuid…",
-  "user": { "id": "…", "email": "dan@acme.io", "full_name": "Dan Ortiz", "avatar": null, "avatar_color": "#49CCF9" },
+  "user": { "id": "…", "email": "dan@acme.io", "full_name": "Dan Ortiz", "avatar": null, "avatar_color": "#49CCF9", "profession": "developer" },
   "role": "member",
   "invited_by_id": "…user uuid or null…",
   "joined_at": "2026-08-07T10:00:00Z",
@@ -305,6 +308,33 @@ The new member's role comes **only** from `Invitation.role`. A client-supplied `
   "updated_at": "2026-08-07T10:00:00Z"
 }
 ```
+
+`user` is the standard `UserSummary` and therefore carries `profession` (v1.1.1) — a **profile label, never a permission**. Clients render it next to the role; authority is decided solely by `role` + the §18 matrix.
+
+### 4.1 Member profile (endpoint 75)
+
+`GET workspaces/{id}/members/{user_id}/profile/` — one request answering "what is this person working on": role, tenure, counters, and a per-space breakdown. Backs the member profile page.
+
+```json
+{
+  "user": { "id": "…", "email": "dan@acme.io", "full_name": "Dan Ortiz", "avatar": null,
+            "avatar_color": "#7B68EE", "profession": "developer" },
+  "role": "member",
+  "joined_at": "2026-01-05T09:00:00Z",
+  "last_active_at": "2026-08-10T07:00:00Z",
+  "stats": {
+    "open_tasks": 12, "overdue_tasks": 2, "due_today": 3,
+    "completed_tasks": 41, "created_tasks": 30, "comments": 87
+  },
+  "spaces": [ { "id": "…", "name": "Marketing", "color": "#7B68EE", "open_tasks": 5 } ]
+}
+```
+
+- **Visibility is the CALLER's, not the target's (BINDING).** `spaces` lists only spaces the caller can see (`visible_spaces_q`, §1.7 / `DESIGN_PERMISSIONS.md` §C.5), and **every counter is computed inside that same set**. A guest who cannot see a private space must not learn it exists from a larger number — a server that counts tasks outside the caller's visibility violates this contract.
+- `{user_id}` is the **user's** id. A user who is not a member of this workspace — including a member of another workspace, and including a user who exists but was removed — → `404 not_found`, never `403`. A caller outside the workspace → `404`. A caller inside the workspace without `member.read` (guest by default) → `403 permission_denied`.
+- Counter semantics (mirroring §10.5): "open" = not archived and status type ≠ `closed`; `overdue_tasks` = open **and** `due_date < now`; `due_today` = open **and** due between `now` and the end of the caller's local day — so `overdue_tasks` and `due_today` never overlap. `completed_tasks` counts assigned tasks with `completed_at != null`. `created_tasks` counts tasks the member created; `comments` counts their comments. Soft-deleted tasks are excluded everywhere.
+- `spaces[].open_tasks` is the **target member's** open task count in that space, ordered by the space `position`.
+- Every aggregate is computed with `annotate`/`aggregate`; the query count does not grow with the number of spaces, members or tasks.
 
 ---
 
@@ -488,6 +518,8 @@ A `StatusSet` belongs to exactly one of a Space (default, always exists) or a Li
 | 52 | PATCH | `tasks/{id}/move/` | member+; guest **Assignee** only | `200` Task (+ `rebalanced`) |
 | 53 | POST | `tasks/{id}/watch/` | any member | `201` Task (`200` if already watching — idempotent) |
 | 54 | DELETE | `tasks/{id}/watch/` | any member | `204` empty (idempotent) |
+| 76 | GET | `tasks/{id}/activity/` | any member who can read the task | `200` paginated TaskActivity[] |
+| 77 | GET | `workspaces/{id}/activity/` | `task.read` | `200` paginated WorkspaceActivity[] |
 | 71 | GET | `tasks/{id}/attachments/` | `attachment.read` (any member incl. guest) | `200` paginated Attachment[] |
 | 72 | POST | `tasks/{id}/attachments/` | `attachment.create` (member+; guest → `403`) | `201` Attachment |
 | 73 | GET | `attachments/{id}/download/` | `attachment.read` | `200` file stream |
@@ -586,6 +618,62 @@ Applies to `lists/{id}/tasks/` and `workspaces/{id}/tasks/`. Different keys AND;
 | `include_deleted` | `true` — **admin+ only**, else `403 permission_denied` |
 | `group_by` | `status` (list-tasks endpoint only) |
 | `ordering` | one of `position`, `due_date`, `priority_order`, `created_at`, `updated_at`, `title`, each with optional `-` prefix. Default `position`. Anything else → `400 validation_error` |
+
+### 10.6 Task activity (endpoint 76)
+
+`GET tasks/{id}/activity/` — the task's own history, newest first, standard §1.5 envelope. Rows are **immutable**: written from `apps.tasks.services` only, never updated, never deleted except by the task's cascade.
+
+```json
+{
+  "id": "…", "verb": "status_changed",
+  "actor": { "id": "…", "email": "dan@acme.io", "full_name": "Dan Ortiz", "avatar": null, "avatar_color": "#49CCF9", "profession": "developer" },
+  "from_value": "TO DO", "to_value": "IN PROGRESS",
+  "metadata": { "from_status_id": "…", "to_status_id": "…" },
+  "created_at": "2026-08-07T11:02:00Z"
+}
+```
+
+**`verb` vocabulary (closed set)** — `apps.core.enums.ActivityVerb`:
+
+| `verb` | `from_value` | `to_value` |
+|---|---|---|
+| `created` | — | task title |
+| `renamed` | old title | new title |
+| `status_changed` | old status name | new status name |
+| `completed` | — | closing status name |
+| `assignee_added` | — | assignee display name |
+| `assignee_removed` | assignee display name | — |
+| `priority_changed` | old priority value | new priority value |
+| `due_date_changed` | old ISO instant or `null` | new ISO instant or `null` |
+| `moved` | source list name | destination list name |
+| `deleted` | task title | — |
+| `restored` | — | task title |
+
+`actor` is `null` when the acting user was hard-deleted — history outlives the user. Values are plain display strings, not ids; ids that matter live in `metadata`.
+
+### 10.8 Workspace activity feed (endpoint 77)
+
+`GET workspaces/{id}/activity/` — the same rows across the whole workspace, newest first, standard §1.5 envelope. Backs the member profile "Faoliyat" tab and any workspace-wide feed.
+
+```json
+{
+  "id": "…", "verb": "status_changed",
+  "actor": { "id": "…", "email": "dan@acme.io", "full_name": "Dan Ortiz", "avatar": null, "avatar_color": "#49CCF9", "profession": "developer" },
+  "task": { "id": "…", "title": "Q3 hisobot", "list_id": "…", "list_name": "Sprint 12" },
+  "from_value": "TO DO", "to_value": "IN PROGRESS",
+  "created_at": "2026-08-07T11:02:00Z"
+}
+```
+
+| Param | Values |
+|---|---|
+| `actor` | user uuid — only that actor's rows. Not a UUID → `400 validation_error` |
+| `verb` | one value from the §10.6 vocabulary. Anything else → `400 validation_error` |
+
+- Different keys AND. Ordering is fixed at `-created_at` (no `ordering` param).
+- **Visibility (BINDING).** Only activity on tasks in spaces the caller can see (`visible_spaces_q`). Rows of soft-deleted tasks are excluded too: if `GET tasks/{id}/` would answer `404`, its history must not surface here either.
+- `metadata` is deliberately **not** serialized in this payload (it is an internal field); use §10.6 when a client needs it.
+- Caller outside the workspace → `404`; inside without `task.read` → `403`.
 
 ### 10.7 Attachments (files & documents)
 
@@ -799,7 +887,7 @@ A mutation that fails validation/permission emits **no** event. Every successful
 
 ---
 
-## 16. Endpoint inventory (74)
+## 16. Endpoint inventory (78)
 
 | Group | Count | Endpoints |
 |---|---|---|
@@ -807,13 +895,13 @@ A mutation that fails validation/permission emits **no** event. Every successful
 | Auth | 6 | register, login, refresh, logout, password/change, demo (dev-only, `DEMO_MODE`) |
 | Profile | 3 | me GET/PATCH, me/avatar POST |
 | Workspaces | 6 | list, create, retrieve, update, delete, tree |
-| Members | 4 | list, role PATCH, remove, leave |
+| Members | 5 | list, profile, role PATCH, remove, leave |
 | Invitations | 7 | list, create, revoke, resend, lookup, accept, decline |
 | Spaces | 5 | list, create, retrieve, update, delete |
 | Folders | 5 | list, create, retrieve, update, delete |
 | Lists | 6 | list, create, retrieve, update, delete, move |
 | Status sets | 5 | space GET/PUT, list GET/PUT/DELETE |
-| Tasks | 8 | list, create, retrieve, update, delete, move, watch POST/DELETE |
+| Tasks | 10 | list, create, retrieve, update, delete, move, watch POST/DELETE, task activity, workspace activity |
 | Attachments | 4 | list, upload, download, delete |
 | Tags | 4 | list, create, update, delete |
 | Comments | 4 | list, create, update, delete |

@@ -2,16 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { endOfWeek, isToday } from "date-fns";
-import {
-  CalendarDays,
-  CircleAlert,
-  ListChecks,
-  MessageSquare,
-  Plus,
-  Users,
-  X,
-} from "lucide-react";
+import { ListFilter, CalendarDays, CircleAlert, ListChecks, Plus, Users, X } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,65 +21,19 @@ import {
 import { useWorkspaceChannel } from "@/hooks/use-workspace-channel";
 import type { WorkspaceConnectionStatus } from "@/hooks/use-workspace-channel";
 import { CreateEntityDialog } from "@/components/shell/create-entity-dialog";
-import { PriorityFlag, StatusDot } from "@/components/task/pickers";
-import { formatDueDate, initials, PRIORITY_META } from "@/lib/format";
+import { TaskRow } from "@/components/shared/task-row";
+import { initials } from "@/lib/format";
 import { can } from "@/lib/permissions";
 import { ROLE_LABEL } from "@/lib/roles";
+import {
+  BUCKET_LABEL,
+  BUCKET_ORDER,
+  byDueDate,
+  groupByDue,
+  type BucketKey,
+} from "@/lib/task-buckets";
 import { cn } from "@/lib/utils";
-import type { Member, Status, Task, UserSummary, WorkspaceTree } from "@/types/api";
-
-// ---------------------------------------------------------------------------
-// Due-date buckets
-// ---------------------------------------------------------------------------
-
-type BucketKey = "overdue" | "today" | "week" | "later" | "none";
-
-const BUCKET_ORDER: BucketKey[] = ["overdue", "today", "week", "later", "none"];
-
-const BUCKET_LABEL: Record<BucketKey, string> = {
-  overdue: "Muddati o'tgan",
-  today: "Bugun",
-  week: "Shu hafta",
-  later: "Keyinroq",
-  none: "Muddatsiz",
-};
-
-/**
- * Mirrors the server vocabulary (contract §10.5): `overdue` is `due_date < now`
- * on a non-closed task, `today`/`this_week` are calendar windows. Bucketing is
- * done here rather than with three `due=` requests because those windows
- * overlap — an overdue task is also inside `this_week`.
- */
-function bucketOf(task: Task, now: Date, weekEnd: Date): BucketKey {
-  if (!task.due_date) return "none";
-  const due = new Date(task.due_date);
-  if (due < now) return "overdue";
-  if (isToday(due)) return "today";
-  if (due <= weekEnd) return "week";
-  return "later";
-}
-
-function groupByDue(tasks: Task[]): Record<BucketKey, Task[]> {
-  const now = new Date();
-  const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
-  const groups: Record<BucketKey, Task[]> = {
-    overdue: [],
-    today: [],
-    week: [],
-    later: [],
-    none: [],
-  };
-  for (const task of tasks) groups[bucketOf(task, now, weekEnd)].push(task);
-  return groups;
-}
-
-/** Due date ascending, undated last — the order every task list here uses. */
-function byDueDate(a: Task, b: Task): number {
-  if (!a.due_date && !b.due_date) return a.created_at < b.created_at ? -1 : 1;
-  if (!a.due_date) return 1;
-  if (!b.due_date) return -1;
-  return a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : 0;
-}
+import type { Member, Task, UserSummary, WorkspaceTree } from "@/types/api";
 
 // ---------------------------------------------------------------------------
 // Tree helpers
@@ -707,9 +652,16 @@ function TeamTasksSection({
                   </span>
                 )}
                 <span className="truncate text-sm font-medium">
-                  {group.user
-                    ? group.user.full_name || group.user.email
-                    : "Biriktirilmagan"}
+                  {group.user ? (
+                    <Link
+                      href={`/w/${workspaceId}/u/${group.user.id}`}
+                      className="hover:underline"
+                    >
+                      {group.user.full_name || group.user.email}
+                    </Link>
+                  ) : (
+                    "Biriktirilmagan"
+                  )}
                   {group.user && group.user.id === meId ? (
                     <span className="ml-1 text-xs font-normal text-muted-foreground">
                       (siz)
@@ -742,60 +694,6 @@ function TeamTasksSection({
         </div>
       )}
     </section>
-  );
-}
-
-function TaskRow({
-  workspaceId,
-  task,
-  status,
-  listName,
-  overdue,
-}: {
-  workspaceId: string;
-  task: Task;
-  status?: Status;
-  listName?: string;
-  overdue: boolean;
-}) {
-  return (
-    <Link
-      href={`/w/${workspaceId}/l/${task.list_id}?task=${task.id}`}
-      className="flex items-center gap-3 border-b px-3 py-2 last:border-b-0 hover:bg-muted/40"
-    >
-      <StatusDot status={status} />
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm">{task.title}</p>
-        <p className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
-          {status ? <span>{status.name}</span> : null}
-          {status && listName ? <span aria-hidden>·</span> : null}
-          {listName ? <span className="truncate">{listName}</span> : null}
-          {task.comment_count > 0 ? (
-            <span className="flex items-center gap-0.5">
-              <MessageSquare className="size-3" />
-              {task.comment_count}
-            </span>
-          ) : null}
-        </p>
-      </div>
-      {task.priority !== "none" ? (
-        <span
-          className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground max-sm:hidden"
-          title={PRIORITY_META[task.priority].label}
-        >
-          <PriorityFlag priority={task.priority} />
-          {PRIORITY_META[task.priority].label}
-        </span>
-      ) : null}
-      <span
-        className={cn(
-          "w-24 shrink-0 text-right text-xs",
-          overdue ? "font-medium text-danger" : "text-muted-foreground",
-        )}
-      >
-        {task.due_date ? formatDueDate(task.due_date) : "—"}
-      </span>
-    </Link>
   );
 }
 
@@ -859,15 +757,15 @@ function TeamSection({
           {(members.data?.results ?? []).map((member) => {
             const count = openByUser.get(member.user.id) ?? 0;
             const selected = selectedUserId === member.user.id;
+            const name = member.user.full_name || member.user.email;
             return (
-              <button
+              // Kartaning o'zi profilga olib boradi ("stretched link"), filtr
+              // esa alohida tugma bo'lib qoladi — bitta kartada ikkita
+              // interaktiv element ichma-ich joylashmaydi.
+              <div
                 key={member.id}
-                type="button"
-                aria-pressed={selected}
-                onClick={() => onSelectMember(member.user.id)}
-                title={`${member.user.full_name || member.user.email} vazifalarini ko'rish`}
                 className={cn(
-                  "flex items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/40",
+                  "relative flex items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/40",
                   selected && "border-primary bg-muted/40",
                 )}
               >
@@ -884,7 +782,13 @@ function TeamSection({
                 </Avatar>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">
-                    {member.user.full_name || member.user.email}
+                    <Link
+                      href={`/w/${workspaceId}/u/${member.user.id}`}
+                      title={`${name} profilini ochish`}
+                      className="after:absolute after:inset-0 hover:underline"
+                    >
+                      {name}
+                    </Link>
                     {member.user.id === meId ? (
                       <span className="ml-1 text-xs font-normal text-muted-foreground">
                         (siz)
@@ -911,7 +815,18 @@ function TeamSection({
                 <Badge variant="secondary" className="shrink-0">
                   {ROLE_LABEL[member.role]}
                 </Badge>
-              </button>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="relative z-10 shrink-0"
+                  aria-pressed={selected}
+                  aria-label={`${name} vazifalarini shu yerda filtrlash`}
+                  title="Vazifalarini shu sahifada filtrlash"
+                  onClick={() => onSelectMember(member.user.id)}
+                >
+                  <ListFilter />
+                </Button>
+              </div>
             );
           })}
         </div>

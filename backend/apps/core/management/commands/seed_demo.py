@@ -35,6 +35,12 @@ DEMO_TEAM = [
     ("nodira@clickish.dev", "Nodira Tosheva", WorkspaceRole.GUEST, "#FD71AF"),
 ]
 
+#: "Demo rejimda kirish" tugmasi shu hisobga kiritadi. U ataylab `demo@` dan
+#: ALOHIDA: `demo@` ish maydonining egasi bo'lib qoladi (testlar va qo'lda
+#: boshqarish uchun), bu hisob esa `is_readonly=True` — hech narsani
+#: o'zgartira ham, o'chira ham olmaydi.
+DEMO_VIEWER = ("mehmon@clickish.dev", "Demo mehmon", WorkspaceRole.MEMBER, "#8C7CF0")
+
 TEAM_COMMENTS = [
     ("aziz@clickish.dev", "<p>Men bu vazifani ko'rib chiqdim — tuzatish tayyor.</p>"),
     ("malika@clickish.dev", "<p>Rahmat! Testdan o'tkazib, tasdiqlayman.</p>"),
@@ -208,6 +214,27 @@ class Command(BaseCommand):
             )
             if added:
                 self.stdout.write(f"Added {member_email} to '{workspace.name}' as {role}")
+
+        viewer_email, viewer_name, viewer_role, viewer_color = DEMO_VIEWER
+        viewer = User.objects.filter(email__iexact=viewer_email).first()
+        if viewer is None:
+            viewer = User.objects.create_user(
+                email=viewer_email, password=DEMO_PASSWORD, full_name=viewer_name
+            )
+            viewer.avatar_color = viewer_color
+            self.stdout.write(f"Created user {viewer_email}")
+        # Har safar majburlanadi: bu hisob hech qachon yozish huquqiga ega
+        # bo'lmasligi kerak, hatto kimdir uni qo'lda o'zgartirgan bo'lsa ham.
+        viewer.is_readonly = True
+        viewer.save(update_fields=["avatar_color", "is_readonly", "updated_at"])
+        team[viewer_email] = viewer
+        _, added = WorkspaceMember.objects.get_or_create(
+            workspace=workspace, user=viewer, defaults={"role": viewer_role}
+        )
+        if added:
+            self.stdout.write(
+                f"Added {viewer_email} to '{workspace.name}' as {viewer_role} (faqat o'qish)"
+            )
         refresh_member_count(workspace)
 
         tasks = list(

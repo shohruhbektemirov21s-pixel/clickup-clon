@@ -27,6 +27,11 @@ urlpatterns = [
         name="member-leave",
     ),
     path(
+        "workspaces/<uuid:workspace_id>/members/<uuid:user_id>/profile/",
+        views.MemberProfileView.as_view(),
+        name="member-profile",
+    ),
+    path(
         "workspaces/<uuid:workspace_id>/members/<uuid:user_id>/",
         views.MemberDetailView.as_view(),
         name="member-detail",

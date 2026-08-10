@@ -58,6 +58,11 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
 
     timezone = models.CharField(max_length=64, default="UTC", db_index=False)
 
+    # Faqat o'qish uchun hisob (demo). Rolidan qat'i nazar — egasi bo'lsa ham —
+    # har qanday yozish ruxsati `apps.core.access.has_perm` da rad etiladi.
+    # Owner huquqlari qulflangani uchun buni matritsa orqali qilib bo'lmaydi.
+    is_readonly = models.BooleanField(default=False)
+
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     date_joined = models.DateTimeField(default=tz_now, editable=False)

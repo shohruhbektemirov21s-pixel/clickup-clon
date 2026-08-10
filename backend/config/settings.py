@@ -43,7 +43,7 @@ env = environ.Env(
     # "Demo rejimda kirish" tugmasi. Prod'da o'chiq bo'lishi shart: yoqilganda
     # istalgan odam parolsiz demo hisobga kira oladi.
     DEMO_MODE=(bool, False),
-    DEMO_USER_EMAIL=(str, "demo@clickish.dev"),
+    DEMO_USER_EMAIL=(str, "mehmon@clickish.dev"),
 )
 environ.Env.read_env(BASE_DIR / ".env")
 

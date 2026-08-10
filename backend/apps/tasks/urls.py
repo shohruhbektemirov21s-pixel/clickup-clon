@@ -28,6 +28,11 @@ urlpatterns = [
         name="task-activity",
     ),
     path(
+        "workspaces/<uuid:workspace_id>/activity/",
+        views.WorkspaceActivityView.as_view(),
+        name="workspace-activity",
+    ),
+    path(
         "workspaces/<uuid:workspace_id>/tasks/",
         views.WorkspaceTasksView.as_view(),
         name="workspace-tasks",

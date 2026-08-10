@@ -95,6 +95,11 @@ class DemoLoginView(APIView):
         if user is None or user.is_staff or user.is_superuser:
             # Eskalatsiya bloki: staff hisob demo tugmasi orqali berilmaydi.
             raise NotFound()
+        if not user.is_readonly:
+            # Demo tugmasi faqat yozish huquqisiz hisobga kirita oladi. Agar
+            # DEMO_USER_EMAIL oddiy hisobga qaratilgan bo'lsa, endpoint umuman
+            # javob bermaydi — noto'g'ri sozlama ochiq eshikka aylanmaydi.
+            raise NotFound()
 
         user.last_login = timezone.now()
         user.save(update_fields=["last_login"])

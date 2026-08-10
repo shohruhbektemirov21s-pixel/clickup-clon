@@ -11,6 +11,7 @@ import type {
   InvitationLookup,
   List,
   Member,
+  MemberProfile,
   MyPermissions,
   Paginated,
   PermissionCatalog,
@@ -23,6 +24,7 @@ import type {
   TaskAttachment,
   User,
   Workspace,
+  WorkspaceActivity,
   WorkspaceTree,
 } from "@/types/api";
 
@@ -80,6 +82,70 @@ export function useMembers(workspaceId: string) {
       }),
     enabled: enabled && !!workspaceId,
     staleTime: 60_000,
+  });
+}
+
+/**
+ * `GET workspaces/{id}/members/{userId}/profile/` (§4.1) — the header, the
+ * counters and the space breakdown of the member profile page in one request.
+ * Every number is already scoped to the caller's visibility server-side, so
+ * the client never re-filters. Requires `member.read`; pass `canRead: false`
+ * to skip a request that would 403.
+ */
+export function useMemberProfile(workspaceId: string, userId: string, canRead = true) {
+  const enabled = useAuthed();
+  return useQuery({
+    queryKey: keys.memberProfile(workspaceId, userId),
+    queryFn: () =>
+      api.get<MemberProfile>(
+        `workspaces/${workspaceId}/members/${userId}/profile/`,
+      ),
+    enabled: enabled && !!workspaceId && !!userId && canRead,
+    retry: false,
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * `GET workspaces/{id}/activity/` (§10.8) — the workspace history feed,
+ * newest first. `actorId` maps to `?actor=`; pass `null` for everybody.
+ * Requires `task.read`.
+ */
+export function useWorkspaceActivity(
+  workspaceId: string,
+  actorId: string | null,
+  canRead = true,
+) {
+  const enabled = useAuthed();
+  return useQuery({
+    queryKey: keys.activity(workspaceId, actorId),
+    queryFn: () =>
+      api.get<Paginated<WorkspaceActivity>>(`workspaces/${workspaceId}/activity/`, {
+        actor: actorId ?? undefined,
+        page_size: 50,
+      }),
+    enabled: enabled && !!workspaceId && canRead,
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * Tasks assigned to ONE member across the workspace (§10.5 `assignee=<uuid>`).
+ * Same shape and ordering as `useMyTasks`, so the profile page can reuse the
+ * dashboard's due-date bucketing verbatim.
+ */
+export function useMemberTasks(workspaceId: string, userId: string, canRead = true) {
+  const enabled = useAuthed();
+  return useQuery({
+    queryKey: keys.workspaceTasks(workspaceId, `user:${userId}`),
+    queryFn: () =>
+      api.get<Paginated<Task>>(`workspaces/${workspaceId}/tasks/`, {
+        assignee: userId,
+        ordering: "due_date",
+        page_size: 200,
+      }),
+    enabled: enabled && !!workspaceId && !!userId && canRead,
+    staleTime: 30_000,
   });
 }
 

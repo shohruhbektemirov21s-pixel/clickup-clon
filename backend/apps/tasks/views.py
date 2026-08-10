@@ -14,6 +14,7 @@ from apps.core.access import (
     visible_spaces_q,
 )
 from apps.core.api import client_id_of, paginate
+from apps.core.enums import ActivityVerb
 from apps.core.exceptions import Conflict
 from apps.tasks import services
 from apps.tasks.filters import apply_ordering, apply_task_filters, include_deleted_requested
@@ -23,6 +24,7 @@ from apps.tasks.serializers import (
     TaskActivitySerializer,
     TaskInputSerializer,
     TaskSerializer,
+    WorkspaceActivitySerializer,
 )
 from apps.workspaces.models import Space
 from apps.workspaces.views import get_list
@@ -215,6 +217,46 @@ class TaskActivityView(APIView):
             .order_by("-created_at")
         )
         return paginate(request, activities, TaskActivitySerializer)
+
+
+class WorkspaceActivityView(APIView):
+    """`GET workspaces/{id}/activity/` — docs/API_CONTRACT.md §10.8.
+
+    Ish maydoni bo'yicha faoliyat tasmasi, yangisidan eskisiga. Filtrlar:
+    `?actor=<user uuid>` va `?verb=<ActivityVerb>`; ikkalasi ham ixtiyoriy va
+    AND bilan birlashadi. Sahifalash — standart §1.5 konverti.
+
+    XAVFSIZLIK: `visible_spaces_q` — tasma faqat chaqiruvchi ko'ra oladigan
+    bo'limlardagi vazifalar tarixini beradi. O'chirilgan (soft-delete)
+    vazifalar yozuvlari ham chiqmaydi: vazifaning o'zi 404 bo'lsa, uning
+    tarixi ham ko'rinmasligi kerak.
+    """
+
+    def get(self, request, workspace_id):
+        membership = require_membership_perm(request.user, workspace_id, "task.read")
+        spaces = Space.objects.filter(workspace_id=workspace_id).filter(
+            visible_spaces_q(membership)
+        )
+        qs = TaskActivity.objects.filter(
+            task__list__space__in=spaces, task__deleted_at__isnull=True
+        )
+
+        actor = request.query_params.get("actor")
+        if actor:
+            try:
+                uuid_mod.UUID(str(actor))
+            except (ValueError, AttributeError, TypeError):
+                raise ValidationError({"actor": ["actor must be a UUID."]})
+            qs = qs.filter(actor_id=actor)
+
+        verb = request.query_params.get("verb")
+        if verb:
+            if verb not in ActivityVerb.values:
+                raise ValidationError({"verb": ["Unsupported activity verb."]})
+            qs = qs.filter(verb=verb)
+
+        qs = qs.select_related("actor", "task", "task__list").order_by("-created_at")
+        return paginate(request, qs, WorkspaceActivitySerializer)
 
 
 class WorkspaceTasksView(APIView):

@@ -102,6 +102,32 @@ class TaskActivitySerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class WorkspaceActivitySerializer(serializers.ModelSerializer):
+    """Ish maydoni faoliyat tasmasining bir yozuvi — §10.8.
+
+    `TaskActivitySerializer` dan farqi: vazifa konteksti (`task`) ham keladi,
+    chunki tasma bir nechta vazifani aralashtiradi. `metadata` ATAYLAB
+    yuborilmaydi — u ichki maydon va tasmada ko'rsatilmaydi.
+    """
+
+    actor = UserSummarySerializer(read_only=True)
+    task = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TaskActivity
+        fields = ["id", "verb", "actor", "task", "from_value", "to_value", "created_at"]
+        read_only_fields = fields
+
+    def get_task(self, obj):
+        # `select_related("task", "task__list")` view'da — bu yerda so'rov yo'q.
+        return {
+            "id": str(obj.task_id),
+            "title": obj.task.title,
+            "list_id": str(obj.task.list_id),
+            "list_name": obj.task.list.name,
+        }
+
+
 class TaskAttachmentSerializer(serializers.ModelSerializer):
     """Read-only biriktirma — docs/API_CONTRACT.md §10.7.
 

@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { MailPlus, RefreshCw, Trash2, X } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -41,7 +42,7 @@ import { initials, timeAgo } from "@/lib/format";
 import { can } from "@/lib/permissions";
 import type { Member, Role } from "@/types/api";
 
-import { ROLE_LABEL, ROLE_RANK } from "@/lib/roles";
+import { PROFESSION_LABEL, ROLE_LABEL, ROLE_RANK } from "@/lib/roles";
 
 function SectionSkeleton() {
   return (
@@ -174,6 +175,7 @@ export function MembersSection({ workspaceId }: { workspaceId: string }) {
             <TableRow>
               <TableHead>Ism</TableHead>
               <TableHead>Email</TableHead>
+              <TableHead>Kasbi</TableHead>
               <TableHead>Rol</TableHead>
               <TableHead>Qo&apos;shilgan</TableHead>
               <TableHead className="w-10" />
@@ -195,7 +197,13 @@ export function MembersSection({ workspaceId }: { workspaceId: string }) {
                     </AvatarFallback>
                   </Avatar>
                   <span className="font-medium">
-                    {member.user.full_name || member.user.email}
+                    <Link
+                      href={`/w/${workspaceId}/u/${member.user.id}`}
+                      className="hover:underline"
+                      title={`${member.user.full_name || member.user.email} profilini ochish`}
+                    >
+                      {member.user.full_name || member.user.email}
+                    </Link>
                     {member.user.id === me?.id ? (
                       <span className="ml-1 text-xs text-muted-foreground">(siz)</span>
                     ) : null}
@@ -203,6 +211,15 @@ export function MembersSection({ workspaceId }: { workspaceId: string }) {
                 </TableCell>
                 <TableCell className="text-muted-foreground">
                   {member.user.email}
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {member.user.profession ? (
+                    <Badge variant="outline" className="font-normal">
+                      {PROFESSION_LABEL[member.user.profession]}
+                    </Badge>
+                  ) : (
+                    "—"
+                  )}
                 </TableCell>
                 <TableCell>
                   {canChangeRole &&

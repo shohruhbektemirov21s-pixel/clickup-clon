@@ -1,5 +1,5 @@
 /**
- * API payload types — mirrors docs/API_CONTRACT.md v1.0.0 field-for-field.
+ * API payload types — mirrors docs/API_CONTRACT.md v1.2.0 field-for-field.
  * All timestamps are ISO-8601 UTC strings with a trailing "Z".
  * All ids are UUIDv4 strings.
  */
@@ -218,6 +218,35 @@ export interface Member {
   updated_at: string;
 }
 
+/** §4.1 — counters on a member profile, all inside the CALLER's visibility. */
+export interface MemberProfileStats {
+  open_tasks: number;
+  overdue_tasks: number;
+  /** Due later today; deliberately disjoint from `overdue_tasks`. */
+  due_today: number;
+  completed_tasks: number;
+  created_tasks: number;
+  comments: number;
+}
+
+/** §4.1 — one space the caller can see, plus that member's open tasks in it. */
+export interface MemberProfileSpace {
+  id: string;
+  name: string;
+  color: string;
+  open_tasks: number;
+}
+
+/** `GET workspaces/{id}/members/{user_id}/profile/` — §4.1. */
+export interface MemberProfile {
+  user: UserSummary;
+  role: Role;
+  joined_at: string;
+  last_active_at: string | null;
+  stats: MemberProfileStats;
+  spaces: MemberProfileSpace[];
+}
+
 // ---------------------------------------------------------------------------
 // §5 Invitations
 // ---------------------------------------------------------------------------
@@ -411,6 +440,47 @@ export interface MoveTaskRequest {
 export interface MoveTaskResponse extends Task {
   /** true → the (list_id, status_id) scope was renumbered; refetch, don't patch. */
   rebalanced: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// §10.6 / §10.8 Activity history
+// ---------------------------------------------------------------------------
+
+/** §10.6 closed verb vocabulary — mirrors `apps.core.enums.ActivityVerb`. */
+export type ActivityVerb =
+  | "created"
+  | "status_changed"
+  | "assignee_added"
+  | "assignee_removed"
+  | "priority_changed"
+  | "due_date_changed"
+  | "renamed"
+  | "moved"
+  | "completed"
+  | "deleted"
+  | "restored";
+
+/** Task context embedded in a workspace activity row (§10.8). */
+export interface ActivityTaskRef {
+  id: string;
+  title: string;
+  list_id: string;
+  list_name: string;
+}
+
+/**
+ * `GET workspaces/{id}/activity/` — §10.8. `actor` is null when the user was
+ * hard-deleted (the history outlives them). `metadata` is deliberately not
+ * part of this payload.
+ */
+export interface WorkspaceActivity {
+  id: string;
+  verb: ActivityVerb;
+  actor: UserSummary | null;
+  task: ActivityTaskRef;
+  from_value: string | null;
+  to_value: string | null;
+  created_at: string;
 }
 
 // ---------------------------------------------------------------------------

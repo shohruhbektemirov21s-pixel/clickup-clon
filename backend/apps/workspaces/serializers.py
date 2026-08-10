@@ -76,6 +76,40 @@ class MemberSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class MemberProfileSpaceSerializer(serializers.Serializer):
+    """Bir bo'lim + shu a'zoning undagi ochiq vazifalari (§4.1).
+
+    Faqat CHAQIRUVCHIGA ko'rinadigan bo'limlar keladi (`visible_spaces_q`).
+    """
+
+    id = serializers.UUIDField(read_only=True)
+    name = serializers.CharField(read_only=True)
+    color = serializers.CharField(read_only=True)
+    open_tasks = serializers.IntegerField(read_only=True)
+
+
+class MemberProfileStatsSerializer(serializers.Serializer):
+    """§4.1 statistikalari — hammasi chaqiruvchining ko'rish doirasida."""
+
+    open_tasks = serializers.IntegerField(read_only=True)
+    overdue_tasks = serializers.IntegerField(read_only=True)
+    due_today = serializers.IntegerField(read_only=True)
+    completed_tasks = serializers.IntegerField(read_only=True)
+    created_tasks = serializers.IntegerField(read_only=True)
+    comments = serializers.IntegerField(read_only=True)
+
+
+class MemberProfileSerializer(serializers.Serializer):
+    """`GET workspaces/{id}/members/{user_id}/profile/` — docs/API_CONTRACT.md §4.1."""
+
+    user = UserSummarySerializer(read_only=True)
+    role = serializers.CharField(read_only=True)
+    joined_at = serializers.DateTimeField(read_only=True)
+    last_active_at = serializers.DateTimeField(read_only=True)
+    stats = MemberProfileStatsSerializer(read_only=True)
+    spaces = MemberProfileSpaceSerializer(many=True, read_only=True)
+
+
 class InvitationSerializer(serializers.ModelSerializer):
     workspace_id = serializers.UUIDField(read_only=True)
     invited_by = UserSummarySerializer(read_only=True)

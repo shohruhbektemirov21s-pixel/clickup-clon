@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -248,7 +249,7 @@ function FieldGrid({
       </dd>
 
       <dt className="text-muted-foreground">Mas&apos;ullar</dt>
-      <dd>
+      <dd className="flex flex-wrap items-center gap-1">
         <AssigneePicker
           value={task.assignees}
           members={members?.results ?? []}
@@ -261,6 +262,18 @@ function FieldGrid({
             })
           }
         />
+        {/* Avatarning o'zi tanlash popoverini ochadi, shuning uchun profilga
+            o'tish alohida matnli havola bo'lib turadi. */}
+        {task.assignees.map((assignee) => (
+          <Link
+            key={assignee.id}
+            href={`/w/${workspaceId}/u/${assignee.id}`}
+            title={`${assignee.full_name || assignee.email} profilini ochish`}
+            className="max-w-[9rem] truncate rounded px-1 text-xs text-muted-foreground hover:text-foreground hover:underline"
+          >
+            {assignee.full_name || assignee.email}
+          </Link>
+        ))}
       </dd>
 
       <dt className="text-muted-foreground">Muhimlik</dt>
