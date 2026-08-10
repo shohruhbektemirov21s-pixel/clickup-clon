@@ -144,7 +144,7 @@ jobs:
 
       - name: Test natijalari va coverage hisoboti (yiqilganda ham)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: backend-test-results
           path: |
@@ -211,7 +211,7 @@ jobs:
 
       - name: Sxemani artefakt sifatida saqlash
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openapi-schema
           path: backend/openapi-schema.yml
@@ -277,7 +277,7 @@ jobs:
 
       - name: Test natijalari (yiqilganda ham)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: backend-test-results-windows-sqlite
           path: backend/test-results/junit.xml
@@ -521,7 +521,7 @@ jobs:
       # bo'lmaydi — HTML hisobot + trace'lar faqat yiqilganda yuklanadi.
       - name: Playwright hisoboti va trace'lar (yiqilganda)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: |
@@ -534,7 +534,7 @@ jobs:
 
       - name: E2E junit natijalari
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-junit
           path: frontend/playwright-report/junit.xml
