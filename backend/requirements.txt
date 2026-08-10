@@ -14,7 +14,7 @@ daphne==4.2.3
 django-cors-headers==4.9.0
 django-environ==0.14.0
 django-filter==26.1
-Django==5.2.17
+Django==6.1
 djangorestframework==3.17.2
 djangorestframework_simplejwt==5.5.1
 drf-spectacular==0.30.0
