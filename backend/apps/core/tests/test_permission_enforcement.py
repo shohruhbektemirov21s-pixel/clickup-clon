@@ -121,15 +121,25 @@ def test_granting_a_code_to_guest_opens_the_endpoint(env):
 # ------------------------------------------------------------------ F-6 throttle
 
 
-def _rates(settings, **overrides):
-    config = dict(settings.REST_FRAMEWORK)
-    config["DEFAULT_THROTTLE_RATES"] = {**config["DEFAULT_THROTTLE_RATES"], **overrides}
-    settings.REST_FRAMEWORK = config
+@pytest.fixture
+def throttle_rate(monkeypatch):
+    """DRF `SimpleRateThrottle.THROTTLE_RATES` klass atributiga bog'langan —
+    `settings.REST_FRAMEWORK` ni almashtirish unga yetib bormaydi."""
+    from rest_framework.throttling import SimpleRateThrottle
+
+    def apply(**overrides):
+        monkeypatch.setattr(
+            SimpleRateThrottle,
+            "THROTTLE_RATES",
+            {**SimpleRateThrottle.THROTTLE_RATES, **overrides},
+        )
+
+    return apply
 
 
-def test_invite_creation_is_throttled(env, settings):
+def test_invite_creation_is_throttled(env, throttle_rate):
     """F-6 — `InvitationListCreateView.post` `invite` scope'iga ulangan."""
-    _rates(settings, invite="1/min")
+    throttle_rate(invite="1/min")
     url = f"/api/v1/workspaces/{env.workspace.id}/invitations/"
 
     first = env.owner_client.post(url, {"email": "a@client.com", "role": "member"},
@@ -144,9 +154,9 @@ def test_invite_creation_is_throttled(env, settings):
     assert env.owner_client.get(url).status_code == 200
 
 
-def test_invite_lookup_is_throttled(env, api, settings):
+def test_invite_lookup_is_throttled(api, throttle_rate):
     """F-6 — public `lookup/` token brute-force'dan himoyalangan."""
-    _rates(settings, invite_lookup="1/min")
+    throttle_rate(invite_lookup="1/min")
 
     first = api.get("/api/v1/invitations/lookup/?token=nope")
     assert first.status_code == 404

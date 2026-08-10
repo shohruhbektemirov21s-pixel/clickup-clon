@@ -35,3 +35,11 @@ next-env.d.ts
 .idea/
 .DS_Store
 Thumbs.db
+
+# Docker build contexts: private/corporate root CAs for TLS-inspecting
+# networks. Machine-specific, never committed; the empty dir must stay so the
+# Dockerfile COPY still resolves. See docs/DOCKER.md.
+backend/ca/*
+frontend/ca/*
+!backend/ca/.gitkeep
+!frontend/ca/.gitkeep

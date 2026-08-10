@@ -277,7 +277,7 @@ def test_reset_all_roles(env):
     assert body["overrides"] == []
     for role in ("admin", "member", "guest"):
         assert body["roles"][role]["permissions"] == sorted(DEFAULT_MATRIX[role])
-    assert RolePermission.objects.filter(workspace=env.workspace).count() == 132
+    assert RolePermission.objects.filter(workspace=env.workspace).count() == 144
 
 
 def test_reset_is_owner_only(env):

@@ -1,8 +1,11 @@
 import io
 
+from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 from PIL import Image
 from rest_framework import status
+from rest_framework.exceptions import NotFound
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -38,10 +41,13 @@ class RegisterView(APIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         tokens = token_pair_for(user)
-        return Response(
-            {**tokens, "user": UserSerializer(user, context={"request": request}).data},
-            status=status.HTTP_201_CREATED,
-        )
+        body = {**tokens, "user": UserSerializer(user, context={"request": request}).data}
+        # R21 / §D.8 — `workspace_id` faqat workspace haqiqatan paydo bo'lganda
+        # qaytariladi (invite qabul qilindi yoki `workspace_name` bootstrap).
+        workspace_id = getattr(serializer, "workspace_id", None)
+        if workspace_id:
+            body["workspace_id"] = workspace_id
+        return Response(body, status=status.HTTP_201_CREATED)
 
 
 class LoginView(APIView):
@@ -58,6 +64,51 @@ class LoginView(APIView):
         return Response(
             {**tokens, "user": UserSerializer(user, context={"request": request}).data}
         )
+
+
+class DemoLoginView(APIView):
+    """`POST auth/demo/` — parolsiz demo hisobga kirish.
+
+    XAVFSIZLIK:
+      * Parol hech qachon klientga ketmaydi — tugma faqat shu endpointni
+        chaqiradi, demo parol backend'da qoladi (frontend bundle'ida yo'q).
+      * `DEMO_MODE=False`, hisob yo'q yoki nofaol → `404` (`403` EMAS, endpoint
+        borligini oshkor qilmaydi).
+      * Demo hisob `is_staff`/`is_superuser` bo'lsa → `404`. Shu tufayli bu
+        tugma orqali Django `/admin/` ga hech qachon kirib bo'lmaydi.
+      * `demo` throttle scope IP bo'yicha cheklaydi.
+    """
+
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "demo"
+
+    def post(self, request):
+        from apps.accounts.models import User
+        from apps.workspaces.models import WorkspaceMember
+
+        if not getattr(settings, "DEMO_MODE", False):
+            raise NotFound()
+
+        email = (getattr(settings, "DEMO_USER_EMAIL", "") or "").strip().lower()
+        user = User.objects.filter(email__iexact=email, is_active=True).first() if email else None
+        if user is None or user.is_staff or user.is_superuser:
+            # Eskalatsiya bloki: staff hisob demo tugmasi orqali berilmaydi.
+            raise NotFound()
+
+        user.last_login = timezone.now()
+        user.save(update_fields=["last_login"])
+
+        membership = (
+            WorkspaceMember.objects.filter(user=user).order_by("joined_at").first()
+        )
+        body = {
+            **token_pair_for(user),
+            "user": UserSerializer(user, context={"request": request}).data,
+        }
+        if membership is not None:
+            body["workspace_id"] = str(membership.workspace_id)
+        return Response(body)
 
 
 class RefreshView(APIView):

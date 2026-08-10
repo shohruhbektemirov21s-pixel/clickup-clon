@@ -20,9 +20,9 @@ from apps.core.permissions import (
     grouped_catalog,
 )
 
-# §A — "Jami: 44 kod, 8 guruh."
-EXPECTED_CODE_COUNT = 44
-EXPECTED_GROUP_COUNT = 8
+# §A — "Jami: 48 kod, 9 guruh." (v2: `attachment` guruhi + 4 kod)
+EXPECTED_CODE_COUNT = 48
+EXPECTED_GROUP_COUNT = 9
 
 #: AD-9 — §B.7 ko'chirish jadvalidan olingan kutilmalar. Bu jadval bugungi
 #: `min_role=` xatti-harakatini bit-ma-bit takrorlaydi; buzilsa mavjud
@@ -48,6 +48,7 @@ LEGACY_EXPECTATIONS = {
         "task.restore": {"admin"},
         "task.view_deleted": {"admin"},
         "comment.delete_any": {"admin"},
+        "attachment.delete_any": {"admin"},
         "space.read_private": {"admin"},
         "space.manage_members": {"admin"},
     },
@@ -68,6 +69,8 @@ LEGACY_EXPECTATIONS = {
         "tag.create": {"admin", "member"},
         "tag.update": {"admin", "member"},
         "tag.delete": {"admin", "member"},
+        "attachment.create": {"admin", "member"},
+        "attachment.delete_own": {"admin", "member"},
     },
     "guest+ (min_role='guest')": {
         "workspace.read": {"admin", "member", "guest"},
@@ -78,6 +81,7 @@ LEGACY_EXPECTATIONS = {
         "comment.create": {"admin", "member", "guest"},
         "comment.update_own": {"admin", "member", "guest"},
         "comment.delete_own": {"admin", "member", "guest"},
+        "attachment.read": {"admin", "member", "guest"},
     },
 }
 

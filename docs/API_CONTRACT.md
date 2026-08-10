@@ -9,9 +9,11 @@
 | **Authority** | This doc > PRD.md for API surface. `docs/DATA_MODEL.md` is authoritative for field names/types; this doc mirrors it field-for-field. |
 | **Upstream** | `docs/DATA_MODEL.md`, `docs/PRD.md`, `docs/DESIGN_PERMISSIONS.md`, `backend/config/{settings,pagination,exceptions}.py`, `backend/apps/realtime/middleware.py` |
 
-**Inventory: 69 REST endpoints + 2 WebSocket channels.** Adding an endpoint requires amending this doc in the same commit.
+**Inventory: 70 REST endpoints + 2 WebSocket channels.** Adding an endpoint requires amending this doc in the same commit.
 
-> **v1.1.0 changelog.** Adds §18 (granular permission matrix, `docs/DESIGN_PERMISSIONS.md` §A–D.5) and rulings R18–R23. The role table in §1.7 now describes the **default** matrix, not a hard-coded one. Space-member endpoints (`DESIGN_PERMISSIONS.md` §D.6), the extended `invitations/lookup/` payload (§D.7) and register-with-invite (§D.8) are specified there but **not yet implemented**; they will land with their own contract bump.
+> **v1.1.0 changelog.** Adds §18 (granular permission matrix, `docs/DESIGN_PERMISSIONS.md` §A–D.5) and rulings R18–R23. The role table in §1.7 now describes the **default** matrix, not a hard-coded one. Space-member endpoints (`DESIGN_PERMISSIONS.md` §D.6) and the extended `invitations/lookup/` payload (§D.7) are specified there but **not yet implemented**; they will land with their own contract bump.
+>
+> **v1.1.1 changelog (§2 only).** Register-with-invite (`DESIGN_PERMISSIONS.md` §D.8) is now **implemented**: `auth/register/` accepts `invite_token` and may answer with `workspace_id` (R21). The `User`/`UserSummary` objects gain `profession` — a **profile label, never a permission**. New dev-only endpoint `POST auth/demo/` (endpoint #70).
 
 ---
 
@@ -111,14 +113,41 @@ Per-workspace role on `WorkspaceMember.role`: **`owner` > `admin` > `member` > `
 
 > **R18 (v1.1.0):** the table below is the **default** permission matrix, not a fixed one. Effective authority is `DEFAULT_MATRIX` (catalog in `backend/apps/core/permissions.py`) overlaid with the workspace's `RolePermission` rows — see §18. `owner` is always the full set and can never be edited. The matrix is monotonic: `guest ⊆ member ⊆ admin ⊆ owner`.
 
-Special cases:
+> **Enforcement (v1.1.0).** Views no longer test the role rank; every guarded endpoint resolves a **permission code** through `require_perm` / `require_membership_perm` / `require_space_perm` (`backend/apps/core/access.py`). Changing the matrix therefore changes REST behaviour immediately (`DESIGN_PERMISSIONS.md` §B.7, cache invalidated by `permissions_version`). The role names below are shorthand for "roles holding that code by default".
+
+| Endpoint group | Code(s) enforced |
+|---|---|
+| `PATCH/DELETE workspaces/{id}/` | `workspace.update` / `workspace.delete` |
+| `GET workspaces/{id}/members/` | `member.read` |
+| `PATCH/DELETE members/{user_id}/` | `member.role_change` / `member.remove` |
+| `GET/POST workspaces/{id}/invitations/` | `invitation.read` / `member.invite` |
+| `DELETE invitations/{id}/`, `…/resend/` | `invitation.manage` |
+| `POST spaces/`, `PATCH/DELETE spaces/{id}/` | `space.create` / `space.update` / `space.delete` |
+| `PUT spaces/{id}/status-set/` | `space.manage_statuses` |
+| `POST/PATCH folders/` | `folder.create` / `folder.update` |
+| `DELETE folders/{id}/?strategy=` | `cascade` → `folder.delete_cascade`; `detach` → `folder.delete` |
+| `POST/PATCH/DELETE lists/`, `lists/{id}/move/` | `list.create` / `list.update` / `list.delete` / `list.move` |
+| `PUT/DELETE lists/{id}/status-set/` | `list.manage_statuses` |
+| `POST lists/{id}/tasks/` | `task.create` |
+| `PATCH tasks/{id}/` | `task.update`, else `task.update_assigned` **and** caller is an assignee |
+| `PATCH tasks/{id}/move/` | `task.move`, else `task.update_assigned` **and** caller is an assignee |
+| `DELETE tasks/{id}/`, `PATCH {"deleted_at": null}` | `task.delete` / `task.restore` |
+| `?include_deleted=true` | `task.view_deleted` |
+| `POST tasks/{id}/comments/` | `comment.create` |
+| `PATCH comments/{id}/` | `comment.update_own` **and** caller is the author |
+| `DELETE comments/{id}/` | author → `comment.delete_own`; otherwise `comment.delete_any` |
+| `POST/PATCH/DELETE tags/` | `tag.create` / `tag.update` / `tag.delete` |
+
+Special cases (these **outrank** the matrix — granting a code cannot unlock them):
 - `guest` may **PATCH/move only tasks where they are in the assignees** ("Assignee" below), may create comments, may watch/unwatch, everything else read-only. Guests cannot read the member roster or invitations, and cannot see private spaces (`is_private=true`).
-- Everyone edits/deletes **their own** comments; admin+ may delete (not edit) any comment.
-- Permission is checked before validation. In-workspace denial → `403`; out-of-workspace → `404`.
+- Everyone edits/deletes **their own** comments; admin+ may delete (not edit) any comment. There is deliberately **no `comment.update_any` code** — not even the owner can edit someone else's comment (§12).
+- The **last owner** cannot be demoted, removed, or leave → `409 conflict`, regardless of who holds `member.role_change` / `member.remove`.
+- A caller who is not an `owner` can neither modify an `owner` member nor grant the `owner` role → `403`, even with `member.role_change`.
+- Permission is checked before validation. In-workspace denial → `403`; out-of-workspace → `404`. Strict order: resource missing → `404`; not a member → `404`; space not visible → `404`; missing permission → `403`; invalid payload → `400`.
 
 ### 1.8 Common query params on task collections
 
-See §9.5 for the full filter vocabulary. Defaults everywhere: `archived=false`, soft-deleted excluded (`include_deleted=true` is admin+ only, else `403`).
+See §9.5 for the full filter vocabulary. Defaults everywhere: `archived=false`, soft-deleted excluded (`include_deleted=true` requires `task.view_deleted` — admin+ by default — else `403`).
 
 ---
 
@@ -126,7 +155,7 @@ See §9.5 for the full filter vocabulary. Defaults everywhere: `archived=false`,
 
 | # | Method | Path | Auth | Roles | Success |
 |---|---|---|---|---|---|
-| 1 | POST | `auth/register/` | public | — | `201` `{access, refresh, user}` |
+| 1 | POST | `auth/register/` | public | — | `201` `{access, refresh, user, workspace_id?}` |
 | 2 | POST | `auth/login/` | public | — | `200` `{access, refresh, user}` |
 | 3 | POST | `auth/refresh/` | public (needs refresh token) | — | `200` `{access, refresh}` |
 | 4 | POST | `auth/logout/` | required | any | `204` empty |
@@ -134,15 +163,31 @@ See §9.5 for the full filter vocabulary. Defaults everywhere: `archived=false`,
 | 6 | GET | `me/` | required | any | `200` User |
 | 7 | PATCH | `me/` | required | any | `200` User |
 | 8 | POST | `me/avatar/` | required | any | `200` User |
+| 70 | POST | `auth/demo/` | public | — | `200` `{access, refresh, user, workspace_id?}` |
 
 **Request bodies**
 
-- `register`: `{"email", "password", "full_name"?, "workspace_name"?}`. Email stored lowercase; uniqueness is case-insensitive. Password runs Django's default validators. If `workspace_name` is present the server bootstraps a full workspace in the same transaction (workspace + owner membership + "Team Space" + default status set `TO DO/IN PROGRESS/COMPLETE` + "Getting Started" list + 3 sample tasks — DATA_MODEL §11). If absent, no workspace is created.
+- `register`: `{"email", "password", "full_name"?, "workspace_name"?, "profession"?, "invite_token"?}`. Email stored lowercase; uniqueness is case-insensitive. Password runs Django's default validators (failures land on `details.password`, message text is Uzbek). If `workspace_name` is present the server bootstraps a full workspace in the same transaction (workspace + owner membership + "Team Space" + default status set `TO DO/IN PROGRESS/COMPLETE` + "Getting Started" list + 3 sample tasks — DATA_MODEL §11). If absent, no workspace is created. `workspace_id` is returned **only** when a workspace was actually created or joined (R21); the key is absent otherwise.
+
+**`register` with `invite_token` (DESIGN_PERMISSIONS §D.8, implemented):**
+
+| Rule | Behaviour |
+|---|---|
+| `invite_token` + `workspace_name` together | `400 validation_error`, `details.workspace_name` |
+| Unknown or expired token | `404 not_found` (never `403` — existence is not disclosed) |
+| Token already `accepted`/`revoked` | `409 conflict` (same semantics as `invitations/accept/`) |
+| `email` ≠ invitation email (case-insensitive) | `400 validation_error`, `details.email` |
+| `full_name` shorter than 2 chars | `400 validation_error`, `details.full_name` |
+| Success | one transaction: User → invitation `accepted` → `WorkspaceMember(role=invitation.role, invited_by=…)` → `refresh_member_count()`; response carries `workspace_id` |
+
+The new member's role comes **only** from `Invitation.role`. A client-supplied `role` field is ignored and never read. The client's `email` is used solely to prove it matches the invitation; the account is created for `Invitation.email`. Concurrency is guarded by `SELECT … FOR UPDATE` plus a status-conditional `UPDATE … WHERE status='pending'` (SQLite makes the former a no-op), so a second racing request gets `409` and no second membership.
+
+- `auth/demo/`: no body. Returns a token pair for `DEMO_USER_EMAIL` so the UI can offer a "Demo rejimda kirish" button without shipping a password to the client. Returns `404 not_found` when `DEMO_MODE` is off, when the account is missing/inactive, or when the account is `is_staff`/`is_superuser` (escalation guard). Throttled by the `demo` scope (default 10/hour per IP). **Off by default; local development only.**
 - `login`: `{"email", "password"}`. Failure → `401 authentication_failed`. Updates `last_login`.
 - `refresh`: `{"refresh"}`. Rotates; old token blacklisted.
 - `logout`: `{"refresh"}` — blacklists that refresh token only (other devices unaffected).
 - `password/change`: `{"current_password", "new_password"}`. Wrong current password → `400 validation_error` on `current_password`. On success all the user's other refresh tokens are blacklisted and a fresh pair is returned.
-- `PATCH me/`: any of `{"full_name", "timezone", "avatar_color"}`. `timezone` must be a valid IANA name (validated against `zoneinfo.available_timezones()`), else `400 validation_error`. Email change is out of MVP scope.
+- `PATCH me/`: any of `{"full_name", "timezone", "avatar_color", "profession"}`. `timezone` must be a valid IANA name (validated against `zoneinfo.available_timezones()`), else `400 validation_error`. Email change is out of MVP scope.
 - `me/avatar/`: multipart field `avatar` — jpeg/png/webp, max 2 MB, resized server-side to 256×256. This is the **only** file upload in MVP.
 
 **Errors:** register/login are throttled (`429 throttled`). Duplicate email on register → `400 validation_error` with `details.email`.
@@ -156,6 +201,7 @@ See §9.5 for the full filter vocabulary. Defaults everywhere: `archived=false`,
   "full_name": "Maya Chen",
   "avatar": "https://host/media/avatars/2026/08/maya.webp",
   "avatar_color": "#7B68EE",
+  "profession": "project_manager",
   "timezone": "Europe/Berlin",
   "date_joined": "2026-08-07T09:00:00Z",
   "last_seen_at": "2026-08-07T09:15:00Z",
@@ -164,7 +210,9 @@ See §9.5 for the full filter vocabulary. Defaults everywhere: `archived=false`,
 }
 ```
 
-**UserSummary** (embedded everywhere a user appears inside another resource): `{"id", "email", "full_name", "avatar", "avatar_color"}`.
+**UserSummary** (embedded everywhere a user appears inside another resource): `{"id", "email", "full_name", "avatar", "avatar_color", "profession"}`.
+
+**`profession`** — closed set: `""` (unset) | `project_manager` | `developer` | `designer` | `qa` | `analyst` | `marketing` | `other`. It is a **profile label only**: it exists so a PM can pick the right people, and it is deliberately independent of `WorkspaceMember.role` and of §18's permission matrix. No permission check reads it; writing it grants and removes nothing. Writable on `register` and `PATCH me/`; read-only inside `UserSummary`.
 
 ---
 
@@ -276,6 +324,7 @@ See §9.5 for the full filter vocabulary. Defaults everywhere: `archived=false`,
 - The raw `token` never appears in any API response (it travels only in the invitation email). `lookup/` is the sole token-based read: returns `{"workspace_name", "email", "role", "expires_at"}` and nothing else. Unknown/expired/revoked token → `404 not_found`.
 - `accept/` / `decline/` body: `{"token"}`. Caller must be authenticated with the invited email, else `403 permission_denied`. Accept creates the `WorkspaceMember` with the invited role. Replay of a consumed token → `409 conflict`; unknown/expired → `404`. Decline marks the invitation `revoked` (no separate `declined` status exists in the data model).
 - Expiry: `created_at + INVITATION_TTL_DAYS` (**7 days**, env-configurable). `resend/` refreshes `expires_at`, throttled to 1/5 min, max `sent_count` 5 (`429 throttled` / `409 conflict` past the cap). Revoking a non-pending invitation → `409 conflict`.
+- **Throttling (F-6).** `POST workspaces/{id}/invitations/` runs under the `invite` scope (`INVITE_THROTTLE_RATE`, default 20/hour per user); the public `invitations/lookup/` runs under `invite_lookup` (`INVITE_LOOKUP_THROTTLE_RATE`, default 30/hour per IP) so tokens cannot be brute-forced. Listing invitations is not throttled. Over the limit → `429 throttled`.
 
 **Invitation object:**
 
@@ -439,6 +488,10 @@ A `StatusSet` belongs to exactly one of a Space (default, always exists) or a Li
 | 52 | PATCH | `tasks/{id}/move/` | member+; guest **Assignee** only | `200` Task (+ `rebalanced`) |
 | 53 | POST | `tasks/{id}/watch/` | any member | `201` Task (`200` if already watching — idempotent) |
 | 54 | DELETE | `tasks/{id}/watch/` | any member | `204` empty (idempotent) |
+| 71 | GET | `tasks/{id}/attachments/` | `attachment.read` (any member incl. guest) | `200` paginated Attachment[] |
+| 72 | POST | `tasks/{id}/attachments/` | `attachment.create` (member+; guest → `403`) | `201` Attachment |
+| 73 | GET | `attachments/{id}/download/` | `attachment.read` | `200` file stream |
+| 74 | DELETE | `attachments/{id}/` | `attachment.delete_own` / `attachment.delete_any` | `204` empty (hard delete) |
 
 ### 10.1 Task object (worked example for this group)
 
@@ -459,6 +512,7 @@ A `StatusSet` belongs to exactly one of a Space (default, always exists) or a Li
   "is_deleted": false,
   "completed_at": null,
   "comment_count": 3,
+  "attachment_count": 2,
   "assignees": [ { "id": "…", "email": "dan@acme.io", "full_name": "Dan Ortiz", "avatar": null, "avatar_color": "#49CCF9" } ],
   "watchers":  [ { "id": "…", "email": "maya@acme.io", "full_name": "Maya Chen", "avatar": null, "avatar_color": "#7B68EE" } ],
   "tags":      [ { "id": "…", "name": "backend", "color": "#FD71AF" } ],
@@ -469,7 +523,7 @@ A `StatusSet` belongs to exactly one of a Space (default, always exists) or a Li
 }
 ```
 
-Read-only fields: `position`, `comment_count`, `completed_at` (set/cleared by the server on transitions into/out of a `closed`-type status), `is_deleted`, `created_by`, `updated_by`, `watchers` (managed only via `watch/`), timestamps. `priority_order` is never serialized — it exists only as the `?ordering=priority_order` sort key.
+Read-only fields: `position`, `comment_count`, `attachment_count` (server-maintained counters — see §12 and §10.7), `completed_at` (set/cleared by the server on transitions into/out of a `closed`-type status), `is_deleted`, `created_by`, `updated_by`, `watchers` (managed only via `watch/`), timestamps. `priority_order` is never serialized — it exists only as the `?ordering=priority_order` sort key.
 
 ### 10.2 Create / update
 
@@ -532,6 +586,67 @@ Applies to `lists/{id}/tasks/` and `workspaces/{id}/tasks/`. Different keys AND;
 | `include_deleted` | `true` — **admin+ only**, else `403 permission_denied` |
 | `group_by` | `status` (list-tasks endpoint only) |
 | `ordering` | one of `position`, `due_date`, `priority_order`, `created_at`, `updated_at`, `title`, each with optional `-` prefix. Default `position`. Anything else → `400 validation_error` |
+
+### 10.7 Attachments (files & documents)
+
+Endpoints 71–74. Files are attached to a task, never to a list or comment.
+
+**Attaching to a completed task is explicitly allowed (BINDING).** Neither
+`POST tasks/{id}/attachments/` nor `DELETE attachments/{id}/` looks at
+`completed_at` or at `status.type == "closed"` — a task that is already done
+still accepts the final report, the signed contract or the invoice. A server
+that returns `409`/`403` for a closed task violates this contract.
+
+**Attachment object:**
+
+```json
+{
+  "id": "…",
+  "task_id": "…",
+  "original_name": "yakuniy-hisobot.pdf",
+  "content_type": "application/pdf",
+  "size_bytes": 248117,
+  "download_url": "https://api.example.com/api/v1/attachments/…/download/",
+  "uploaded_by": { "id": "…", "email": "maya@acme.io", "full_name": "Maya Chen", "avatar": null, "avatar_color": "#7B68EE", "profession": "" },
+  "created_at": "2026-08-10T09:30:00Z",
+  "updated_at": "2026-08-10T09:30:00Z"
+}
+```
+
+- The storage path is **never** serialized. `download_url` is the only read
+  path and it re-checks `attachment.read`; a direct `MEDIA_URL` link would not.
+- `uploaded_by` is `null` for hard-deleted users (render "Deleted user").
+- Ordering: `created_at DESC` (newest first), standard pagination envelope.
+
+**Upload** — `POST tasks/{id}/attachments/`, `multipart/form-data`, single
+part named `file`. A JSON body → `415 unsupported_media_type`.
+
+| Rule | Value / behaviour |
+|---|---|
+| Max size | `MAX_ATTACHMENT_MB` (default **10 MB**); over → `400 validation_error`, `details.file` |
+| Empty file | `400 validation_error` |
+| Extension allow-list | `pdf, doc, docx, xls, xlsx, ppt, pptx, txt, md, csv, png, jpg, jpeg, webp, gif, zip` |
+| Rejected outright | `svg`, `html`, `js`, `exe`, `bat`, `sh` and every other executable/active type → `400 validation_error` (an inline SVG is a stored-XSS vector) |
+| Declared MIME | must be in the allow-list or neutral (`application/octet-stream`); anything else → `400` |
+| Stored `content_type` | derived **server-side from the extension** — the client's value is never trusted |
+| Stored filename | generated server-side as `<uuid4>.<ext>`; the client's name is sanitized and kept only in `original_name` (path traversal and double extensions cannot reach storage) |
+| Throttle | `attachment` scope, `ATTACHMENT_THROTTLE_RATE` (default `30/hour`) → `429 throttled` |
+
+**Download** — `GET attachments/{id}/download/` streams the bytes with:
+
+- `Content-Disposition: attachment; filename="<ascii>"; filename*=UTF-8''<pct-encoded>` (RFC 6266 + RFC 5987) — never `inline`;
+- `X-Content-Type-Options: nosniff`;
+- `Content-Type` = the stored canonical type;
+- `Cache-Control: private, no-store`.
+
+**Delete** — `DELETE attachments/{id}/` is a **hard** delete (row + stored
+file). The uploader needs `attachment.delete_own`; deleting somebody else's
+file needs `attachment.delete_any` (admin+ by default).
+
+**Tenant isolation:** an attachment or task outside the caller's workspaces —
+or inside a private space they cannot see — is always `404 not_found`, never
+`403` (§1.7). `attachment_count` on the Task object is maintained by the
+server on every upload/delete.
 
 ---
 
@@ -655,9 +770,9 @@ Every server→client message:
 - `event_id` is unique per event; clients apply events idempotently (same `event_id` twice = no-op).
 - Echo suppression: drop any frame where `payload.actor.client_id` equals this tab's own client id.
 - `rebalanced` appears only on `task.moved`; `true` means "positions in this `(list_id, status_id)` scope were renumbered — refetch, don't patch."
-- For `*.deleted` events, `data` is `{"id": "…", "list_id": "…"}` (task) / `{"id": "…", "task_id": "…"}` (comment).
+- For `*.deleted` events, `data` is `{"id": "…", "list_id": "…"}` (task) / `{"id": "…", "task_id": "…"}` (comment). `attachment.removed` uses the same `{"id", "task_id"}` shape.
 
-### 15.3 Event types (closed set, v1.1.0)
+### 15.3 Event types (closed set, v1.2.0)
 
 | `type` | Channel | `data` |
 |---|---|---|
@@ -669,6 +784,8 @@ Every server→client message:
 | `comment.created` | list | Comment |
 | `comment.updated` | list | Comment |
 | `comment.deleted` | list | `{"id", "task_id"}` |
+| `attachment.added` | list | Attachment (v1.2.0 — see §10.7) |
+| `attachment.removed` | list | `{"id", "task_id"}` (v1.2.0) |
 | `list.updated` | workspace | List (rename/recolor/archive/move/counts changed) |
 | `permission.updated` | workspace | `{"workspace_id", "version"}` (v1.1.0, R23 — see §18.6) |
 | `access.revoked` | `user.<id>` | `{"workspace_id", "space_id"\|null}` (v1.1.0, R23 — see §18.6) |
@@ -682,12 +799,12 @@ A mutation that fails validation/permission emits **no** event. Every successful
 
 ---
 
-## 16. Endpoint inventory (69)
+## 16. Endpoint inventory (74)
 
 | Group | Count | Endpoints |
 |---|---|---|
 | Permissions | 5 | catalog, matrix GET/PUT, matrix reset, my-permissions |
-| Auth | 5 | register, login, refresh, logout, password/change |
+| Auth | 6 | register, login, refresh, logout, password/change, demo (dev-only, `DEMO_MODE`) |
 | Profile | 3 | me GET/PATCH, me/avatar POST |
 | Workspaces | 6 | list, create, retrieve, update, delete, tree |
 | Members | 4 | list, role PATCH, remove, leave |
@@ -697,6 +814,7 @@ A mutation that fails validation/permission emits **no** event. Every successful
 | Lists | 6 | list, create, retrieve, update, delete, move |
 | Status sets | 5 | space GET/PUT, list GET/PUT/DELETE |
 | Tasks | 8 | list, create, retrieve, update, delete, move, watch POST/DELETE |
+| Attachments | 4 | list, upload, download, delete |
 | Tags | 4 | list, create, update, delete |
 | Comments | 4 | list, create, update, delete |
 | Search | 2 | workspace tasks, workspace search |
@@ -733,12 +851,13 @@ WebSocket: `/ws/list/{list_id}/`, `/ws/workspaces/{workspace_id}/`.
 | R21 | Register response has no workspace reference when joining via invite | `AuthResponse.workspace_id` is reserved as an optional field (`DESIGN_PERMISSIONS.md` §D.8). **Not implemented yet.** |
 | R22 | `invitations/lookup/` returns a minimal payload | To be extended with workspace colour, inviter summary and `account_exists`, never exposing `id` fields, plus an `invite_lookup` 30/min per-IP throttle (§D.7). **Not implemented yet.** |
 | R23 | WS event vocabulary was closed at v1.0.0 | Extended with `permission.updated` (workspace channel) and `access.revoked` (`user.<id>` channel) — see §15.3. |
+| R24 | Should a completed task still accept files? | **Yes, binding.** Attachment endpoints never inspect `completed_at`/`status.type`; the whole point of the feature is filing the deliverable after the work is done (§10.7). |
 
 ---
 
 ## 18. Permissions — granular matrix
 
-Upstream: `docs/DESIGN_PERMISSIONS.md` §A–§D.5. The permission **catalog lives in code** (`backend/apps/core/permissions.py`, 44 codes in 8 groups, `catalog_version = 1`); **grants live in the database** (`RolePermission`). A missing row falls back to the catalog default, so new codes need no backfill.
+Upstream: `docs/DESIGN_PERMISSIONS.md` §A–§D.5. The permission **catalog lives in code** (`backend/apps/core/permissions.py`, 48 codes in 9 groups, `catalog_version = 2`); **grants live in the database** (`RolePermission`). A missing row falls back to the catalog default, so new codes need no backfill.
 
 - `owner` is never stored: `role == "owner"` short-circuits to allow, and the table carries `CheckConstraint(role != 'owner')`.
 - `Workspace.permissions_version` (read-only, serialized on the Workspace object) is both the optimistic-concurrency token and the permission cache key.
@@ -750,7 +869,7 @@ Auth required, no role required, **not paginated**.
 
 ```json
 {
-  "catalog_version": 1,
+  "catalog_version": 2,
   "groups": [{
     "key": "task", "label": "Vazifalar",
     "permissions": [{
@@ -770,7 +889,7 @@ Requires `workspace.manage_permissions` (owner-only by default).
 
 ```json
 {
-  "workspace_id": "…", "version": 7, "catalog_version": 1,
+  "workspace_id": "…", "version": 7, "catalog_version": 2,
   "roles": {
     "owner":  { "locked": true,  "permissions": ["…all 44 codes…"] },
     "admin":  { "locked": false, "permissions": ["…"] },

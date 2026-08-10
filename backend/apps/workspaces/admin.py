@@ -60,7 +60,7 @@ class WorkspaceMemberInline(admin.TabularInline):
 
 
 class RolePermissionInline(admin.TabularInline):
-    """132 qator — default yopiq; faqat `allowed` tahrirlanadi."""
+    """144 qator — default yopiq; faqat `allowed` tahrirlanadi."""
 
     model = RolePermission
     extra = 0

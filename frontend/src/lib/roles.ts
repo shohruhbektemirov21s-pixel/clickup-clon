@@ -1,4 +1,4 @@
-import type { PermissionGroupKey, Role, SpaceAccess } from "@/types/api";
+import type { PermissionGroupKey, Profession, Role, SpaceAccess } from "@/types/api";
 
 /**
  * Uzbek display labels for workspace roles. Display only — the API always
@@ -10,6 +10,27 @@ export const ROLE_LABEL: Record<Role, string> = {
   member: "A'zo",
   guest: "Mehmon",
 };
+
+/**
+ * Kasb roli yorliqlari. DIQQAT: bu RUXSAT ROLI EMAS — `ROLE_LABEL` bilan
+ * aralashtirmang. `profession` hech qanday vakolat bermaydi, u faqat profil
+ * ma'lumoti (PM loyihaga mos odam tanlashi uchun).
+ */
+export const PROFESSION_LABEL: Record<Exclude<Profession, "">, string> = {
+  project_manager: "Loyiha menejeri",
+  developer: "Dasturchi",
+  designer: "Dizayner",
+  qa: "Tester",
+  analyst: "Analitik",
+  marketing: "Marketolog",
+  other: "Boshqa",
+};
+
+/** Select uchun tartib — ro'yxatdan o'tish formasidagi ketma-ketlik. */
+export const PROFESSION_OPTIONS = Object.entries(PROFESSION_LABEL) as [
+  Exclude<Profession, "">,
+  string,
+][];
 
 /** Roster ordering per the contract: owner, admin, member, guest, then email. */
 export const ROLE_RANK: Record<Role, number> = {
@@ -42,5 +63,6 @@ export const PERMISSION_GROUP_LABEL: Record<PermissionGroupKey, string> = {
   list: "Ro'yxatlar",
   task: "Vazifalar",
   comment: "Izohlar",
+  attachment: "Biriktirmalar",
   tag: "Teglar",
 };

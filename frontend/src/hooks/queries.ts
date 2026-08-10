@@ -8,6 +8,7 @@ import type {
   Comment,
   GroupedTasksResponse,
   Invitation,
+  InvitationLookup,
   List,
   Member,
   MyPermissions,
@@ -19,6 +20,7 @@ import type {
   StatusSet,
   Tag,
   Task,
+  TaskAttachment,
   User,
   Workspace,
   WorkspaceTree,
@@ -156,10 +158,14 @@ export function useMyTasks(workspaceId: string) {
 }
 
 /**
- * One workspace-wide task page, used only to derive per-member open-task
- * counts on the dashboard (never one request per member).
+ * One workspace-wide task page. It backs BOTH dashboard consumers — the
+ * per-member open-task counters and the "Jamoa vazifalari" view grouped by
+ * assignee — from a single cache entry, so neither adds a request per member.
+ * `canRead` mirrors `task.read`; pass `false` to skip a guaranteed-empty read.
+ * The server already drops tasks in spaces the caller cannot see, so the
+ * client never re-filters for visibility.
  */
-export function useWorkspaceTasks(workspaceId: string) {
+export function useWorkspaceTasks(workspaceId: string, canRead = true) {
   const enabled = useAuthed();
   return useQuery({
     queryKey: keys.workspaceTasks(workspaceId, "all"),
@@ -167,7 +173,7 @@ export function useWorkspaceTasks(workspaceId: string) {
       api.get<Paginated<Task>>(`workspaces/${workspaceId}/tasks/`, {
         page_size: 200,
       }),
-    enabled: enabled && !!workspaceId,
+    enabled: enabled && !!workspaceId && canRead,
     staleTime: 60_000,
   });
 }
@@ -212,6 +218,23 @@ export function useComments(taskId: string | null) {
     queryFn: () =>
       api.get<Paginated<Comment>>(`tasks/${taskId}/comments/`, { page_size: 100 }),
     enabled: enabled && !!taskId,
+  });
+}
+
+/**
+ * Attachments of a task (§10.7). `canRead` mirrors `attachment.read`, which
+ * every role holds by default — pass `false` only when the matrix revoked it,
+ * so the panel does not fire a request that is guaranteed to 403.
+ */
+export function useAttachments(taskId: string | null, canRead = true) {
+  const enabled = useAuthed();
+  return useQuery({
+    queryKey: keys.attachments(taskId ?? ""),
+    queryFn: () =>
+      api.get<Paginated<TaskAttachment>>(`tasks/${taskId}/attachments/`, {
+        page_size: 100,
+      }),
+    enabled: enabled && !!taskId && canRead,
   });
 }
 
@@ -263,6 +286,23 @@ export function useRolePermissions(workspaceId: string, canRead: boolean) {
       api.get<RolePermissionMatrix>(`workspaces/${workspaceId}/role-permissions/`),
     enabled: enabled && !!workspaceId && canRead,
     staleTime: 30_000,
+  });
+}
+
+/**
+ * `GET invitations/lookup/?token=` — PUBLIC endpoint, shuning uchun
+ * `auth: false` bilan chaqiriladi (chaqiruvchi tizimga kirmagan bo'lishi
+ * mumkin). Noma'lum/eskirgan token → 404; retry qilinmaydi.
+ */
+export function useInvitationLookup(token: string) {
+  return useQuery({
+    queryKey: keys.invitationLookup(token),
+    queryFn: () =>
+      api.get<InvitationLookup>("invitations/lookup/", { token }, { auth: false }),
+    enabled: !!token,
+    retry: false,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
   });
 }
 

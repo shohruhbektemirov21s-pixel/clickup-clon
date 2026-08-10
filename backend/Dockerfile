@@ -43,6 +43,17 @@ RUN apt-get update \
         cargo \
     && rm -rf /var/lib/apt/lists/*
 
+# Networks that inspect TLS re-sign pypi.org with a private root, and pip then
+# fails with CERTIFICATE_VERIFY_FAILED. Drop such roots into backend/ca/*.crt
+# and they get trusted here. pip trusts certifi's bundle rather than the system
+# store, so PIP_CERT/SSL_CERT_FILE redirect it. The directory ships empty, so
+# this is a no-op on networks that do not intercept.
+COPY ca/ /usr/local/share/ca-certificates/
+RUN update-ca-certificates
+ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
 # A self-contained virtualenv so the runtime stage is a single COPY.
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"

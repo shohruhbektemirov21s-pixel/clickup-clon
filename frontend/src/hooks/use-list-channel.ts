@@ -13,6 +13,8 @@ import type {
   GroupedTasksResponse,
   Paginated,
   Task,
+  TaskAttachment,
+  WsAttachmentRemovedData,
   WsCommentDeletedData,
   WsFrame,
   WsTaskDeletedData,
@@ -132,6 +134,39 @@ export function useListChannel(listId: string | null) {
                   }
                 : old,
           );
+          break;
+        }
+        case "attachment.added": {
+          const attachment = payload.data as TaskAttachment;
+          queryClient.setQueryData<Paginated<TaskAttachment>>(
+            keys.attachments(attachment.task_id),
+            (old) =>
+              old && !old.results.some((a) => a.id === attachment.id)
+                ? {
+                    ...old,
+                    count: old.count + 1,
+                    results: [attachment, ...old.results],
+                  }
+                : old,
+          );
+          // `attachment_count` lives on the task.
+          queryClient.invalidateQueries({ queryKey: keys.task(attachment.task_id) });
+          break;
+        }
+        case "attachment.removed": {
+          const data = payload.data as WsAttachmentRemovedData;
+          queryClient.setQueryData<Paginated<TaskAttachment>>(
+            keys.attachments(data.task_id),
+            (old) =>
+              old
+                ? {
+                    ...old,
+                    count: Math.max(0, old.count - 1),
+                    results: old.results.filter((a) => a.id !== data.id),
+                  }
+                : old,
+          );
+          queryClient.invalidateQueries({ queryKey: keys.task(data.task_id) });
           break;
         }
         default:

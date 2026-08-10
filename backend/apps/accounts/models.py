@@ -5,6 +5,7 @@ from django.db import models
 from django.db.models.functions import Lower
 from django.utils.timezone import now as tz_now
 
+from apps.core.enums import Profession
 from apps.core.models import HEX_COLOR, TimeStampedModel
 
 
@@ -46,6 +47,13 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
     )
     avatar_color = models.CharField(
         max_length=7, default="#7B68EE", validators=[HEX_COLOR]
+    )
+
+    # Kasb roli — PROFIL MA'LUMOTI, RUXSAT ROLI EMAS. Hech qanday tekshiruv
+    # (has_perm / require_perm / WorkspaceRole) bu maydonni o'qimaydi; u faqat
+    # UI'da ko'rsatiladi va PM odam tanlashiga yordam beradi.
+    profession = models.CharField(
+        max_length=20, choices=Profession.choices, blank=True, default=""
     )
 
     timezone = models.CharField(max_length=64, default="UTC", db_index=False)

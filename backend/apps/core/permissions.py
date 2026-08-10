@@ -22,7 +22,8 @@ from dataclasses import dataclass
 
 # Katalog sxemasi o'zgarganda (yangi kod / guruh) oshiriladi; frontend
 # `staleTime: Infinity` bilan keshlaydi va shu raqamga qarab yangilanadi.
-CATALOG_VERSION = 1
+# v2 — `attachment` guruhi (4 kod) qo'shildi.
+CATALOG_VERSION = 2
 
 CODE_RE = re.compile(r"^[a-z_]+\.[a-z_]+$")
 MAX_CODE_LENGTH = 64
@@ -65,6 +66,7 @@ PERMISSION_GROUPS: dict[str, str] = {
     "list": "Ro'yxatlar",
     "task": "Vazifalar",
     "comment": "Izohlar",
+    "attachment": "Biriktirmalar",
     "tag": "Teglar",
 }
 
@@ -376,6 +378,37 @@ PERMISSIONS: tuple[PermissionDef, ...] = (
         group="comment",
         label="Har qanday izohni o'chirish",
         description="Boshqa foydalanuvchining izohini o'chirish (moderatsiya).",
+        defaults=A,
+        sensitive=True,
+    ),
+    # ------------------------------------------------------------ attachment
+    PermissionDef(
+        code="attachment.read",
+        group="attachment",
+        label="Biriktirmalarni ko'rish",
+        description="Vazifaga biriktirilgan fayllar ro'yxatini ko'rish va yuklab olish.",
+        defaults=AMG,
+    ),
+    PermissionDef(
+        code="attachment.create",
+        group="attachment",
+        label="Fayl biriktirish",
+        description="Vazifaga fayl yuklash. Bajarilgan (yopilgan) vazifaga ham "
+        "biriktirish mumkin.",
+        defaults=AM,
+    ),
+    PermissionDef(
+        code="attachment.delete_own",
+        group="attachment",
+        label="O'z faylini o'chirish",
+        description="Faqat o'zi yuklagan biriktirmani o'chirish.",
+        defaults=AM,
+    ),
+    PermissionDef(
+        code="attachment.delete_any",
+        group="attachment",
+        label="Har qanday faylni o'chirish",
+        description="Boshqa foydalanuvchi yuklagan biriktirmani o'chirish (moderatsiya).",
         defaults=A,
         sensitive=True,
     ),

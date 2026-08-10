@@ -5,7 +5,7 @@ from rest_framework import serializers
 from apps.accounts.serializers import UserSummarySerializer
 from apps.core.enums import Priority
 from apps.core.sanitize import clean_html
-from apps.tasks.models import Tag, Task, TaskActivity
+from apps.tasks.models import Tag, Task, TaskActivity, TaskAttachment
 
 MAX_DESCRIPTION_JSON_BYTES = 256 * 1024
 
@@ -53,6 +53,7 @@ class TaskSerializer(serializers.ModelSerializer):
             "is_deleted",
             "completed_at",
             "comment_count",
+            "attachment_count",
             "assignees",
             "watchers",
             "tags",
@@ -99,6 +100,39 @@ class TaskActivitySerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = fields
+
+
+class TaskAttachmentSerializer(serializers.ModelSerializer):
+    """Read-only biriktirma — docs/API_CONTRACT.md §10.7.
+
+    `file` maydoni ATAYLAB serializatsiya qilinmaydi: MEDIA_URL ostidagi
+    to'g'ridan-to'g'ri havola hech qanday ruxsat tekshiruvidan o'tmaydi.
+    Yagona yo'l — `download_url` (`GET attachments/{id}/download/`).
+    """
+
+    task_id = serializers.UUIDField(read_only=True)
+    uploaded_by = UserSummarySerializer(read_only=True)
+    download_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TaskAttachment
+        fields = [
+            "id",
+            "task_id",
+            "original_name",
+            "content_type",
+            "size_bytes",
+            "download_url",
+            "uploaded_by",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_download_url(self, obj) -> str:
+        path = f"/api/v1/attachments/{obj.id}/download/"
+        request = self.context.get("request")
+        return request.build_absolute_uri(path) if request is not None else path
 
 
 class TaskInputSerializer(serializers.Serializer):

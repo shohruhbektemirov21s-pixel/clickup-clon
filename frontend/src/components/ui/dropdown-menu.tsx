@@ -53,6 +53,9 @@ function DropdownMenuGroup({ ...props }: MenuPrimitive.Group.Props) {
   return <MenuPrimitive.Group data-slot="dropdown-menu-group" {...props} />
 }
 
+const groupLabelClass =
+  "px-1.5 py-1 text-xs font-medium text-muted-foreground data-inset:pl-7"
+
 function DropdownMenuLabel({
   className,
   inset,
@@ -61,20 +64,41 @@ function DropdownMenuLabel({
   inset?: boolean
 }) {
   // GroupLabel throws "MenuGroupContext is missing" unless a Menu.Group sits
-  // above it, so the label carries its own group instead of relying on every
-  // call site to remember one.
+  // above it, so the standalone label carries its own group instead of relying
+  // on every call site to remember one. Never place this inside a
+  // DropdownMenuGroup — that nests groups; use DropdownMenuGroupLabel there.
   return (
     <MenuPrimitive.Group>
       <MenuPrimitive.GroupLabel
         data-slot="dropdown-menu-label"
         data-inset={inset}
-        className={cn(
-          "px-1.5 py-1 text-xs font-medium text-muted-foreground data-inset:pl-7",
-          className
-        )}
+        className={cn(groupLabelClass, className)}
         {...props}
       />
     </MenuPrimitive.Group>
+  )
+}
+
+/**
+ * Label for an explicit `DropdownMenuGroup` — it does NOT bring its own group,
+ * so the surrounding group is the one it names (and no group nests inside
+ * another). Outside a group it would throw "MenuGroupContext is missing";
+ * use `DropdownMenuLabel` there.
+ */
+function DropdownMenuGroupLabel({
+  className,
+  inset,
+  ...props
+}: MenuPrimitive.GroupLabel.Props & {
+  inset?: boolean
+}) {
+  return (
+    <MenuPrimitive.GroupLabel
+      data-slot="dropdown-menu-group-label"
+      data-inset={inset}
+      className={cn(groupLabelClass, className)}
+      {...props}
+    />
   )
 }
 
@@ -260,6 +284,7 @@ export {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuGroup,
+  DropdownMenuGroupLabel,
   DropdownMenuLabel,
   DropdownMenuItem,
   DropdownMenuCheckboxItem,

@@ -63,6 +63,9 @@ SPACE_VIEWER_GRANTS = frozenset(
         "task.read",
         "task.watch",
         "task.view_deleted",
+        # O'qish kodi — viewer vazifani ko'ra olsa, uning fayllarini ham
+        # ko'ra olishi kerak (yozish kodlari ataylab kirmaydi).
+        "attachment.read",
     }
 )
 
@@ -93,6 +96,11 @@ SPACE_MANAGER_GRANTS = frozenset(
         "task.watch",
         "task.restore",
         "task.view_deleted",
+        "attachment.read",
+        "attachment.create",
+        "attachment.delete_own",
+        # `attachment.delete_any` ataylab YO'Q — `comment.delete_any` kabi
+        # moderatsiya huquqi bo'lim menejeriga lokal berilmaydi.
     }
 )
 
@@ -121,7 +129,19 @@ def require_membership(user, workspace_id, min_role="guest"):
 
 
 def require_role(membership, min_role):
-    """Legacy rol tekshiruvi — §B.7 ko'chirishi tugagach olib tashlanadi."""
+    """Legacy rol tekshiruvi — §B.7 shim.
+
+    View qatlami to'liq `require_perm` ga ko'chirildi; bu funksiya faqat
+    tashqi/eski chaqiruvlar uchun qoldi va yangi kodda ishlatilmasligi kerak
+    (§C.5 drift-guard testi `apps/*/views.py` da uni taqiqlaydi).
+    """
+    import warnings
+
+    warnings.warn(
+        "require_role() eskirgan — apps.core.access.require_perm() dan foydalaning.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if ROLE_RANK[membership.role] < MIN_RANK[min_role]:
         raise PermissionDenied()
     return membership

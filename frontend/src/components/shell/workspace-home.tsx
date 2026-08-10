@@ -8,27 +8,34 @@ import {
   CircleAlert,
   ListChecks,
   MessageSquare,
+  Plus,
   Users,
+  X,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   useMe,
   useMembers,
+  useMyPermissions,
   useMyTasks,
   useStatusesByListIds,
   useWorkspace,
   useWorkspaceTasks,
   useWorkspaceTree,
 } from "@/hooks/queries";
+import { useWorkspaceChannel } from "@/hooks/use-workspace-channel";
+import type { WorkspaceConnectionStatus } from "@/hooks/use-workspace-channel";
 import { CreateEntityDialog } from "@/components/shell/create-entity-dialog";
 import { PriorityFlag, StatusDot } from "@/components/task/pickers";
 import { formatDueDate, initials, PRIORITY_META } from "@/lib/format";
+import { can } from "@/lib/permissions";
 import { ROLE_LABEL } from "@/lib/roles";
 import { cn } from "@/lib/utils";
-import type { Status, Task, WorkspaceTree } from "@/types/api";
+import type { Member, Status, Task, UserSummary, WorkspaceTree } from "@/types/api";
 
 // ---------------------------------------------------------------------------
 // Due-date buckets
@@ -75,6 +82,14 @@ function groupByDue(tasks: Task[]): Record<BucketKey, Task[]> {
   return groups;
 }
 
+/** Due date ascending, undated last — the order every task list here uses. */
+function byDueDate(a: Task, b: Task): number {
+  if (!a.due_date && !b.due_date) return a.created_at < b.created_at ? -1 : 1;
+  if (!a.due_date) return 1;
+  if (!b.due_date) return -1;
+  return a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : 0;
+}
+
 // ---------------------------------------------------------------------------
 // Tree helpers
 // ---------------------------------------------------------------------------
@@ -85,16 +100,20 @@ interface TreeSummary {
   openTaskCount: number;
   spaceCount: number;
   firstSpaceId: string | null;
+  /** Target of the "create a task" CTAs — tasks are always created in a list. */
+  firstListId: string | null;
 }
 
 function summarizeTree(tree: WorkspaceTree | undefined): TreeSummary {
   const listNames = new Map<string, string>();
   let openTaskCount = 0;
+  let firstListId: string | null = null;
   for (const space of tree?.spaces ?? []) {
     const lists = [...space.lists, ...space.folders.flatMap((f) => f.lists)];
     for (const list of lists) {
       listNames.set(list.id, list.name);
       openTaskCount += list.open_task_count;
+      if (!firstListId) firstListId = list.id;
     }
   }
   return {
@@ -102,16 +121,80 @@ function summarizeTree(tree: WorkspaceTree | undefined): TreeSummary {
     openTaskCount,
     spaceCount: tree?.spaces.length ?? 0,
     firstSpaceId: tree?.spaces[0]?.id ?? null,
+    firstListId,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Team grouping
+// ---------------------------------------------------------------------------
+
+const UNASSIGNED = "__unassigned__";
+
+interface AssigneeGroup {
+  key: string;
+  user: UserSummary | null;
+  role: Member["role"] | null;
+  tasks: Task[];
+}
+
+/**
+ * One workspace-wide response → one group per assignee. A task with several
+ * assignees appears under each of them (that is what "kimga biriktirilgan"
+ * means on a shared task); unassigned work gets its own bucket. Members are
+ * looked up from the already-cached member list, so no request per row.
+ */
+function groupByAssignee(tasks: Task[], members: Member[]): AssigneeGroup[] {
+  const roleByUser = new Map(members.map((m) => [m.user.id, m.role]));
+  const groups = new Map<string, AssigneeGroup>();
+
+  for (const task of tasks) {
+    if (task.assignees.length === 0) {
+      const group = groups.get(UNASSIGNED) ?? {
+        key: UNASSIGNED,
+        user: null,
+        role: null,
+        tasks: [],
+      };
+      group.tasks.push(task);
+      groups.set(UNASSIGNED, group);
+      continue;
+    }
+    for (const assignee of task.assignees) {
+      const group = groups.get(assignee.id) ?? {
+        key: assignee.id,
+        user: assignee,
+        role: roleByUser.get(assignee.id) ?? null,
+        tasks: [],
+      };
+      group.tasks.push(task);
+      groups.set(assignee.id, group);
+    }
+  }
+
+  const ordered = [...groups.values()];
+  for (const group of ordered) group.tasks.sort(byDueDate);
+  ordered.sort((a, b) => {
+    if (a.key === UNASSIGNED) return 1;
+    if (b.key === UNASSIGNED) return -1;
+    if (a.tasks.length !== b.tasks.length) return b.tasks.length - a.tasks.length;
+    const an = a.user?.full_name || a.user?.email || "";
+    const bn = b.user?.full_name || b.user?.email || "";
+    return an.localeCompare(bn);
+  });
+  return ordered;
 }
 
 // ---------------------------------------------------------------------------
 // Workspace home (dashboard)
 // ---------------------------------------------------------------------------
 
+type HomeView = "mine" | "team";
+
 export function WorkspaceHome({ workspaceId }: { workspaceId: string }) {
   const { data: workspace } = useWorkspace(workspaceId);
   const { data: me } = useMe();
+  const { data: myPermissions } = useMyPermissions(workspaceId);
   const {
     data: tree,
     isPending: treePending,
@@ -119,6 +202,19 @@ export function WorkspaceHome({ workspaceId }: { workspaceId: string }) {
     refetch: refetchTree,
   } = useWorkspaceTree(workspaceId);
   const myTasks = useMyTasks(workspaceId);
+
+  // `task.read` is held by every role by default, but the tab is still gated
+  // on the effective matrix — a workspace may have revoked it for a role.
+  const canReadTasks = can(myPermissions, "task.read");
+  // Single workspace-wide page shared by the team tab AND the member counters.
+  const teamTasks = useWorkspaceTasks(workspaceId, canReadTasks);
+
+  // Live workspace channel: task.* / list.updated / permission.updated.
+  const connection = useWorkspaceChannel(workspaceId);
+
+  const [view, setView] = React.useState<HomeView>("mine");
+  const [assigneeFilter, setAssigneeFilter] = React.useState<string | null>(null);
+  const tasksRef = React.useRef<HTMLDivElement | null>(null);
 
   const summary = React.useMemo(() => summarizeTree(tree), [tree]);
 
@@ -128,7 +224,20 @@ export function WorkspaceHome({ workspaceId }: { workspaceId: string }) {
   );
   const buckets = React.useMemo(() => groupByDue(openMyTasks), [openMyTasks]);
 
+  const openTeamTasks = React.useMemo(
+    () => (teamTasks.data?.results ?? []).filter((t) => !t.completed_at),
+    [teamTasks.data],
+  );
+
   const isGuest = workspace?.my_role === "guest";
+
+  const showMember = React.useCallback((userId: string) => {
+    setView("team");
+    setAssigneeFilter((current) => (current === userId ? null : userId));
+    requestAnimationFrame(() =>
+      tasksRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    );
+  }, []);
 
   if (treePending) return <HomeSkeleton />;
 
@@ -160,13 +269,16 @@ export function WorkspaceHome({ workspaceId }: { workspaceId: string }) {
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-5xl space-y-8 p-6 lg:p-8">
-        <header>
-          <h1 className="text-xl font-semibold">
-            {firstName ? `Salom, ${firstName}!` : "Salom!"}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {workspace?.name ?? "Ish maydoni"} — kunlik ko&apos;rinish
-          </p>
+        <header className="flex items-start gap-3">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold">
+              {firstName ? `Salom, ${firstName}!` : "Salom!"}
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              {workspace?.name ?? "Ish maydoni"} — kunlik ko&apos;rinish
+            </p>
+          </div>
+          <LiveBadge status={connection} />
         </header>
 
         <section
@@ -204,21 +316,89 @@ export function WorkspaceHome({ workspaceId }: { workspaceId: string }) {
           />
         </section>
 
-        <MyTasksSection
-          workspaceId={workspaceId}
-          buckets={buckets}
-          tasks={openMyTasks}
-          listNames={summary.listNames}
-          isPending={myTasks.isPending}
-          isError={myTasks.isError}
-          onRetry={() => myTasks.refetch()}
-        />
+        <div ref={tasksRef} className="space-y-3">
+          <Tabs
+            value={view}
+            onValueChange={(value) => setView(value as HomeView)}
+          >
+            <TabsList>
+              <TabsTrigger value="mine">Mening vazifalarim</TabsTrigger>
+              {canReadTasks ? (
+                <TabsTrigger value="team">Jamoa vazifalari</TabsTrigger>
+              ) : null}
+            </TabsList>
+          </Tabs>
+
+          {view === "team" && canReadTasks ? (
+            <TeamTasksSection
+              workspaceId={workspaceId}
+              tasks={openTeamTasks}
+              listNames={summary.listNames}
+              meId={me?.id ?? null}
+              filterUserId={assigneeFilter}
+              onClearFilter={() => setAssigneeFilter(null)}
+              onShowMine={() => setView("mine")}
+              firstListId={summary.firstListId}
+              isPending={teamTasks.isPending}
+              isError={teamTasks.isError}
+              onRetry={() => teamTasks.refetch()}
+            />
+          ) : (
+            <MyTasksSection
+              workspaceId={workspaceId}
+              buckets={buckets}
+              tasks={openMyTasks}
+              listNames={summary.listNames}
+              firstListId={summary.firstListId}
+              canSeeTeam={canReadTasks}
+              onShowTeam={() => setView("team")}
+              isPending={myTasks.isPending}
+              isError={myTasks.isError}
+              onRetry={() => myTasks.refetch()}
+            />
+          )}
+        </div>
 
         {workspace && !isGuest ? (
-          <TeamSection workspaceId={workspaceId} meId={me?.id ?? null} />
+          <TeamSection
+            workspaceId={workspaceId}
+            meId={me?.id ?? null}
+            tasks={openTeamTasks}
+            tasksPending={teamTasks.isPending}
+            partial={
+              !!teamTasks.data &&
+              teamTasks.data.count > teamTasks.data.results.length
+            }
+            selectedUserId={assigneeFilter}
+            onSelectMember={showMember}
+          />
         ) : null}
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Realtime badge
+// ---------------------------------------------------------------------------
+
+function LiveBadge({ status }: { status: WorkspaceConnectionStatus }) {
+  return (
+    <Badge
+      variant="secondary"
+      className="ml-auto shrink-0 gap-1.5 font-normal text-muted-foreground"
+      title={`Real vaqt holati: ${status}`}
+    >
+      <span
+        className={cn(
+          "size-1.5 rounded-full",
+          status === "live" && "bg-brand-green",
+          status === "connecting" && "animate-pulse bg-brand-yellow",
+          status === "offline" && "bg-danger",
+        )}
+      />
+      {status === "live" ? "Jonli" : status === "offline" ? "Oflayn" : "Ulanmoqda…"}
+    </Badge>
   );
 }
 
@@ -266,6 +446,9 @@ function MyTasksSection({
   buckets,
   tasks,
   listNames,
+  firstListId,
+  canSeeTeam,
+  onShowTeam,
   isPending,
   isError,
   onRetry,
@@ -274,6 +457,9 @@ function MyTasksSection({
   buckets: Record<BucketKey, Task[]>;
   tasks: Task[];
   listNames: Map<string, string>;
+  firstListId: string | null;
+  canSeeTeam: boolean;
+  onShowTeam: () => void;
   isPending: boolean;
   isError: boolean;
   onRetry: () => void;
@@ -288,10 +474,8 @@ function MyTasksSection({
 
   return (
     <section aria-label="Mening vazifalarim">
-      <h2 className="mb-3 text-sm font-semibold tracking-wide text-muted-foreground uppercase">
-        Mening vazifalarim
-      </h2>
-
+      {/* The visible label is the tab; the section still needs its own heading. */}
+      <h2 className="sr-only">Mening vazifalarim</h2>
       {isPending ? (
         <div className="space-y-2" aria-hidden>
           {Array.from({ length: 5 }).map((_, i) => (
@@ -308,14 +492,30 @@ function MyTasksSection({
           </Button>
         </div>
       ) : tasks.length === 0 ? (
-        <div className="rounded-lg border p-6 text-center">
+        <div className="rounded-lg border p-8 text-center">
           <p className="text-sm font-medium">
             Sizga biriktirilgan ochiq vazifa yo&apos;q.
           </p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Ro&apos;yxatlardan o&apos;zingizga vazifa biriktiring — u shu yerda
-            paydo bo&apos;ladi.
+          <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
+            Ro&apos;yxatdan o&apos;zingizga vazifa biriktiring — u shu yerda
+            darhol paydo bo&apos;ladi.
           </p>
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+            {firstListId ? (
+              <Button
+                size="sm"
+                render={<Link href={`/w/${workspaceId}/l/${firstListId}`} />}
+              >
+                <Plus className="size-4" />
+                Vazifa yaratish
+              </Button>
+            ) : null}
+            {canSeeTeam ? (
+              <Button size="sm" variant="outline" onClick={onShowTeam}>
+                Jamoa vazifalarini ko&apos;rish
+              </Button>
+            ) : null}
+          </div>
         </div>
       ) : (
         <div className="space-y-5">
@@ -343,6 +543,193 @@ function MyTasksSection({
                     status={statusById.get(task.status_id)}
                     listName={listNames.get(task.list_id)}
                     overdue={key === "overdue"}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Team tasks (grouped by assignee)
+// ---------------------------------------------------------------------------
+
+function TeamTasksSection({
+  workspaceId,
+  tasks,
+  listNames,
+  meId,
+  filterUserId,
+  onClearFilter,
+  onShowMine,
+  firstListId,
+  isPending,
+  isError,
+  onRetry,
+}: {
+  workspaceId: string;
+  tasks: Task[];
+  listNames: Map<string, string>;
+  meId: string | null;
+  filterUserId: string | null;
+  onClearFilter: () => void;
+  onShowMine: () => void;
+  firstListId: string | null;
+  isPending: boolean;
+  isError: boolean;
+  onRetry: () => void;
+}) {
+  // Same cache entry the team grid reads — no second request.
+  const members = useMembers(workspaceId);
+  const listIds = React.useMemo(
+    () => Array.from(new Set(tasks.map((t) => t.list_id))),
+    [tasks],
+  );
+  const { statusById } = useStatusesByListIds(listIds);
+
+  const groups = React.useMemo(
+    () => groupByAssignee(tasks, members.data?.results ?? []),
+    [tasks, members.data],
+  );
+  const visible = filterUserId
+    ? groups.filter((g) => g.key === filterUserId)
+    : groups;
+
+  const filteredMember = filterUserId
+    ? members.data?.results.find((m) => m.user.id === filterUserId)
+    : undefined;
+
+  const now = new Date();
+
+  return (
+    <section aria-label="Jamoa vazifalari" className="space-y-3">
+      <h2 className="sr-only">Jamoa vazifalari</h2>
+      {filterUserId ? (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtr:</span>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="h-7 gap-1.5"
+            onClick={onClearFilter}
+          >
+            {filteredMember?.user.full_name ||
+              filteredMember?.user.email ||
+              "Tanlangan a'zo"}
+            <X className="size-3.5" />
+          </Button>
+        </div>
+      ) : null}
+
+      {isPending ? (
+        <div className="space-y-2" aria-hidden>
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-11 w-full" />
+          ))}
+        </div>
+      ) : isError ? (
+        <div className="flex flex-col items-start gap-2 rounded-lg border p-4">
+          <p className="text-sm text-danger">
+            Jamoa vazifalarini yuklab bo&apos;lmadi.
+          </p>
+          <Button variant="outline" size="sm" onClick={onRetry}>
+            Qayta urinish
+          </Button>
+        </div>
+      ) : tasks.length === 0 ? (
+        <div className="rounded-lg border p-8 text-center">
+          <p className="text-sm font-medium">
+            Ish maydonida hali vazifa yo&apos;q — birinchisini yarating.
+          </p>
+          <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
+            Vazifa yaratilgach, u kim bajarayotganiga qarab shu yerda
+            guruhlanadi.
+          </p>
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+            {firstListId ? (
+              <Button
+                size="sm"
+                render={<Link href={`/w/${workspaceId}/l/${firstListId}`} />}
+              >
+                <Plus className="size-4" />
+                Birinchi vazifani yaratish
+              </Button>
+            ) : null}
+            <Button size="sm" variant="outline" onClick={onShowMine}>
+              Mening vazifalarim
+            </Button>
+          </div>
+        </div>
+      ) : visible.length === 0 ? (
+        <div className="rounded-lg border p-6 text-center">
+          <p className="text-sm font-medium">
+            Bu a&apos;zoga biriktirilgan ochiq vazifa yo&apos;q.
+          </p>
+          <Button
+            className="mt-3"
+            size="sm"
+            variant="outline"
+            onClick={onClearFilter}
+          >
+            Filtrni tozalash
+          </Button>
+        </div>
+      ) : (
+        <div className="space-y-5">
+          {visible.map((group) => (
+            <div key={group.key}>
+              <div className="mb-1.5 flex items-center gap-2">
+                {group.user ? (
+                  <Avatar className="size-6">
+                    {group.user.avatar ? (
+                      <AvatarImage src={group.user.avatar} alt="" />
+                    ) : null}
+                    <AvatarFallback
+                      className="text-[10px] font-semibold text-primary-foreground"
+                      style={{
+                        backgroundColor: group.user.avatar_color || "#7B68EE",
+                      }}
+                    >
+                      {initials(group.user.full_name, group.user.email)}
+                    </AvatarFallback>
+                  </Avatar>
+                ) : (
+                  <span className="flex size-6 items-center justify-center rounded-full border border-dashed text-[10px] text-muted-foreground">
+                    ?
+                  </span>
+                )}
+                <span className="truncate text-sm font-medium">
+                  {group.user
+                    ? group.user.full_name || group.user.email
+                    : "Biriktirilmagan"}
+                  {group.user && group.user.id === meId ? (
+                    <span className="ml-1 text-xs font-normal text-muted-foreground">
+                      (siz)
+                    </span>
+                  ) : null}
+                </span>
+                {group.role ? (
+                  <Badge variant="secondary" className="shrink-0 font-normal">
+                    {ROLE_LABEL[group.role]}
+                  </Badge>
+                ) : null}
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  {group.tasks.length} ta
+                </span>
+              </div>
+              <div className="overflow-hidden rounded-lg border">
+                {group.tasks.map((task) => (
+                  <TaskRow
+                    key={`${group.key}:${task.id}`}
+                    workspaceId={workspaceId}
+                    task={task}
+                    status={statusById.get(task.status_id)}
+                    listName={listNames.get(task.list_id)}
+                    overdue={!!task.due_date && new Date(task.due_date) < now}
                   />
                 ))}
               </div>
@@ -415,28 +802,32 @@ function TaskRow({
 function TeamSection({
   workspaceId,
   meId,
+  tasks,
+  tasksPending,
+  partial,
+  selectedUserId,
+  onSelectMember,
 }: {
   workspaceId: string;
   meId: string | null;
+  tasks: Task[];
+  tasksPending: boolean;
+  partial: boolean;
+  selectedUserId: string | null;
+  onSelectMember: (userId: string) => void;
 }) {
   const members = useMembers(workspaceId);
-  const workspaceTasks = useWorkspaceTasks(workspaceId);
 
-  // One workspace-wide task page → counts for every member (no request per row).
+  // Counts come from the one workspace-wide page the team tab already reads.
   const openByUser = React.useMemo(() => {
     const counts = new Map<string, number>();
-    for (const task of workspaceTasks.data?.results ?? []) {
-      if (task.completed_at) continue;
+    for (const task of tasks) {
       for (const assignee of task.assignees) {
         counts.set(assignee.id, (counts.get(assignee.id) ?? 0) + 1);
       }
     }
     return counts;
-  }, [workspaceTasks.data]);
-
-  const partial =
-    !!workspaceTasks.data &&
-    workspaceTasks.data.count > workspaceTasks.data.results.length;
+  }, [tasks]);
 
   return (
     <section aria-label="Jamoa">
@@ -463,10 +854,18 @@ function TeamSection({
         <div className="grid gap-2 sm:grid-cols-2">
           {(members.data?.results ?? []).map((member) => {
             const count = openByUser.get(member.user.id) ?? 0;
+            const selected = selectedUserId === member.user.id;
             return (
-              <div
+              <button
                 key={member.id}
-                className="flex items-center gap-3 rounded-lg border p-3"
+                type="button"
+                aria-pressed={selected}
+                onClick={() => onSelectMember(member.user.id)}
+                title={`${member.user.full_name || member.user.email} vazifalarini ko'rish`}
+                className={cn(
+                  "flex items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/40",
+                  selected && "border-primary bg-muted/40",
+                )}
               >
                 <Avatar className="size-8">
                   {member.user.avatar ? (
@@ -492,7 +891,7 @@ function TeamSection({
                     {member.user.email}
                   </p>
                 </div>
-                {workspaceTasks.isPending ? null : (
+                {tasksPending ? null : (
                   <span
                     className="shrink-0 text-xs text-muted-foreground tabular-nums"
                     title={
@@ -508,7 +907,7 @@ function TeamSection({
                 <Badge variant="secondary" className="shrink-0">
                   {ROLE_LABEL[member.role]}
                 </Badge>
-              </div>
+              </button>
             );
           })}
         </div>

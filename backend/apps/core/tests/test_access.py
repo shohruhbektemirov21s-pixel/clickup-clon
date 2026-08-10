@@ -35,9 +35,9 @@ def membership(env, user):
 
 
 def test_bootstrap_seeds_the_full_matrix(env):
-    """§B.6 — 3 rol × 44 kod = 132 qator."""
+    """§B.6 — 3 rol × 48 kod = 144 qator."""
     rows = RolePermission.objects.filter(workspace=env.workspace)
-    assert rows.count() == len(ALL_CODES) * len(AssignableRole.values) == 132
+    assert rows.count() == len(ALL_CODES) * len(AssignableRole.values) == 144
     assert not rows.filter(role="owner").exists()
 
 

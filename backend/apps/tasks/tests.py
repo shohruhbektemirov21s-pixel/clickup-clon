@@ -459,7 +459,16 @@ def test_activity_endpoint_shape_and_ordering(env, empty_list):
         "metadata",
         "created_at",
     }
-    assert set(row["actor"].keys()) == {"id", "email", "full_name", "avatar", "avatar_color"}
+    # UserSummary — `profession` (kasb yorlig'i) API_CONTRACT.md §2 bo'yicha
+    # to'plamning bir qismi; u ruxsatga ta'sir qilmaydi.
+    assert set(row["actor"].keys()) == {
+        "id",
+        "email",
+        "full_name",
+        "avatar",
+        "avatar_color",
+        "profession",
+    }
 
     renamed = next(r for r in body["results"] if r["verb"] == "renamed")
     assert (renamed["from_value"], renamed["to_value"]) == ("Alpha", "Beta")

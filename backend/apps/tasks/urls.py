@@ -1,8 +1,23 @@
 from django.urls import path
 
-from apps.tasks import views
+from apps.tasks import attachments, views
 
 urlpatterns = [
+    path(
+        "tasks/<uuid:task_id>/attachments/",
+        attachments.TaskAttachmentsView.as_view(),
+        name="task-attachments",
+    ),
+    path(
+        "attachments/<uuid:attachment_id>/",
+        attachments.AttachmentDetailView.as_view(),
+        name="attachment-detail",
+    ),
+    path(
+        "attachments/<uuid:attachment_id>/download/",
+        attachments.AttachmentDownloadView.as_view(),
+        name="attachment-download",
+    ),
     path("lists/<uuid:list_id>/tasks/", views.ListTasksView.as_view(), name="list-tasks"),
     path("tasks/<uuid:task_id>/", views.TaskDetailView.as_view(), name="task-detail"),
     path("tasks/<uuid:task_id>/move/", views.TaskMoveView.as_view(), name="task-move"),

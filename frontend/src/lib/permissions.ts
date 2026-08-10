@@ -38,6 +38,18 @@ const SPACE_MANAGER_GRANTS: ReadonlySet<PermissionCode> = new Set<PermissionCode
   "task.watch",
   "task.restore",
   "task.view_deleted",
+  "attachment.read",
+  "attachment.create",
+  "attachment.delete_own",
+  // `attachment.delete_any` is deliberately absent — moderation stays global.
+]);
+
+/** Codes a space `viewer` keeps; everything else is cut (§B.5). */
+const SPACE_VIEWER_GRANTS: ReadonlySet<PermissionCode> = new Set<PermissionCode>([
+  "workspace.read",
+  "space.read",
+  "task.read",
+  "attachment.read",
 ]);
 
 /** Workspace-level check. The owner short-circuits to `true` (AD-3). */
@@ -71,7 +83,7 @@ export function canInSpace(
   const access = spaceAccess(my, spaceId);
   if (access === "viewer") {
     // Read-only membership: only the read codes survive.
-    return code === "space.read" || code === "task.read" || code === "workspace.read";
+    return SPACE_VIEWER_GRANTS.has(code) && can(my, code);
   }
   if (access === "manager" && SPACE_MANAGER_GRANTS.has(code)) return true;
   return can(my, code);

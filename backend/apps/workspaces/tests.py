@@ -24,7 +24,8 @@ def test_create_workspace_bootstraps_and_sets_my_role(env):
     assert body["slug"]
     space = Space.objects.get(workspace_id=body["id"])
     assert space.name == "Jamoa bo'limi"
-    assert space.lists.get().tasks.count() == 3
+    # A fresh workspace starts from zero — scaffolding only, no sample tasks.
+    assert space.lists.get().tasks.count() == 0
 
 
 def test_workspace_list_shows_only_memberships(env):
@@ -72,8 +73,8 @@ def test_tree_shape(env):
     assert space["name"] == "Jamoa bo'limi"
     assert space["folders"] == []
     assert space["lists"][0]["name"] == "Boshlash"
-    assert space["lists"][0]["task_count"] == 3
-    assert space["lists"][0]["open_task_count"] == 2  # one sample task is COMPLETE
+    assert space["lists"][0]["task_count"] == 0
+    assert space["lists"][0]["open_task_count"] == 0
 
 
 # ------------------------------------------------------------- members
@@ -367,11 +368,24 @@ def test_list_move_reorder_and_reparent(env):
 
 
 def test_space_status_set_put_with_mapping(env):
+    from apps.tasks.models import Task
+
     url = f"/api/v1/spaces/{env.space.id}/status-set/"
     current = env.admin_client.get(url).json()
-    keep = current["statuses"][0]  # TO DO (has one sample task)
+    keep = current["statuses"][0]
     in_progress = current["statuses"][1]
     complete = current["statuses"][2]
+
+    # A bootstrapped workspace starts empty, so park a task on the status that
+    # the payload below drops — that is what makes the mapping mandatory.
+    Task.objects.create(
+        list=env.list,
+        status_id=in_progress["id"],
+        title="Mapping uchun vazifa",
+        position="n",
+        created_by=env.admin,
+        updated_by=env.admin,
+    )
 
     payload = {
         "name": "Bug workflow",
@@ -388,7 +402,7 @@ def test_space_status_set_put_with_mapping(env):
              "is_default": False},
         ],
     }
-    # IN PROGRESS is removed but has a sample task -> missing mapping = 409
+    # IN PROGRESS is removed but still holds a task -> missing mapping = 409
     missing = env.admin_client.put(url, payload, format="json")
     error = assert_error(missing, 409, "conflict")
     assert "status_mapping" in error["details"]

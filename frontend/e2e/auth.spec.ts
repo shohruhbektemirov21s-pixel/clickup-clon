@@ -29,7 +29,8 @@ test.describe("authentication", () => {
     // Hidratsiyadan keyin qiymat saqlanganini tasdiqlaymiz.
     await expect(page.locator("#email")).toHaveValue(USERS.jasur.email);
 
-    await page.getByRole("button", { name: "Kirish" }).click();
+    // `exact` bo'lmasa "Demo rejimda kirish" tugmasi ham mos keladi.
+    await page.getByRole("button", { name: "Kirish", exact: true }).click();
 
     // Next.js o'zining `__next-route-announcer__` elementiga ham role="alert"
     // beradi — shuning uchun aynan formadagi banner tanlanadi.
@@ -40,11 +41,9 @@ test.describe("authentication", () => {
   });
 
   /**
-   * MA'LUM BUG: hisob menyusini ochish `Base UI: MenuGroupContext is missing`
-   * xatosi bilan yiqiladi (`components/ui/dropdown-menu.tsx` dagi
-   * `DropdownMenuLabel` `<Menu.Group>` ichida emas), shuning uchun "Chiqish"
-   * bandiga yetib bo'lmaydi. Test ataylab saqlanadi — tuzatilgach yashil
-   * bo'ladi.
+   * Hisob menyusi bir vaqtlar `Base UI: MenuGroupContext is missing` bilan
+   * yiqilardi — `DropdownMenuLabel` endi o'z `Menu.Group`ini olib yuradi, shu
+   * sababli bu test o'sha regressiyaning qorovuli bo'lib qoladi.
    */
   test("logs out and returns to /login", async ({ page }) => {
     await login(page, USERS.malika);

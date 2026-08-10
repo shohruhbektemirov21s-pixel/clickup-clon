@@ -18,7 +18,7 @@ from apps.core.enums import (
     WorkspaceRole,
 )
 from apps.core.exceptions import Conflict, PositionConflict
-from apps.core.ordering import evenly_spaced, midstring
+from apps.core.ordering import midstring
 from apps.realtime import events
 from apps.workspaces.models import (
     Folder,
@@ -37,12 +37,6 @@ DEFAULT_STATUSES = [
     {"name": "BAJARILADI", "type": StatusType.OPEN, "color": "#87909E", "is_default": True},
     {"name": "JARAYONDA", "type": StatusType.ACTIVE, "color": "#4194F6", "is_default": False},
     {"name": "BAJARILDI", "type": StatusType.CLOSED, "color": "#6BC950", "is_default": False},
-]
-
-SAMPLE_TASKS = [
-    ("Birinchi vazifangizni yarating", 0),
-    ("Vazifalarni statuslar orasida ko'chiring", 1),
-    ("Jamoangizni taklif qiling", 2),
 ]
 
 
@@ -154,9 +148,11 @@ def create_space(workspace, actor, *, name, description="", color=None, icon="",
 @transaction.atomic
 def bootstrap_workspace(user, *, name, description="", color=None, workspace_id=None) -> Workspace:
     """DATA_MODEL.md section 11: workspace + owner membership + "Jamoa bo'limi"
-    space + default status set + "Boshlash" list + 3 sample tasks."""
-    from apps.tasks.models import Task, TaskWatcher
+    space + default status set + an empty "Boshlash" list.
 
+    The list ships empty on purpose: a brand-new account should start from zero
+    rather than from placeholder tasks it has to clean up first.
+    """
     check_client_id(Workspace, workspace_id)
     workspace = Workspace.objects.create(
         id=workspace_id or uuid.uuid4(),
@@ -185,26 +181,11 @@ def bootstrap_workspace(user, *, name, description="", color=None, workspace_id=
         added_by=user,
     )
     status_set = StatusSet.objects.create(space=space, name="Standart")
-    statuses = seed_default_statuses(status_set)
+    seed_default_statuses(status_set)
 
-    task_list = TaskList.objects.create(
+    TaskList.objects.create(
         space=space, folder=None, name="Boshlash", position="n", created_by=user
     )
-    positions = evenly_spaced(len(SAMPLE_TASKS))
-    for (title, status_idx), pos in zip(SAMPLE_TASKS, positions):
-        task = Task.objects.create(
-            list=task_list,
-            status=statuses[status_idx],
-            title=title,
-            position=pos,
-            created_by=user,
-            updated_by=user,
-            completed_at=timezone.now()
-            if statuses[status_idx].type == StatusType.CLOSED
-            else None,
-        )
-        TaskWatcher.objects.create(task=task, user=user, source="auto_creator")
-    refresh_list_counts(task_list)
     return workspace
 
 

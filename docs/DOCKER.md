@@ -290,6 +290,51 @@ faqat `--build` bilan.
 
 ## 11. Tez-tez uchraydigan xatolar
 
+### Build paytida TLS/sertifikat xatolari
+
+Agar tarmoqda TLS-inspection (korporativ proxy) bo'lsa, build quyidagi
+xatolardan biri bilan yiqiladi:
+
+| Xato | Qayerda |
+|---|---|
+| `CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate` | backend, `pip install` |
+| `UNABLE_TO_VERIFY_LEAF_SIGNATURE` / `CERT_SIGNATURE_FAILURE` | frontend, `npm ci` |
+| `TLS: server certificate not trusted` | Alpine bazasidagi `apk add` |
+
+Sababi: proxy `pypi.org` va `registry.npmjs.org` sertifikatlarini o'zining
+**xususiy root CA**'si bilan qayta imzolaydi, konteyner ichida esa u CA
+ishonchli emas.
+
+**Yechim** — o'sha root CA'ni build kontekstiga qo'ying:
+
+```powershell
+# Qaysi CA ekanini aniqlash (zanjirning oxirgi, o'z-o'zini imzolagan elementi)
+$c = New-Object System.Net.Sockets.TcpClient('registry.npmjs.org', 443)
+$ssl = New-Object System.Net.Security.SslStream($c.GetStream(), $false, {param($a,$b,$cc,$d) $true})
+$ssl.AuthenticateAsClient('registry.npmjs.org')
+$cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($ssl.RemoteCertificate)
+$chain = New-Object System.Security.Cryptography.X509Certificates.X509Chain
+$chain.ChainPolicy.RevocationMode = 'NoCheck'
+[void]$chain.Build($cert)
+$root = $chain.ChainElements[$chain.ChainElements.Count - 1].Certificate
+$pem = "-----BEGIN CERTIFICATE-----`n" +
+       [Convert]::ToBase64String($root.RawData, 'InsertLineBreaks') +
+       "`n-----END CERTIFICATE-----`n"
+Set-Content backend\ca\corp-root.crt  $pem -Encoding ascii -NoNewline
+Set-Content frontend\ca\corp-root.crt $pem -Encoding ascii -NoNewline
+$ssl.Close(); $c.Close()
+
+docker compose build --no-cache
+```
+
+`backend/ca/` va `frontend/ca/` kataloglari **bo'sh holda ham ishlaydi** —
+TLS-inspection yo'q tarmoqlarda hech narsa qo'shish shart emas. Sertifikat
+fayllari `.gitignore` da: ular mashinaga xos, repoga tushmaydi.
+
+> Bir necha CA bir xil `Subject` bilan bo'lishi mumkin. Hammasini birdan
+> qo'shmang — faqat `chain.Build()` haqiqatda ishlatgan, yuqoridagi skript
+> tanlagan sertifikatni oling. Aks holda `CERT_SIGNATURE_FAILURE` chiqadi.
+
 ### `env file .env not found`
 Repo ildizida `.env` yo'q. `Copy-Item .env.docker.example .env` bajaring.
 

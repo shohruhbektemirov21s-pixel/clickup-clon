@@ -35,7 +35,15 @@ env = environ.Env(
     INVITE_THROTTLE_RATE=(str, "20/hour"),
     INVITE_LOOKUP_THROTTLE_RATE=(str, "30/hour"),
     AVATAR_THROTTLE_RATE=(str, "10/hour"),
+    ATTACHMENT_THROTTLE_RATE=(str, "30/hour"),
     COMMENT_THROTTLE_RATE=(str, "60/min"),
+    # Vazifa biriktirmasining maksimal hajmi (MB) — §10.7.
+    MAX_ATTACHMENT_MB=(int, 10),
+    DEMO_THROTTLE_RATE=(str, "10/hour"),
+    # "Demo rejimda kirish" tugmasi. Prod'da o'chiq bo'lishi shart: yoqilganda
+    # istalgan odam parolsiz demo hisobga kira oladi.
+    DEMO_MODE=(bool, False),
+    DEMO_USER_EMAIL=(str, "demo@clickish.dev"),
 )
 environ.Env.read_env(BASE_DIR / ".env")
 
@@ -229,9 +237,16 @@ REST_FRAMEWORK = {
         "invite": env("INVITE_THROTTLE_RATE"),
         "invite_lookup": env("INVITE_LOOKUP_THROTTLE_RATE"),
         "avatar": env("AVATAR_THROTTLE_RATE"),
+        "attachment": env("ATTACHMENT_THROTTLE_RATE"),
         "comments": env("COMMENT_THROTTLE_RATE"),
+        "demo": env("DEMO_THROTTLE_RATE"),
     },
 }
+
+# Demo rejim — `POST auth/demo/` parolsiz token beradi. O'chiq bo'lsa endpoint
+# 404 qaytaradi (403 emas: mavjudligini oshkor qilmaydi).
+DEMO_MODE = env("DEMO_MODE")
+DEMO_USER_EMAIL = env("DEMO_USER_EMAIL")
 
 # Invitations expire created_at + INVITATION_TTL_DAYS (docs/API_CONTRACT.md section 5)
 INVITATION_TTL_DAYS = env("INVITATION_TTL_DAYS")
@@ -406,5 +421,30 @@ STORAGES = {
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+# --------------------------------------------------------------------------
+# Uploads (task attachments — docs/API_CONTRACT.md §10.7)
+# --------------------------------------------------------------------------
+
+#: Bitta biriktirmaning maksimal hajmi. View qatlami `upload.size` ni shu
+#: chegaraga solishtiradi va oshib ketsa `400 validation_error` qaytaradi.
+MAX_ATTACHMENT_MB = env("MAX_ATTACHMENT_MB")
+MAX_ATTACHMENT_BYTES = MAX_ATTACHMENT_MB * 1024 * 1024
+
+#: Multipart so'rovning **fayl bo'lmagan** qismi uchun chegara (Django
+#: defaulti bilan bir xil). Fayllar bu chegaraga kirmaydi — ular
+#: `FILE_UPLOAD_MAX_MEMORY_SIZE` dan katta bo'lsa diskka oqiziladi.
+DATA_UPLOAD_MAX_MEMORY_SIZE = env.int("DATA_UPLOAD_MAX_MEMORY_SIZE", default=2621440)
+
+#: Bundan katta fayl xotirada emas, vaqtinchalik faylda yig'iladi — 10 MB lik
+#: yuklama RAM'ni band qilmasligi uchun ataylab past (2.5 MB).
+FILE_UPLOAD_MAX_MEMORY_SIZE = env.int("FILE_UPLOAD_MAX_MEMORY_SIZE", default=2621440)
+
+#: Bitta so'rovdagi fayllar soni — "million bo'sh fayl" DoS'iga qarshi.
+DATA_UPLOAD_MAX_NUMBER_FILES = env.int("DATA_UPLOAD_MAX_NUMBER_FILES", default=10)
+
+#: Yuklangan fayl diskda 0o644 bo'lsin (ba'zi tizimlarda default 0o600 bo'lib,
+#: web-server o'qiy olmaydi). Hech qachon bajariladigan bit qo'yilmaydi.
+FILE_UPLOAD_PERMISSIONS = 0o644
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

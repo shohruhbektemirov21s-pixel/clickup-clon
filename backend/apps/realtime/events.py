@@ -69,6 +69,10 @@ def emit_task_event(event_type, task, *, actor=None, client_id=None, rebalanced=
         rebalanced=rebalanced if event_type == "task.moved" else None,
     )
     _send(list_group(task.list_id), event_type, payload)
+    # The workspace channel carries the same frame so views that are not scoped
+    # to one list — the dashboard's "my tasks" and team counters — stay live
+    # without opening a socket per list.
+    _send(workspace_group(workspace_id), event_type, payload)
 
 
 def emit_task_deleted(task, *, actor=None, client_id=None):
@@ -81,6 +85,7 @@ def emit_task_deleted(task, *, actor=None, client_id=None):
         client_id=client_id,
     )
     _send(list_group(task.list_id), "task.deleted", payload)
+    _send(workspace_group(workspace_id), "task.deleted", payload)
 
 
 def emit_comment_event(event_type, comment, *, actor=None, client_id=None):
@@ -108,6 +113,34 @@ def emit_comment_deleted(comment, *, actor=None, client_id=None):
         client_id=client_id,
     )
     _send(list_group(task.list_id), "comment.deleted", payload)
+
+
+def emit_attachment_added(attachment, *, actor=None, client_id=None):
+    """attachment.added — data is the full TaskAttachment object (§10.7)."""
+    from apps.tasks.serializers import TaskAttachmentSerializer
+
+    task = attachment.task
+    payload = _payload(
+        list_id=task.list_id,
+        workspace_id=task.list.space.workspace_id,
+        data=TaskAttachmentSerializer(attachment).data,
+        actor=actor,
+        client_id=client_id,
+    )
+    _send(list_group(task.list_id), "attachment.added", payload)
+
+
+def emit_attachment_removed(attachment, *, actor=None, client_id=None):
+    """attachment.removed — data is `{"id", "task_id"}` (row is already gone)."""
+    task = attachment.task
+    payload = _payload(
+        list_id=task.list_id,
+        workspace_id=task.list.space.workspace_id,
+        data={"id": str(attachment.id), "task_id": str(task.id)},
+        actor=actor,
+        client_id=client_id,
+    )
+    _send(list_group(task.list_id), "attachment.removed", payload)
 
 
 def emit_list_updated(task_list, *, actor=None, client_id=None):

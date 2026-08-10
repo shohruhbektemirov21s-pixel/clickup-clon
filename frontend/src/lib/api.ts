@@ -199,9 +199,134 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return (await res.json()) as T;
 }
 
+// ---------------------------------------------------------------------------
+// Binary reads / uploads (§10.7 attachments)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetches a protected binary resource (attachment download) as a Blob.
+ * `<img src>` / `<a href>` cannot carry the Authorization header, so every
+ * preview and download goes through here and then an object URL.
+ */
+async function requestBlob(path: string): Promise<Blob> {
+  const exec = (accessToken: string | null) =>
+    fetch(buildUrl(path), {
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+    });
+
+  let res = await exec(useAuthStore.getState().accessToken);
+  if (res.status === 401) {
+    const newAccess = await refreshAccessToken();
+    if (!newAccess) throw await toApiError(res);
+    res = await exec(newAccess);
+  }
+  if (!res.ok) throw await toApiError(res);
+  return res.blob();
+}
+
+/**
+ * multipart/form-data upload with progress. `fetch` exposes no upload
+ * progress, so this one call uses XMLHttpRequest; the 401 → refresh → retry
+ * rule from `request()` is preserved.
+ */
+function requestUpload<T>(
+  path: string,
+  form: FormData,
+  onProgress?: (percent: number) => void,
+  signal?: AbortSignal,
+): Promise<T> {
+  const exec = (accessToken: string | null, allowRetry: boolean): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", buildUrl(path));
+      if (accessToken) xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+      xhr.setRequestHeader("X-Client-Id", getClientId());
+      // Content-Type is left unset on purpose: the browser adds the boundary.
+      xhr.responseType = "text";
+
+      if (onProgress && xhr.upload) {
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            onProgress(Math.round((event.loaded / event.total) * 100));
+          }
+        };
+      }
+
+      const fail = (status: number, body: string) => {
+        let envelope: ApiErrorEnvelope | null = null;
+        try {
+          envelope = JSON.parse(body) as ApiErrorEnvelope;
+        } catch {
+          // non-JSON body
+        }
+        if (envelope?.error) {
+          reject(
+            new ApiError(
+              status,
+              envelope.error.code,
+              envelope.error.message,
+              envelope.error.details ?? {},
+              envelope.error.request_id,
+            ),
+          );
+          return;
+        }
+        reject(
+          new ApiError(
+            status,
+            status >= 500 ? "server_error" : "bad_request",
+            `Faylni yuklab bo'lmadi (status ${status}).`,
+          ),
+        );
+      };
+
+      xhr.onload = async () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(xhr.responseText ? (JSON.parse(xhr.responseText) as T) : (undefined as T));
+          return;
+        }
+        if (xhr.status === 401 && allowRetry) {
+          const newAccess = await refreshAccessToken();
+          if (newAccess) {
+            exec(newAccess, false).then(resolve, reject);
+            return;
+          }
+        }
+        fail(xhr.status, xhr.responseText);
+      };
+      xhr.onerror = () =>
+        reject(
+          new ApiError(
+            0,
+            "bad_request",
+            "Tarmoq xatosi — faylni yuklab bo'lmadi. Aloqani tekshiring.",
+          ),
+        );
+      xhr.onabort = () => reject(new DOMException("Bekor qilindi", "AbortError"));
+      if (signal) signal.addEventListener("abort", () => xhr.abort(), { once: true });
+
+      xhr.send(form);
+    });
+
+  return exec(useAuthStore.getState().accessToken, true);
+}
+
 export const api = {
-  get<T>(path: string, query?: Query, signal?: AbortSignal) {
-    return request<T>(path, { query, signal });
+  /** Authenticated binary GET — attachment download / image preview. */
+  blob: requestBlob,
+  /** multipart POST with upload progress (attachments). */
+  upload: requestUpload,
+  /**
+   * `options.auth: false` — public endpointlar uchun (masalan
+   * `invitations/lookup/`): Authorization header ilinmaydi va 401 bo'lsa
+   * token yangilash urinishi bo'lmaydi.
+   */
+  get<T>(
+    path: string,
+    query?: Query,
+    options?: Omit<RequestOptions, "method" | "body" | "query">,
+  ) {
+    return request<T>(path, { ...options, query });
   },
   post<T>(path: string, body?: unknown, options?: Omit<RequestOptions, "method" | "body">) {
     return request<T>(path, { ...options, method: "POST", body });

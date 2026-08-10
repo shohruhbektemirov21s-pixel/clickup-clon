@@ -24,6 +24,7 @@ import type {
   Role,
   RolePermissionMatrix,
   Task,
+  TaskAttachment,
   TaskWriteRequest,
   UpdateRolePermissionsRequest,
   Workspace,
@@ -289,6 +290,85 @@ export function useDeleteComment(taskId: string) {
       queryClient.invalidateQueries({ queryKey: keys.task(taskId) });
     },
     onError: (err) => toast.error(errorMessage(err)),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Attachments (§10.7)
+// ---------------------------------------------------------------------------
+
+/** Uzbek message for an upload failure — field errors first, then the code. */
+export function attachmentErrorMessage(err: unknown): string {
+  if (isApiError(err)) {
+    if (err.code === "validation_error") {
+      // The server puts the real reason (size / type / empty) under `file`.
+      const fieldError = err.fieldError("file");
+      if (fieldError) return fieldError;
+    }
+    if (err.code === "throttled") {
+      return "Juda ko'p fayl yuklandi. Biroz kutib, qayta urinib ko'ring.";
+    }
+    if (err.status === 0) return err.message; // network error from the XHR path
+  }
+  return errorMessage(err);
+}
+
+/**
+ * multipart upload with progress. `attachment_count` lives on the task, so the
+ * task query is invalidated alongside the attachment list.
+ */
+export function useUploadAttachment(taskId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      file,
+      onProgress,
+    }: {
+      file: File;
+      onProgress?: (percent: number) => void;
+    }) => {
+      const form = new FormData();
+      form.append("file", file);
+      return api.upload<TaskAttachment>(
+        `tasks/${taskId}/attachments/`,
+        form,
+        onProgress,
+      );
+    },
+    onSuccess: (attachment) => {
+      queryClient.setQueryData<Paginated<TaskAttachment>>(
+        keys.attachments(taskId),
+        (old) =>
+          old && !old.results.some((a) => a.id === attachment.id)
+            ? { ...old, count: old.count + 1, results: [attachment, ...old.results] }
+            : old,
+      );
+      queryClient.invalidateQueries({ queryKey: keys.task(taskId) });
+    },
+    onError: (err) => toast.error(attachmentErrorMessage(err)),
+  });
+}
+
+export function useDeleteAttachment(taskId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (attachmentId: string) => api.delete(`attachments/${attachmentId}/`),
+    onSuccess: (_data, attachmentId) => {
+      queryClient.setQueryData<Paginated<TaskAttachment>>(
+        keys.attachments(taskId),
+        (old) =>
+          old
+            ? {
+                ...old,
+                count: Math.max(0, old.count - 1),
+                results: old.results.filter((a) => a.id !== attachmentId),
+              }
+            : old,
+      );
+      queryClient.invalidateQueries({ queryKey: keys.task(taskId) });
+      toast.success("Fayl o'chirildi");
+    },
+    onError: (err) => toast.error(attachmentErrorMessage(err)),
   });
 }
 

@@ -13,7 +13,15 @@ from apps.core.enums import ActivityVerb, StatusType, WatcherSource
 from apps.core.exceptions import Conflict, InvalidStatusForList, PositionConflict
 from apps.core.ordering import MAX_LEN_BEFORE_REBALANCE, evenly_spaced, midstring
 from apps.realtime import events
-from apps.tasks.models import Tag, Task, TaskActivity, TaskAssignee, TaskTag, TaskWatcher
+from apps.tasks.models import (
+    Tag,
+    Task,
+    TaskActivity,
+    TaskAssignee,
+    TaskAttachment,
+    TaskTag,
+    TaskWatcher,
+)
 from apps.workspaces.models import Status, TaskList, WorkspaceMember
 from apps.workspaces.services import check_client_id, refresh_list_counts
 
@@ -503,3 +511,52 @@ def watch_task(task, user) -> bool:
 
 def unwatch_task(task, user):
     TaskWatcher.objects.filter(task=task, user=user).delete()
+
+
+# ---------------------------------------------------------------- attachments
+
+
+def _refresh_attachment_count(task):
+    task.attachment_count = TaskAttachment.objects.filter(task=task).count()
+    task.save(update_fields=["attachment_count", "updated_at"])
+
+
+@transaction.atomic
+def create_attachment(
+    task, actor, *, upload, original_name, content_type, extension, client_id=None
+) -> TaskAttachment:
+    """Biriktirmani saqlaydi — §10.7.
+
+    Chaqiruvchi (`apps.tasks.attachments.validate_upload`) hajm/kengaytma/MIME
+    tekshiruvini allaqachon bajargan bo'lishi SHART. Diskdagi nom shu yerda,
+    serverda generatsiya qilinadi: mijoz nomi hech qachon yo'lga tushmaydi.
+
+    **Vazifa bajarilgan (`status.type == "closed"`) bo'lsa ham ishlaydi** —
+    biriktirish holatga bog'liq emas (foydalanuvchi talabi).
+    """
+    attachment = TaskAttachment(
+        task=task,
+        original_name=original_name,
+        content_type=content_type,
+        size_bytes=upload.size,
+        uploaded_by=actor,
+    )
+    attachment.file.save(f"{uuid.uuid4().hex}{extension}", upload, save=False)
+    attachment.save()
+    _refresh_attachment_count(task)
+    events.emit_attachment_added(attachment, actor=actor, client_id=client_id)
+    return attachment
+
+
+@transaction.atomic
+def delete_attachment(attachment, actor, client_id=None):
+    """Qatorni va diskdagi faylni o'chiradi (hard delete — soft delete yo'q)."""
+    task = attachment.task
+    stored = attachment.file
+    # Django `delete()` dan keyin pk ni tozalaydi — event uchun snapshot olamiz.
+    snapshot = TaskAttachment(id=attachment.id, task=task)
+    attachment.delete()
+    _refresh_attachment_count(task)
+    # Tranzaksiya qaytsa fayl diskda qolishi kerak, shuning uchun commit'dan keyin.
+    transaction.on_commit(lambda: stored.delete(save=False))
+    events.emit_attachment_removed(snapshot, actor=actor, client_id=client_id)

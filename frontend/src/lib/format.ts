@@ -29,6 +29,25 @@ export function timeAgo(iso: string): string {
   return formatDistanceToNow(new Date(iso), { addSuffix: true, locale: uz });
 }
 
+/**
+ * Human file size in Uzbek notation — decimal comma, e.g. `2,4 MB`.
+ * Binary units (1 KB = 1024 B) to match what the server counts.
+ */
+export function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  // One decimal below 100, none above — "980 KB", not "980,4 KB".
+  const rounded = value >= 100 ? Math.round(value) : Math.round(value * 10) / 10;
+  return `${String(rounded).replace(".", ",")} ${units[unit]}`;
+}
+
 export const PRIORITIES: Priority[] = ["urgent", "high", "normal", "low", "none"];
 
 export const PRIORITY_META: Record<Priority, { label: string; className: string }> = {

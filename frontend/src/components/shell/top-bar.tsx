@@ -1,10 +1,10 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Check,
-  ChevronDown,
   LogOut,
   Menu,
   Moon,
@@ -15,11 +15,13 @@ import {
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuGroupLabel,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -28,6 +30,7 @@ import {
 import { useMe, useWorkspaces } from "@/hooks/queries";
 import { useLogout } from "@/hooks/use-logout";
 import { initials } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 export function TopBar({
   workspaceId,
@@ -57,7 +60,7 @@ export function TopBar({
       >
         <Menu />
       </Button>
-      <WorkspaceSwitcher workspaceId={workspaceId} />
+      <WorkspaceHomeLink workspaceId={workspaceId} />
       <form onSubmit={onSearchSubmit} className="mx-auto w-full max-w-md">
         <div className="relative">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -71,66 +74,41 @@ export function TopBar({
         </div>
       </form>
       <ThemeToggle />
-      <UserMenu />
+      <AccountMenu workspaceId={workspaceId} />
     </header>
   );
 }
 
-function WorkspaceSwitcher({ workspaceId }: { workspaceId: string }) {
-  const router = useRouter();
+/**
+ * Plain link, not a menu: workspace switching lives in the account menu, so a
+ * second dropdown here would only duplicate it. Clicking goes to the workspace
+ * home.
+ */
+function WorkspaceHomeLink({ workspaceId }: { workspaceId: string }) {
   const { data } = useWorkspaces();
-  const onLogout = useLogout();
-  const workspaces = data?.results ?? [];
-  const current = workspaces.find((w) => w.id === workspaceId);
+  const current = data?.results.find((w) => w.id === workspaceId);
+  const name = current?.name ?? "Ish maydoni";
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button variant="ghost" size="sm" className="max-w-56 gap-1.5 font-semibold" />
-        }
+    // A real <a>, styled like a ghost button: Base UI's Button would either
+    // warn about the non-native element or stamp role="button" over the link.
+    <Link
+      href={`/w/${workspaceId}`}
+      aria-label={`${name} — ish maydoni bosh sahifasi`}
+      className={cn(
+        buttonVariants({ variant: "ghost", size: "sm" }),
+        "max-w-56 gap-1.5 font-semibold",
+      )}
+    >
+      <span
+        aria-hidden
+        className="flex size-5 shrink-0 items-center justify-center rounded-sm text-[10px] font-bold text-primary-foreground"
+        style={{ backgroundColor: current?.color || "#7B68EE" }}
       >
-        <span
-          className="flex size-5 shrink-0 items-center justify-center rounded-sm text-[10px] font-bold text-primary-foreground"
-          style={{ backgroundColor: current?.color || "#7B68EE" }}
-        >
-          {initials(current?.name ?? "W")}
-        </span>
-        <span className="truncate">{current?.name ?? "Ish maydoni"}</span>
-        <ChevronDown className="size-3.5 text-muted-foreground" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-64">
-        <DropdownMenuLabel>Ish maydonlari</DropdownMenuLabel>
-        {workspaces.map((w) => (
-          <DropdownMenuItem key={w.id} onClick={() => router.push(`/w/${w.id}`)}>
-            <span
-              className="flex size-5 items-center justify-center rounded-sm text-[10px] font-bold text-primary-foreground"
-              style={{ backgroundColor: w.color || "#7B68EE" }}
-            >
-              {initials(w.name)}
-            </span>
-            <span className="truncate">{w.name}</span>
-            {w.id === workspaceId ? <Check className="ml-auto size-4" /> : null}
-          </DropdownMenuItem>
-        ))}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={() => router.push(`/w/${workspaceId}/settings`)}
-        >
-          <Settings className="size-4" />
-          Ish maydoni sozlamalari
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => router.push("/settings/profile")}>
-          <UserIcon className="size-4" />
-          Profil
-        </DropdownMenuItem>
-        <DropdownMenuItem variant="destructive" onClick={onLogout}>
-          <LogOut className="size-4" />
-          Chiqish
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+        {initials(name)}
+      </span>
+      <span className="truncate">{name}</span>
+    </Link>
   );
 }
 
@@ -150,15 +128,26 @@ function ThemeToggle() {
   );
 }
 
-function UserMenu() {
+/**
+ * The single menu of the shell: identity, profile, workspace settings, the
+ * workspace switcher and logout. Everything the old workspace dropdown carried
+ * now lives here, so nothing is offered twice.
+ */
+function AccountMenu({ workspaceId }: { workspaceId: string }) {
   const router = useRouter();
   const { data: me } = useMe();
+  const { data: workspacesPage } = useWorkspaces();
   const onLogout = useLogout();
+  const workspaces = workspacesPage?.results ?? [];
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={<Button variant="ghost" size="icon-sm" aria-label="Hisob menyusi" />}
+        render={
+          /* Name kept as "Hisob menyusi" — the E2E suite selects the trigger
+             by this accessible name. */
+          <Button variant="ghost" size="icon-sm" aria-label="Hisob menyusi" />
+        }
       >
         <Avatar className="size-7">
           {me?.avatar ? <AvatarImage src={me.avatar} alt="" /> : null}
@@ -170,10 +159,30 @@ function UserMenu() {
           </AvatarFallback>
         </Avatar>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel className="flex flex-col">
-          <span className="font-medium">{me?.full_name || me?.email}</span>
-          <span className="text-xs font-normal text-muted-foreground">{me?.email}</span>
+      {/* Cap the popup so a long workspace list scrolls instead of running off
+          the viewport; the popup itself is the scroll container so arrow-key
+          navigation still reaches every item. */}
+      <DropdownMenuContent align="end" className="max-h-[70vh] w-64">
+        {/* DropdownMenuLabel carries its own MenuPrimitive.Group — never wrap
+            it in another DropdownMenuGroup or the groups nest. */}
+        <DropdownMenuLabel className="flex items-center gap-2 py-1.5">
+          <Avatar className="size-8 shrink-0">
+            {me?.avatar ? <AvatarImage src={me.avatar} alt="" /> : null}
+            <AvatarFallback
+              className="text-xs font-semibold text-primary-foreground"
+              style={{ backgroundColor: me?.avatar_color || "#7B68EE" }}
+            >
+              {initials(me?.full_name, me?.email)}
+            </AvatarFallback>
+          </Avatar>
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate text-sm font-medium text-foreground">
+              {me?.full_name || me?.email}
+            </span>
+            <span className="truncate text-xs font-normal text-muted-foreground">
+              {me?.email}
+            </span>
+          </span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         {/* router.push rather than render={<Link/>}: a MenuItem renders a
@@ -184,6 +193,38 @@ function UserMenu() {
           <UserIcon className="size-4" />
           Profil
         </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => router.push(`/w/${workspaceId}/settings`)}>
+          <Settings className="size-4" />
+          Ish maydoni sozlamalari
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuGroupLabel>Ish maydonlari</DropdownMenuGroupLabel>
+          {workspaces.map((w) => {
+            const isCurrent = w.id === workspaceId;
+            return (
+              <DropdownMenuItem
+                key={w.id}
+                aria-label={
+                  isCurrent
+                    ? `${w.name} — joriy ish maydoni`
+                    : `${w.name} ish maydoniga o'tish`
+                }
+                onClick={() => router.push(`/w/${w.id}`)}
+              >
+                <span
+                  aria-hidden
+                  className="flex size-5 shrink-0 items-center justify-center rounded-sm text-[10px] font-bold text-primary-foreground"
+                  style={{ backgroundColor: w.color || "#7B68EE" }}
+                >
+                  {initials(w.name)}
+                </span>
+                <span className="truncate">{w.name}</span>
+                {isCurrent ? <Check className="ml-auto size-4" /> : null}
+              </DropdownMenuItem>
+            );
+          })}
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem variant="destructive" onClick={onLogout}>
           <LogOut className="size-4" />

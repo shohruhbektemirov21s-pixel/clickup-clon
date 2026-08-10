@@ -29,6 +29,7 @@ import {
 } from "@/components/task/pickers";
 import { TagPicker } from "@/components/task/pickers";
 import { CommentsThread } from "@/components/task/comments";
+import { TaskAttachments } from "@/components/task/attachments";
 import { TaskActionsMenu } from "@/components/task/task-actions-menu";
 import { resolveAssignees, resolveTags } from "@/lib/resolve-embedded";
 import type { Status, Task } from "@/types/api";
@@ -129,6 +130,10 @@ function TaskPanelBody({
         />
         <Separator />
         <DescriptionEditor task={task} listId={listId} canEdit={canEdit} />
+        <Separator />
+        {/* Bajarilgan vazifada ham faol — `canEdit` bilan gate qilinmaydi.
+            Yagona shart `attachment.*` ruxsatlari (§10.7). */}
+        <TaskAttachments taskId={task.id} workspaceId={workspaceId} />
         <Separator />
         <CommentsThread taskId={task.id} />
       </div>

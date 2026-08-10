@@ -10,6 +10,20 @@
 
 export type Role = "owner" | "admin" | "member" | "guest";
 export type InvitableRole = Exclude<Role, "owner">;
+
+/**
+ * Kasb roli — PROFIL MA'LUMOTI, ruxsat roli EMAS (`Role` bilan aralashtirmang).
+ * Bo'sh satr = "ko'rsatilmagan".
+ */
+export type Profession =
+  | ""
+  | "project_manager"
+  | "developer"
+  | "designer"
+  | "qa"
+  | "analyst"
+  | "marketing"
+  | "other";
 export type Priority = "urgent" | "high" | "normal" | "low" | "none";
 export type StatusType = "open" | "active" | "closed";
 export type ViewKind = "list" | "board";
@@ -59,6 +73,7 @@ export interface User {
   full_name: string;
   avatar: string | null;
   avatar_color: string;
+  profession: Profession;
   timezone: string;
   date_joined: string;
   last_seen_at: string | null;
@@ -73,6 +88,7 @@ export interface UserSummary {
   full_name: string;
   avatar: string | null;
   avatar_color: string;
+  profession: Profession;
 }
 
 export interface RegisterRequest {
@@ -80,6 +96,14 @@ export interface RegisterRequest {
   password: string;
   full_name?: string;
   workspace_name?: string;
+  /** Kasb roli — profil ma'lumoti; ruxsatga ta'sir qilmaydi. */
+  profession?: Profession;
+  /**
+   * Taklif tokeni (§D.8). Berilganda `workspace_name` yuborilmaydi, `full_name`
+   * majburiy bo'ladi va workspace roli SERVERDA taklifdan olinadi — klient rol
+   * yubora olmaydi.
+   */
+  invite_token?: string;
 }
 
 export interface LoginRequest {
@@ -91,6 +115,8 @@ export interface AuthResponse {
   access: string;
   refresh: string;
   user: User;
+  /** R21 — faqat workspace paydo bo'lganda (invite qabul qilindi / bootstrap). */
+  workspace_id?: string;
 }
 
 export interface TokenPair {
@@ -102,6 +128,7 @@ export interface UpdateMeRequest {
   full_name?: string;
   timezone?: string;
   avatar_color?: string;
+  profession?: Profession;
 }
 
 // ---------------------------------------------------------------------------
@@ -213,12 +240,18 @@ export interface Invitation {
   updated_at: string;
 }
 
-/** `invitations/lookup/?token=` — the sole token-based read. */
+/** `invitations/lookup/?token=` — the sole token-based read (public). */
 export interface InvitationLookup {
   workspace_name: string;
   email: string;
+  /** Ish maydoni roli — FAQAT O'QISH UCHUN. Klient uni o'zgartira olmaydi. */
   role: InvitableRole;
   expires_at: string;
+  /** §D.7 kengaytmasi — backend qo'shguncha ixtiyoriy. */
+  account_exists?: boolean;
+  workspace_id?: string;
+  workspace_color?: string;
+  invited_by?: Pick<UserSummary, "full_name" | "email" | "avatar" | "avatar_color">;
 }
 
 export interface AcceptInvitationResponse {
@@ -333,6 +366,8 @@ export interface Task {
   is_deleted: boolean;
   completed_at: string | null;
   comment_count: number;
+  /** Server-maintained counter (§10.7) — never written by clients. */
+  attachment_count: number;
   assignees: UserSummary[];
   watchers: UserSummary[];
   tags: TagSummary[];
@@ -377,6 +412,53 @@ export interface MoveTaskResponse extends Task {
   /** true → the (list_id, status_id) scope was renumbered; refetch, don't patch. */
   rebalanced: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// §10.7 Task attachments
+// ---------------------------------------------------------------------------
+
+/**
+ * A file attached to a task. The raw storage path is deliberately NOT part of
+ * the payload: `download_url` is the only read path and it re-checks
+ * `attachment.read` on every request (a direct MEDIA_URL link would not).
+ */
+export interface TaskAttachment {
+  id: string;
+  task_id: string;
+  /** Display name as the uploader saw it — never the name on disk. */
+  original_name: string;
+  /** Canonical MIME type derived server-side from the extension. */
+  content_type: string;
+  size_bytes: number;
+  /** `GET attachments/{id}/download/` — needs the Authorization header. */
+  download_url: string;
+  uploaded_by: UserSummary | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** §10.7 upload allow-list, mirrored for client-side pre-validation. */
+export const ATTACHMENT_ALLOWED_EXTENSIONS = [
+  "pdf",
+  "doc",
+  "docx",
+  "xls",
+  "xlsx",
+  "ppt",
+  "pptx",
+  "txt",
+  "md",
+  "csv",
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
+  "gif",
+  "zip",
+] as const;
+
+/** Server limit (`MAX_ATTACHMENT_MB`); the server re-checks it regardless. */
+export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 
 /** §10.4 grouped Board payload — NOT the standard envelope. */
 export interface GroupedTasksResponse {
@@ -458,6 +540,8 @@ export type WsEventType =
   | "comment.created"
   | "comment.updated"
   | "comment.deleted"
+  | "attachment.added"
+  | "attachment.removed"
   | "list.updated"
   | "presence.join"
   | "presence.leave"
@@ -496,6 +580,11 @@ export interface WsCommentDeletedData {
   task_id: string;
 }
 
+export interface WsAttachmentRemovedData {
+  id: string;
+  task_id: string;
+}
+
 export interface WsConnectionAckData {
   channel: string;
   user_id: string;
@@ -526,9 +615,9 @@ export interface WsAccessRevokedData {
 // ---------------------------------------------------------------------------
 
 /**
- * The closed catalog of permission codes — 44 codes across 8 groups.
- * Codes are never removed from the catalog, only flagged `deprecated`
- * server-side, so this union only ever grows.
+ * The closed catalog of permission codes — 48 codes across 9 groups
+ * (`catalog_version: 2`). Codes are never removed from the catalog, only
+ * flagged `deprecated` server-side, so this union only ever grows.
  */
 export type PermissionCode =
   | "workspace.read"
@@ -572,6 +661,10 @@ export type PermissionCode =
   | "comment.update_own"
   | "comment.delete_own"
   | "comment.delete_any"
+  | "attachment.read"
+  | "attachment.create"
+  | "attachment.delete_own"
+  | "attachment.delete_any"
   | "tag.create"
   | "tag.update"
   | "tag.delete";
@@ -584,6 +677,7 @@ export type PermissionGroupKey =
   | "list"
   | "task"
   | "comment"
+  | "attachment"
   | "tag";
 
 /** Roles a matrix row can exist for. `owner` is never stored (AD-3). */

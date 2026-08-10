@@ -40,7 +40,12 @@ class UserAdmin(BaseUserAdmin):
 
     fieldsets = (
         (None, {"fields": ("email", "password")}),
-        ("Profil", {"fields": ("full_name", "avatar", "avatar_color", "timezone")}),
+        # `profession` — kasb yorlig'i, "Ruxsatlar" bo'limida EMAS: u hech qanday
+        # vakolat bermaydi.
+        (
+            "Profil",
+            {"fields": ("full_name", "profession", "avatar", "avatar_color", "timezone")},
+        ),
         (
             "Ruxsatlar",
             {"fields": ("is_active", "is_staff", "is_superuser", "groups", "user_permissions")},

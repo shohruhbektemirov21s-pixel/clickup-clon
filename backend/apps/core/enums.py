@@ -16,6 +16,26 @@ ROLE_RANK = {
 }
 
 
+class Profession(models.TextChoices):
+    """Kasb roli — SOF PROFIL MA'LUMOTI, RUXSAT ROLI EMAS.
+
+    XAVFSIZLIK (binding): `Profession` hech qanday ruxsatga ta'sir qilmaydi.
+    Vakolat faqat `WorkspaceRole` + `RolePermission` matritsasi orqali
+    hisoblanadi (`apps/core/access.py::has_perm`). Bu yerga yangi qiymat
+    qo'shish hech kimga hech qanday huquq bermaydi va olmaydi — u faqat
+    "PM loyihaga mos odamni topsin" uchun ko'rsatiladigan yorliq.
+    Bo'sh qiymat ("") ruxsat etiladi = "ko'rsatilmagan".
+    """
+
+    PROJECT_MANAGER = "project_manager", "Loyiha menejeri"
+    DEVELOPER = "developer", "Dasturchi"
+    DESIGNER = "designer", "Dizayner"
+    QA = "qa", "Tester"
+    ANALYST = "analyst", "Analitik"
+    MARKETING = "marketing", "Marketolog"
+    OTHER = "other", "Boshqa"
+
+
 class AssignableRole(models.TextChoices):
     """RolePermission jadvalida saqlanadigan rollar. owner YO'Q.
 

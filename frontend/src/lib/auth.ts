@@ -16,6 +16,16 @@ export async function register(body: RegisterRequest): Promise<AuthResponse> {
   return res;
 }
 
+/**
+ * "Demo rejimda kirish" — parol KLIENTDA saqlanmaydi. Backend `DEMO_MODE`
+ * yoqilgan bo'lsagina demo hisob uchun token juftligini beradi, aks holda 404.
+ */
+export async function demoLogin(): Promise<AuthResponse> {
+  const res = await api.post<AuthResponse>("auth/demo/", {}, { auth: false });
+  useAuthStore.getState().setSession(res);
+  return res;
+}
+
 /** Blacklists this device's refresh token, then clears local session state. */
 export async function logout(): Promise<void> {
   const refresh = getRefreshToken();

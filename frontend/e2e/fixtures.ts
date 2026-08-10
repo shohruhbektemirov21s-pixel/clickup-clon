@@ -257,7 +257,8 @@ async function submitLoginForm(page: Page, user: DemoUser): Promise<void> {
   await fillStable(page, "#email", user.email);
   await fillStable(page, "#password", user.password);
 
-  await page.getByRole("button", { name: "Kirish" }).click();
+  // `exact` bo'lmasa "Demo rejimda kirish" tugmasi ham mos keladi.
+  await page.getByRole("button", { name: "Kirish", exact: true }).click();
 }
 
 /**

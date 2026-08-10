@@ -68,6 +68,11 @@ class Task(UUIDModel, TimeStampedModel, SoftDeleteModel, PositionedModel):
     archived = models.BooleanField(default=False, db_index=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     comment_count = models.PositiveIntegerField(default=0)
+    #: Denormalizatsiya — `comment_count` bilan bir xil naqsh. Ro'yxat
+    #: endpointlari `TaskSerializer` ni yuzlab qator uchun chaqiradi; alohida
+    #: `Count` annotatsiyasi har bir queryset'ga qo'shilishi kerak bo'lardi,
+    #: bu esa N+1 ga yo'l ochadi. Yagona yozuvchi: `apps.tasks.services`.
+    attachment_count = models.PositiveIntegerField(default=0)
 
     assignees = models.ManyToManyField(
         "accounts.User",
@@ -217,6 +222,42 @@ class TaskActivity(UUIDModel, TimeStampedModel):
 
     def __str__(self):
         return f"{self.verb} @ {self.created_at:%Y-%m-%d %H:%M}"
+
+
+class TaskAttachment(UUIDModel, TimeStampedModel):
+    """Vazifaga biriktirilgan fayl — docs/API_CONTRACT.md §10.7.
+
+    XAVFSIZLIK: `file.name` HAR DOIM serverda generatsiya qilinadi
+    (`<uuid4>.<kengaytma>`), mijoz yuborgan nom faqat `original_name` da
+    ko'rsatish uchun saqlanadi. Shu tufayli path traversal, ikki karra
+    kengaytma va `.svg`/`.html` kabi XSS vektorlari saqlash qatlamiga
+    yetib bormaydi (tekshiruv `apps.tasks.attachments.validate_upload`).
+    """
+
+    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name="attachments")
+    file = models.FileField(upload_to="attachments/%Y/%m/", max_length=500)
+    #: Foydalanuvchi ko'radigan nom (tozalangan, lekin diskdagi nom EMAS).
+    original_name = models.CharField(max_length=255)
+    #: Kengaytmadan olingan kanonik MIME turi — mijoz yuborgani emas.
+    content_type = models.CharField(max_length=100)
+    size_bytes = models.PositiveIntegerField()
+    uploaded_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,  # fayl foydalanuvchidan uzoq yashaydi
+        null=True,
+        blank=True,
+        related_name="uploaded_attachments",
+    )
+
+    class Meta:
+        db_table = "task_attachments"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["task", "-created_at"], name="idx_attach_task_recent"),
+        ]
+
+    def __str__(self):
+        return self.original_name
 
 
 class TaskTag(UUIDModel):
