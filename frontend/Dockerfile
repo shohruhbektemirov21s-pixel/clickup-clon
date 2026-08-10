@@ -6,10 +6,27 @@
 # Relies on `output: "standalone"` in next.config.ts, which emits
 # .next/standalone/server.js plus only the node_modules it actually traces.
 
-FROM node:22-alpine AS base
-# Next.js' prebuilt native binaries are glibc-linked; libc6-compat provides the
-# shim Alpine needs to load them.
-RUN apk add --no-cache libc6-compat
+# Debian-slim, not Alpine: Next.js' prebuilt native binaries are glibc-linked,
+# so glibc images need no shim package at all. Alpine would need libc6-compat,
+# and installing it fails outright on networks that MITM TLS to the apk CDN.
+FROM node:22-slim AS base
+
+# Networks that inspect TLS re-sign registry.npmjs.org with a private root, and
+# npm then fails with UNABLE_TO_VERIFY_LEAF_SIGNATURE. Drop such roots into
+# frontend/ca/*.crt and they get trusted here. The directory ships empty, so
+# this is a no-op on networks that do not intercept.
+
+# node:22-slim ships no CA store at all — Node uses its compiled-in bundle, so
+# there is nothing for a private root to be added to. Install one first; the
+# Debian archive is fetched over plain HTTP with GPG-signed indexes, so this
+# step works even on a network whose TLS is being intercepted.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY ca/ /usr/local/share/ca-certificates/
+RUN update-ca-certificates \
+    && printf 'cafile=/etc/ssl/certs/ca-certificates.crt\n' >> /usr/local/etc/npmrc
+ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +82,7 @@ COPY --from=builder --chown=node:node /app/public ./public
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 
-# node:22-alpine ships an unprivileged `node` user (uid 1000).
+# node:22-slim ships an unprivileged `node` user (uid 1000).
 USER node
 
 EXPOSE 3000

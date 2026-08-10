@@ -8,6 +8,7 @@ from rest_framework import status as http
 from rest_framework.exceptions import NotFound, PermissionDenied, Throttled, ValidationError
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from apps.core.access import (
@@ -17,7 +18,7 @@ from apps.core.access import (
     my_permissions,
     require_membership,
     require_membership_perm,
-    require_role,
+    require_space_perm,
     visible_spaces_q,
 )
 from apps.core.api import client_id_of, paginate, parse_bool
@@ -60,17 +61,19 @@ from apps.workspaces.serializers import (
 # ---------------------------------------------------------------- resolvers
 
 
-def _get_space(user, space_id, min_role="guest"):
+def _get_space(user, space_id, perm=None):
+    """C.4 tartibi: resurs → a'zolik → ko'rinuvchanlik → ruxsat."""
     space = Space.objects.select_related("workspace").filter(pk=space_id).first()
     if space is None:
         raise NotFound()
     membership = require_membership(user, space.workspace_id)
     check_space_visible(membership, space)
-    require_role(membership, min_role)
+    if perm is not None:
+        require_space_perm(membership, space, perm)
     return space, membership
 
 
-def _get_folder(user, folder_id, min_role="guest"):
+def _get_folder(user, folder_id, perm=None):
     folder = (
         Folder.objects.select_related("space", "space__workspace").filter(pk=folder_id).first()
     )
@@ -78,11 +81,12 @@ def _get_folder(user, folder_id, min_role="guest"):
         raise NotFound()
     membership = require_membership(user, folder.space.workspace_id)
     check_space_visible(membership, folder.space)
-    require_role(membership, min_role)
+    if perm is not None:
+        require_space_perm(membership, folder.space, perm)
     return folder, membership
 
 
-def get_list(user, list_id, min_role="guest"):
+def get_list(user, list_id, perm=None):
     task_list = (
         TaskList.objects.select_related("space", "space__workspace", "folder")
         .filter(pk=list_id)
@@ -92,7 +96,8 @@ def get_list(user, list_id, min_role="guest"):
         raise NotFound()
     membership = require_membership(user, task_list.space.workspace_id)
     check_space_visible(membership, task_list.space)
-    require_role(membership, min_role)
+    if perm is not None:
+        require_space_perm(membership, task_list.space, perm)
     return task_list, membership
 
 
@@ -142,7 +147,7 @@ class WorkspaceDetailView(APIView):
         return Response(data)
 
     def patch(self, request, workspace_id):
-        membership = require_membership(request.user, workspace_id, min_role="owner")
+        membership = require_membership_perm(request.user, workspace_id, "workspace.update")
         serializer = WorkspaceSerializer(
             membership.workspace,
             data=request.data,
@@ -154,7 +159,7 @@ class WorkspaceDetailView(APIView):
         return Response(serializer.data)
 
     def delete(self, request, workspace_id):
-        membership = require_membership(request.user, workspace_id, min_role="owner")
+        membership = require_membership_perm(request.user, workspace_id, "workspace.delete")
         workspace = membership.workspace
         if request.data.get("confirm_name") != workspace.name:
             _validation_error("confirm_name", "confirm_name must exactly match the workspace name.")
@@ -269,7 +274,7 @@ ROSTER_RANK = Case(
 
 class MemberListView(APIView):
     def get(self, request, workspace_id):
-        require_membership(request.user, workspace_id, min_role="member")
+        require_membership_perm(request.user, workspace_id, "member.read")
         members = (
             WorkspaceMember.objects.filter(workspace_id=workspace_id)
             .select_related("user")
@@ -291,15 +296,19 @@ class MemberDetailView(APIView):
         return target
 
     def patch(self, request, workspace_id, user_id):
-        caller = require_membership(request.user, workspace_id, min_role="admin")
+        caller = require_membership_perm(request.user, workspace_id, "member.role_change")
         target = self._target(workspace_id, user_id)
         new_role = request.data.get("role")
         if new_role not in WorkspaceRole.values:
             _validation_error("role", "role must be one of owner, admin, member, guest.")
 
-        if caller.role == WorkspaceRole.ADMIN:
+        # F-1 rank guard (ROLE_RANK, §B.7 whitelist): matritsa buni bypass qila
+        # olmaydi — owner bo'lmagan chaqiruvchi owner'ga tega olmaydi va owner
+        # rolini bera olmaydi.
+        if ROLE_RANK[caller.role] < ROLE_RANK[WorkspaceRole.OWNER]:
             if target.role == WorkspaceRole.OWNER or new_role == WorkspaceRole.OWNER:
                 raise PermissionDenied()
+        # F-2 oxirgi owner invarianti — permission matritsasidan ustun.
         if (
             target.role == WorkspaceRole.OWNER
             and new_role != WorkspaceRole.OWNER
@@ -327,10 +336,15 @@ class MemberDetailView(APIView):
         return Response(MemberSerializer(target, context={"request": request}).data)
 
     def delete(self, request, workspace_id, user_id):
-        caller = require_membership(request.user, workspace_id, min_role="admin")
+        caller = require_membership_perm(request.user, workspace_id, "member.remove")
         target = self._target(workspace_id, user_id)
-        if caller.role == WorkspaceRole.ADMIN and target.role == WorkspaceRole.OWNER:
+        # F-1 rank guard (ROLE_RANK, §B.7 whitelist)
+        if (
+            ROLE_RANK[caller.role] < ROLE_RANK[WorkspaceRole.OWNER]
+            and target.role == WorkspaceRole.OWNER
+        ):
             raise PermissionDenied()
+        # F-2 oxirgi owner invarianti — permission matritsasidan ustun.
         if target.role == WorkspaceRole.OWNER and _owner_count(workspace_id) == 1:
             raise Conflict("Cannot remove the last owner.")
         _remove_member(target)
@@ -359,8 +373,15 @@ def _effective_invite_status(invitation):
 
 
 class InvitationListCreateView(APIView):
+    def get_throttles(self):
+        # F-6: taklif yuborish rate-limit ostida; ro'yxatni o'qish emas.
+        if self.request.method == "POST":
+            self.throttle_scope = "invite"
+            return [ScopedRateThrottle()]
+        return []
+
     def get(self, request, workspace_id):
-        require_membership(request.user, workspace_id, min_role="admin")
+        require_membership_perm(request.user, workspace_id, "invitation.read")
         invitations = (
             Invitation.objects.filter(workspace_id=workspace_id)
             .select_related("invited_by")
@@ -369,7 +390,7 @@ class InvitationListCreateView(APIView):
         return paginate(request, invitations, InvitationSerializer)
 
     def post(self, request, workspace_id):
-        membership = require_membership(request.user, workspace_id, min_role="admin")
+        membership = require_membership_perm(request.user, workspace_id, "member.invite")
         serializer = InvitationCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         invitation = services.create_invitation(
@@ -392,7 +413,7 @@ def _get_invitation_for_admin(user, invitation_id):
     )
     if invitation is None:
         raise NotFound()
-    require_membership(user, invitation.workspace_id, min_role="admin")
+    require_membership_perm(user, invitation.workspace_id, "invitation.manage")
     return invitation
 
 
@@ -430,6 +451,9 @@ class InvitationResendView(APIView):
 
 class InvitationLookupView(APIView):
     permission_classes = [AllowAny]
+    # F-6: public endpoint — token brute-force'ga qarshi IP bo'yicha throttle.
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "invite_lookup"
 
     def get(self, request):
         token = request.query_params.get("token") or ""
@@ -512,7 +536,7 @@ class SpaceListCreateView(APIView):
         return paginate(request, spaces, SpaceSerializer)
 
     def post(self, request, workspace_id):
-        membership = require_membership(request.user, workspace_id, min_role="admin")
+        membership = require_membership_perm(request.user, workspace_id, "space.create")
         serializer = SpaceSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         space = services.create_space(
@@ -537,7 +561,7 @@ class SpaceDetailView(APIView):
         return Response(SpaceSerializer(space, context={"request": request}).data)
 
     def patch(self, request, space_id):
-        space, _ = _get_space(request.user, space_id, min_role="admin")
+        space, _ = _get_space(request.user, space_id, perm="space.update")
         serializer = SpaceSerializer(
             space, data=request.data, partial=True, context={"request": request}
         )
@@ -556,7 +580,7 @@ class SpaceDetailView(APIView):
         return Response(serializer.data)
 
     def delete(self, request, space_id):
-        space, _ = _get_space(request.user, space_id, min_role="admin")
+        space, _ = _get_space(request.user, space_id, perm="space.delete")
         if request.data.get("confirm_name") != space.name:
             _validation_error("confirm_name", "confirm_name must exactly match the space name.")
         services.hard_delete_space(space)
@@ -576,7 +600,7 @@ class FolderListCreateView(APIView):
         return paginate(request, folders, FolderSerializer)
 
     def post(self, request, space_id):
-        space, _ = _get_space(request.user, space_id, min_role="member")
+        space, _ = _get_space(request.user, space_id, perm="folder.create")
         serializer = FolderSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         name = serializer.validated_data["name"].strip()
@@ -603,7 +627,7 @@ class FolderDetailView(APIView):
         return Response(FolderSerializer(folder, context={"request": request}).data)
 
     def patch(self, request, folder_id):
-        folder, _ = _get_folder(request.user, folder_id, min_role="member")
+        folder, _ = _get_folder(request.user, folder_id, perm="folder.update")
         serializer = FolderSerializer(
             folder, data=request.data, partial=True, context={"request": request}
         )
@@ -623,8 +647,9 @@ class FolderDetailView(APIView):
         strategy = request.query_params.get("strategy", "cascade")
         if strategy not in ("cascade", "detach"):
             _validation_error("strategy", "strategy must be cascade or detach.")
-        min_role = "admin" if strategy == "cascade" else "member"
-        folder, _ = _get_folder(request.user, folder_id, min_role=min_role)
+        # §B.7: `?strategy=` ikki xil kodga bo'linadi.
+        perm = "folder.delete_cascade" if strategy == "cascade" else "folder.delete"
+        folder, _ = _get_folder(request.user, folder_id, perm=perm)
         if strategy == "detach":
             services.detach_folder_lists(folder)
             folder.delete()
@@ -649,7 +674,7 @@ class ListListCreateView(APIView):
         return paginate(request, lists.order_by("position", "name"), ListSerializer)
 
     def post(self, request, space_id):
-        space, _ = _get_space(request.user, space_id, min_role="member")
+        space, _ = _get_space(request.user, space_id, perm="list.create")
         serializer = ListSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         folder = None
@@ -690,7 +715,7 @@ class ListDetailView(APIView):
         return Response(ListSerializer(task_list, context={"request": request}).data)
 
     def patch(self, request, list_id):
-        task_list, _ = get_list(request.user, list_id, min_role="member")
+        task_list, _ = get_list(request.user, list_id, perm="list.update")
         if "folder_id" in request.data:
             _validation_error("folder_id", "folder_id is not patchable; use move/.")
         serializer = ListSerializer(
@@ -711,14 +736,14 @@ class ListDetailView(APIView):
         return Response(serializer.data)
 
     def delete(self, request, list_id):
-        task_list, _ = get_list(request.user, list_id, min_role="member")
+        task_list, _ = get_list(request.user, list_id, perm="list.delete")
         services.hard_delete_list(task_list)
         return Response(status=http.HTTP_204_NO_CONTENT)
 
 
 class ListMoveView(APIView):
     def patch(self, request, list_id):
-        task_list, _ = get_list(request.user, list_id, min_role="member")
+        task_list, _ = get_list(request.user, list_id, perm="list.move")
         if "space_id" in request.data:
             _validation_error("space_id", "Lists can only move within their space.")
         if "folder_id" not in request.data:
@@ -745,7 +770,7 @@ class SpaceStatusSetView(APIView):
         )
 
     def put(self, request, space_id):
-        space, _ = _get_space(request.user, space_id, min_role="admin")
+        space, _ = _get_space(request.user, space_id, perm="space.manage_statuses")
         serializer = StatusSetInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         status_set = services.replace_status_set(
@@ -767,7 +792,7 @@ class ListStatusSetView(APIView):
         )
 
     def put(self, request, list_id):
-        task_list, _ = get_list(request.user, list_id, min_role="admin")
+        task_list, _ = get_list(request.user, list_id, perm="list.manage_statuses")
         serializer = StatusSetInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         status_set = services.replace_status_set(
@@ -779,7 +804,7 @@ class ListStatusSetView(APIView):
         return Response(StatusSetSerializer(status_set, context={"request": request}).data)
 
     def delete(self, request, list_id):
-        task_list, _ = get_list(request.user, list_id, min_role="admin")
+        task_list, _ = get_list(request.user, list_id, perm="list.manage_statuses")
         status_set = services.remove_list_status_set(
             task_list,
             status_mapping=request.data.get("status_mapping") or {},

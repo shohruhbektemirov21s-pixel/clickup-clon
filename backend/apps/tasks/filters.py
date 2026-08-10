@@ -125,10 +125,10 @@ def apply_ordering(qs, request, default):
 
 
 def include_deleted_requested(request, membership):
-    """?include_deleted=true is admin+ only (else 403)."""
-    from apps.core.access import require_role
+    """`?include_deleted=true` → `task.view_deleted` (default: admin+), else 403."""
+    from apps.core.access import require_perm
 
     if parse_bool(request.query_params.get("include_deleted"), False):
-        require_role(membership, "admin")
+        require_perm(membership, "task.view_deleted")
         return True
     return False

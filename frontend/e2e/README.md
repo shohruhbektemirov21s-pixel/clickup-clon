@@ -93,6 +93,21 @@ E2E_BASE_URL=http://localhost:3001 E2E_API_BASE_URL=http://localhost:8001/api/v1
 - Har bir test o'z ma'lumotini yaratadi; mavjud `seed_demo` ma'lumoti faqat
   **o'qish** uchun ishlatiladi.
 
+## Ma'lum muammo (test emas, ilova bug'i)
+
+`auth.spec.ts › logs out and returns to /login` **ataylab qizil**. Yuqori
+paneldagi "Hisob menyusi" ochilganda Base UI xato tashlaydi:
+
+```
+Base UI: MenuGroupContext is missing.
+Menu group parts must be used within <Menu.Group> or <Menu.RadioGroup>.
+```
+
+Sababi: `src/components/ui/dropdown-menu.tsx` dagi `DropdownMenuLabel`
+`Menu.GroupLabel` ni render qiladi, lekin `src/components/shell/top-bar.tsx`
+da u `<DropdownMenuGroup>` (ya'ni `Menu.Group`) ichida emas. Shu sababli
+"Chiqish" bandiga yetib bo'lmaydi. Tuzatilgach test o'zi yashil bo'ladi.
+
 ## Debug
 
 ```bash

@@ -271,7 +271,8 @@ async function submitLoginForm(page: Page, user: DemoUser): Promise<void> {
  * bannerini ko'rsa, oyna bo'shashini kutib bir marta qayta uriniladi.
  */
 export async function login(page: Page, user: DemoUser): Promise<void> {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  const attempts = 3;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     await submitLoginForm(page, user);
 
     const left = await page
@@ -280,8 +281,15 @@ export async function login(page: Page, user: DemoUser): Promise<void> {
       .catch(() => false);
     if (left) return;
 
-    const banner = await page.getByRole("alert").textContent().catch(() => null);
-    if (banner?.includes("Urinishlar juda ko'p") && attempt === 0) {
+    // Next.js ning `__next-route-announcer__` elementi ham role="alert" —
+    // shuning uchun aynan formadagi banner o'qiladi.
+    const banner = await page
+      .locator('form p[role="alert"]')
+      .first()
+      .textContent()
+      .catch(() => null);
+    if (banner?.includes("Urinishlar juda ko'p") && attempt < attempts - 1) {
+      // Throttle oynasi (1 daqiqa) bo'shashini kutamiz.
       await page.waitForTimeout(62_000);
       continue;
     }

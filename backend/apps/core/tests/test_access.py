@@ -144,6 +144,15 @@ def test_cache_hit_costs_no_queries(env, django_assert_num_queries):
             effective_permissions(member.workspace)
 
 
+def test_django_cache_layer_survives_a_new_request(env, django_assert_num_queries):
+    """C.3 3-qavat: request-local dict tozalansa ham DB'ga borilmaydi."""
+    member = membership(env, env.member)
+    expected = effective_permissions(member.workspace)  # warm both layers
+    clear_permission_cache()  # yangi HTTP request simulyatsiyasi
+    with django_assert_num_queries(0):
+        assert effective_permissions(member.workspace) == expected
+
+
 # --------------------------------------------------------------- space scope
 
 

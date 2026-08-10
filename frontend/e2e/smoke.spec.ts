@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
 import {
-  apiLogin,
   collectPageErrors,
   firstListId,
   firstWorkspace,
   login,
+  sessionFor,
   USERS,
 } from "./fixtures";
 
@@ -24,7 +24,7 @@ test.describe("smoke — sahifalar konsol xatosisiz yuklanadi", () => {
   });
 
   test("authenticated pages load cleanly", async ({ page }) => {
-    const session = await apiLogin(USERS.demo.email, USERS.demo.password);
+    const session = await sessionFor(USERS.demo);
     const workspace = await firstWorkspace(session.access);
     const listId = await firstListId(session.access, workspace.id);
 

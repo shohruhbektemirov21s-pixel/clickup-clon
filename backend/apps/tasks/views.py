@@ -5,9 +5,15 @@ from rest_framework.exceptions import NotFound, PermissionDenied, ValidationErro
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.access import check_space_visible, require_membership, require_role
+from apps.core.access import (
+    check_space_visible,
+    has_space_perm,
+    require_membership,
+    require_membership_perm,
+    require_space_perm,
+    visible_spaces_q,
+)
 from apps.core.api import client_id_of, paginate
-from apps.core.enums import WorkspaceRole
 from apps.core.exceptions import Conflict
 from apps.tasks import services
 from apps.tasks.filters import apply_ordering, apply_task_filters, include_deleted_requested
@@ -41,13 +47,22 @@ def get_task(user, task_id, *, include_deleted=False):
     return task, membership
 
 
-def require_task_editor(task, membership):
-    """member+ may edit any task; guests only tasks they are assigned to."""
-    if membership.role == WorkspaceRole.GUEST:
-        if not task.task_assignees.filter(user_id=membership.user_id).exists():
-            raise PermissionDenied()
-    else:
-        require_role(membership, "member")
+def require_task_editor(task, membership, code="task.update"):
+    """§A "Rezolyutsiya tartibi" (BINDING).
+
+    1. `task.update` / `task.move` bo'lsa → ruxsat;
+    2. aks holda `task.update_assigned` **va** chaqiruvchi `TaskAssignee`
+       qatoriga ega bo'lsa → ruxsat;
+    3. aks holda `403`.
+    """
+    space = task.list.space
+    if has_space_perm(membership, space, code):
+        return membership
+    if has_space_perm(membership, space, "task.update_assigned") and task.task_assignees.filter(
+        user_id=membership.user_id
+    ).exists():
+        return membership
+    raise PermissionDenied()
 
 
 class ListTasksView(APIView):
@@ -89,7 +104,7 @@ class ListTasksView(APIView):
         return Response({"group_by": "status", "groups": groups})
 
     def post(self, request, list_id):
-        task_list, membership = get_list(request.user, list_id, min_role="member")
+        task_list, membership = get_list(request.user, list_id, perm="task.create")
         serializer = TaskInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = dict(serializer.validated_data)
@@ -129,7 +144,7 @@ class TaskDetailView(APIView):
                 {"deleted_at": ["Only {\"deleted_at\": null} (restore) is accepted."]}
             )
         task, membership = get_task(request.user, task_id, include_deleted=True)
-        require_role(membership, "admin")
+        require_space_perm(membership, task.list.space, "task.restore")
         if not task.is_deleted:
             raise Conflict("Task is not deleted.")
         from datetime import timedelta
@@ -144,7 +159,7 @@ class TaskDetailView(APIView):
 
     def delete(self, request, task_id):
         task, membership = get_task(request.user, task_id)
-        require_role(membership, "member")
+        require_space_perm(membership, task.list.space, "task.delete")
         services.soft_delete_task(task, request.user, client_id=client_id_of(request))
         return Response(status=http.HTTP_204_NO_CONTENT)
 
@@ -152,7 +167,7 @@ class TaskDetailView(APIView):
 class TaskMoveView(APIView):
     def patch(self, request, task_id):
         task, membership = get_task(request.user, task_id)
-        require_task_editor(task, membership)
+        require_task_editor(task, membership, "task.move")
         list_id = request.data.get("list_id")
         if not list_id:
             raise ValidationError({"list_id": ["list_id is required."]})
@@ -208,9 +223,11 @@ class WorkspaceTasksView(APIView):
         include_deleted = include_deleted_requested(request, membership)
         manager = Task.all_objects if include_deleted else Task.objects
 
-        spaces = Space.objects.filter(workspace_id=workspace_id)
-        if membership.role == WorkspaceRole.GUEST:
-            spaces = spaces.filter(is_private=False)
+        # §C.5: bitta helper — bu view avval o'z visibility mantiqini
+        # takrorlardi (F-3 teshigi).
+        spaces = Space.objects.filter(workspace_id=workspace_id).filter(
+            visible_spaces_q(membership)
+        )
         qs = (
             manager.filter(list__space__in=spaces)
             .select_related(*TASK_SELECT)
@@ -231,7 +248,7 @@ class WorkspaceTagsView(APIView):
         return paginate(request, tags, TagSerializer)
 
     def post(self, request, workspace_id):
-        membership = require_membership(request.user, workspace_id, min_role="member")
+        membership = require_membership_perm(request.user, workspace_id, "tag.create")
         serializer = TagSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         name = serializer.validated_data["name"].strip()
@@ -254,15 +271,15 @@ class WorkspaceTagsView(APIView):
 
 
 class TagDetailView(APIView):
-    def _get(self, user, tag_id, min_role="member"):
+    def _get(self, user, tag_id, perm):
         tag = Tag.objects.select_related("workspace").filter(pk=tag_id).first()
         if tag is None:
             raise NotFound()
-        require_membership(user, tag.workspace_id, min_role=min_role)
+        require_membership_perm(user, tag.workspace_id, perm)
         return tag
 
     def patch(self, request, tag_id):
-        tag = self._get(request.user, tag_id)
+        tag = self._get(request.user, tag_id, "tag.update")
         serializer = TagSerializer(
             tag, data=request.data, partial=True, context={"request": request}
         )
@@ -279,6 +296,6 @@ class TagDetailView(APIView):
         return Response(serializer.data)
 
     def delete(self, request, tag_id):
-        tag = self._get(request.user, tag_id)
+        tag = self._get(request.user, tag_id, "tag.delete")
         tag.delete()
         return Response(status=http.HTTP_204_NO_CONTENT)

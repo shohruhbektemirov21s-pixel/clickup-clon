@@ -22,7 +22,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useInvitations, useMe, useMembers, useWorkspace } from "@/hooks/queries";
+import {
+  useInvitations,
+  useMe,
+  useMembers,
+  useMyPermissions,
+  useWorkspace,
+} from "@/hooks/queries";
 import {
   useChangeMemberRole,
   useRemoveMember,
@@ -32,55 +38,46 @@ import {
 } from "@/hooks/mutations";
 import { InviteMemberDialog } from "@/components/workspace/invite-member-dialog";
 import { initials, timeAgo } from "@/lib/format";
+import { can } from "@/lib/permissions";
 import type { Member, Role } from "@/types/api";
 
-import { ROLE_LABEL } from "@/lib/roles";
+import { ROLE_LABEL, ROLE_RANK } from "@/lib/roles";
 
-export function WorkspaceSettings({ workspaceId }: { workspaceId: string }) {
-  const { data: workspace, isPending } = useWorkspace(workspaceId);
-  const myRole = workspace?.my_role;
-  const isAdmin = myRole === "owner" || myRole === "admin";
-
-  if (isPending) {
-    return (
-      <div className="mx-auto w-full max-w-3xl space-y-4 p-8" aria-hidden>
-        <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-32 w-full" />
-        <Skeleton className="h-64 w-full" />
-      </div>
-    );
-  }
-
-  if (!workspace) {
-    return (
-      <div className="flex flex-1 items-center justify-center p-12 text-sm text-muted-foreground">
-        Ish maydoni topilmadi yoki sizda endi ruxsat yo&apos;q.
-      </div>
-    );
-  }
-
+function SectionSkeleton() {
   return (
-    <div className="mx-auto w-full max-w-3xl overflow-y-auto p-8">
-      <h1 className="mb-6 text-xl font-semibold">
-        Ish maydoni sozlamalari — {workspace.name}
-      </h1>
-
-      <GeneralSection
-        workspaceId={workspaceId}
-        currentName={workspace.name}
-        canRename={isAdmin && myRole === "owner"}
-      />
-
-      {myRole !== "guest" ? (
-        <MembersSection workspaceId={workspaceId} myRole={myRole ?? "member"} />
-      ) : null}
-
-      {isAdmin ? <InvitationsSection workspaceId={workspaceId} /> : null}
+    <div className="space-y-2" aria-hidden>
+      {Array.from({ length: 4 }).map((_, i) => (
+        <Skeleton key={i} className="h-10 w-full" />
+      ))}
     </div>
   );
 }
 
-function GeneralSection({
+/** "Umumiy" — workspace name. Gated on `workspace.update` (owner by default). */
+export function GeneralSection({ workspaceId }: { workspaceId: string }) {
+  const { data: workspace, isPending } = useWorkspace(workspaceId);
+  const { data: my } = useMyPermissions(workspaceId);
+  const canRename = can(my, "workspace.update");
+
+  if (isPending) return <SectionSkeleton />;
+  if (!workspace) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Ish maydoni topilmadi yoki sizda endi ruxsat yo&apos;q.
+      </p>
+    );
+  }
+
+  return (
+    <GeneralForm
+      workspaceId={workspaceId}
+      currentName={workspace.name}
+      canRename={canRename}
+    />
+  );
+}
+
+function GeneralForm({
   workspaceId,
   currentName,
   canRename,
@@ -122,43 +119,43 @@ function GeneralSection({
         </div>
         <Button
           type="submit"
-          disabled={!canRename || rename.isPending || !name.trim() || name.trim() === currentName}
+          disabled={
+            !canRename || rename.isPending || !name.trim() || name.trim() === currentName
+          }
         >
           {rename.isPending ? "Saqlanmoqda…" : "Saqlash"}
         </Button>
       </form>
       {!canRename ? (
         <p className="mt-1.5 text-xs text-muted-foreground">
-          Ish maydoni nomini faqat egasi o&apos;zgartira oladi.
+          Ish maydoni nomini o&apos;zgartirish uchun ruxsatingiz yo&apos;q.
         </p>
       ) : null}
     </section>
   );
 }
 
-function MembersSection({
-  workspaceId,
-  myRole,
-}: {
-  workspaceId: string;
-  myRole: Role;
-}) {
+/** "A'zolar" — the roster. */
+export function MembersSection({ workspaceId }: { workspaceId: string }) {
   const { data, isPending, isError } = useMembers(workspaceId);
   const { data: me } = useMe();
+  const { data: my } = useMyPermissions(workspaceId);
   const changeRole = useChangeMemberRole(workspaceId);
   const removeMember = useRemoveMember(workspaceId);
-  const isAdmin = myRole === "owner" || myRole === "admin";
 
-  const canManage = (target: Member): boolean => {
-    if (!isAdmin) return false;
-    if (target.user.id === me?.id) return false; // never manage yourself here
-    if (target.role === "owner") return myRole === "owner";
-    return true;
-  };
+  const myRole: Role = my?.role ?? "guest";
+  const canChangeRole = can(my, "member.role_change");
+  const canRemove = can(my, "member.remove");
+
+  /**
+   * Permission answers *what* is allowed; ROLE_RANK still answers *on whom*
+   * (AD-8). Both must pass, exactly like the server.
+   */
+  const outranks = (target: Member) =>
+    target.user.id !== me?.id && ROLE_RANK[target.role] >= ROLE_RANK[myRole];
 
   const roleOptions = (target: Member): Role[] => {
     if (myRole === "owner") return ["owner", "admin", "member", "guest"];
-    // Admins may change roles among admin/member/guest for non-owners.
     return target.role === "owner" ? [] : ["admin", "member", "guest"];
   };
 
@@ -168,11 +165,7 @@ function MembersSection({
         A&apos;zolar {data ? `(${data.count})` : ""}
       </h2>
       {isPending ? (
-        <div className="space-y-2" aria-hidden>
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-10 w-full" />
-          ))}
-        </div>
+        <SectionSkeleton />
       ) : isError ? (
         <p className="text-sm text-danger">A&apos;zolarni yuklab bo&apos;lmadi.</p>
       ) : (
@@ -208,12 +201,22 @@ function MembersSection({
                     ) : null}
                   </span>
                 </TableCell>
-                <TableCell className="text-muted-foreground">{member.user.email}</TableCell>
+                <TableCell className="text-muted-foreground">
+                  {member.user.email}
+                </TableCell>
                 <TableCell>
-                  {canManage(member) && roleOptions(member).length > 0 ? (
+                  {canChangeRole &&
+                  outranks(member) &&
+                  roleOptions(member).length > 0 ? (
                     <DropdownMenu>
                       <DropdownMenuTrigger
-                        render={<Button variant="outline" size="xs" className="w-24 justify-between" />}
+                        render={
+                          <Button
+                            variant="outline"
+                            size="xs"
+                            className="w-24 justify-between"
+                          />
+                        }
                       >
                         {ROLE_LABEL[member.role]}
                       </DropdownMenuTrigger>
@@ -239,7 +242,7 @@ function MembersSection({
                   {timeAgo(member.joined_at)}
                 </TableCell>
                 <TableCell>
-                  {canManage(member) ? (
+                  {canRemove && outranks(member) ? (
                     <Button
                       variant="ghost"
                       size="icon-xs"
@@ -260,13 +263,26 @@ function MembersSection({
   );
 }
 
-function InvitationsSection({ workspaceId }: { workspaceId: string }) {
-  const { data, isPending } = useInvitations(workspaceId, true);
+/** "Takliflar" — pending invitations. */
+export function InvitationsSection({ workspaceId }: { workspaceId: string }) {
+  const { data: my } = useMyPermissions(workspaceId);
+  const canRead = can(my, "invitation.read");
+  const canInvite = can(my, "member.invite");
+  const canManage = can(my, "invitation.manage");
+  const { data, isPending } = useInvitations(workspaceId, canRead);
   const revoke = useRevokeInvitation(workspaceId);
   const resend = useResendInvitation(workspaceId);
   const [inviteOpen, setInviteOpen] = React.useState(false);
 
   const pending = (data?.results ?? []).filter((i) => i.status === "pending");
+
+  if (!canRead) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Takliflarni ko&apos;rish uchun ruxsatingiz yo&apos;q.
+      </p>
+    );
+  }
 
   return (
     <section className="mb-8">
@@ -274,9 +290,11 @@ function InvitationsSection({ workspaceId }: { workspaceId: string }) {
         <h2 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">
           Kutilayotgan takliflar ({pending.length})
         </h2>
-        <Button size="sm" onClick={() => setInviteOpen(true)}>
-          <MailPlus className="size-3.5" /> Taklif qilish
-        </Button>
+        {canInvite ? (
+          <Button size="sm" onClick={() => setInviteOpen(true)}>
+            <MailPlus className="size-3.5" /> Taklif qilish
+          </Button>
+        ) : null}
       </div>
       {isPending ? (
         <Skeleton className="h-16 w-full" aria-hidden />
@@ -309,25 +327,29 @@ function InvitationsSection({ workspaceId }: { workspaceId: string }) {
                   {timeAgo(invitation.expires_at)}
                 </TableCell>
                 <TableCell className="flex gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label="Taklifni qayta yuborish"
-                    disabled={resend.isPending}
-                    onClick={() => resend.mutate(invitation.id)}
-                  >
-                    <RefreshCw />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    className="text-danger"
-                    aria-label="Taklifni bekor qilish"
-                    disabled={revoke.isPending}
-                    onClick={() => revoke.mutate(invitation.id)}
-                  >
-                    <X />
-                  </Button>
+                  {canManage ? (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label="Taklifni qayta yuborish"
+                        disabled={resend.isPending}
+                        onClick={() => resend.mutate(invitation.id)}
+                      >
+                        <RefreshCw />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        className="text-danger"
+                        aria-label="Taklifni bekor qilish"
+                        disabled={revoke.isPending}
+                        onClick={() => revoke.mutate(invitation.id)}
+                      >
+                        <X />
+                      </Button>
+                    </>
+                  ) : null}
                 </TableCell>
               </TableRow>
             ))}
@@ -342,4 +364,3 @@ function InvitationsSection({ workspaceId }: { workspaceId: string }) {
     </section>
   );
 }
-

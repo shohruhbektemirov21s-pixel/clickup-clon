@@ -3,13 +3,15 @@
 | | |
 |---|---|
 | **Document** | API_CONTRACT.md |
-| **Version** | 1.0.0 |
-| **Date** | 2026-08-07 |
+| **Version** | 1.1.0 |
+| **Date** | 2026-08-10 |
 | **Status** | **Binding** — backend and frontend implement against this document in parallel. Changes require a PR that updates this file in the same commit. |
 | **Authority** | This doc > PRD.md for API surface. `docs/DATA_MODEL.md` is authoritative for field names/types; this doc mirrors it field-for-field. |
-| **Upstream** | `docs/DATA_MODEL.md`, `docs/PRD.md`, `backend/config/{settings,pagination,exceptions}.py`, `backend/apps/realtime/middleware.py` |
+| **Upstream** | `docs/DATA_MODEL.md`, `docs/PRD.md`, `docs/DESIGN_PERMISSIONS.md`, `backend/config/{settings,pagination,exceptions}.py`, `backend/apps/realtime/middleware.py` |
 
-**Inventory: 64 REST endpoints + 2 WebSocket channels.** Adding an endpoint requires amending this doc in the same commit.
+**Inventory: 69 REST endpoints + 2 WebSocket channels.** Adding an endpoint requires amending this doc in the same commit.
+
+> **v1.1.0 changelog.** Adds §18 (granular permission matrix, `docs/DESIGN_PERMISSIONS.md` §A–D.5) and rulings R18–R23. The role table in §1.7 now describes the **default** matrix, not a hard-coded one. Space-member endpoints (`DESIGN_PERMISSIONS.md` §D.6), the extended `invitations/lookup/` payload (§D.7) and register-with-invite (§D.8) are specified there but **not yet implemented**; they will land with their own contract bump.
 
 ---
 
@@ -105,7 +107,11 @@ Every authenticated endpoint may return `401`, `404`, `405`, `429`, `500`; per-e
 
 ### 1.7 Roles
 
-Per-workspace role on `WorkspaceMember.role`: **`owner` > `admin` > `member` > `guest`**. "admin+" below means owner or admin; "member+" means owner/admin/member. Special cases:
+Per-workspace role on `WorkspaceMember.role`: **`owner` > `admin` > `member` > `guest`**. "admin+" below means owner or admin; "member+" means owner/admin/member.
+
+> **R18 (v1.1.0):** the table below is the **default** permission matrix, not a fixed one. Effective authority is `DEFAULT_MATRIX` (catalog in `backend/apps/core/permissions.py`) overlaid with the workspace's `RolePermission` rows — see §18. `owner` is always the full set and can never be edited. The matrix is monotonic: `guest ⊆ member ⊆ admin ⊆ owner`.
+
+Special cases:
 - `guest` may **PATCH/move only tasks where they are in the assignees** ("Assignee" below), may create comments, may watch/unwatch, everything else read-only. Guests cannot read the member roster or invitations, and cannot see private spaces (`is_private=true`).
 - Everyone edits/deletes **their own** comments; admin+ may delete (not edit) any comment.
 - Permission is checked before validation. In-workspace denial → `403`; out-of-workspace → `404`.
@@ -191,12 +197,13 @@ See §9.5 for the full filter vocabulary. Defaults everywhere: `archived=false`,
   "owner_id": "8f14e45f-ea2b-4d1c-9d2c-6f1a2b3c4d5e",
   "member_count": 9,
   "my_role": "admin",
+  "permissions_version": 1,
   "created_at": "2026-08-07T09:00:05Z",
   "updated_at": "2026-08-07T09:00:05Z"
 }
 ```
 
-`my_role` is derived per caller (read-only) so the frontend can gate affordances without reading the roster.
+`my_role` is derived per caller (read-only) so the frontend can gate affordances without reading the roster. `permissions_version` (v1.1.0, read-only) is the optimistic-concurrency token for §18.3 and the cache key for the permission matrix; it increments on every matrix write.
 
 **Tree shape** (`workspaces/{id}/tree/`):
 
@@ -650,7 +657,7 @@ Every server→client message:
 - `rebalanced` appears only on `task.moved`; `true` means "positions in this `(list_id, status_id)` scope were renumbered — refetch, don't patch."
 - For `*.deleted` events, `data` is `{"id": "…", "list_id": "…"}` (task) / `{"id": "…", "task_id": "…"}` (comment).
 
-### 15.3 Event types (closed set, v1.0.0)
+### 15.3 Event types (closed set, v1.1.0)
 
 | `type` | Channel | `data` |
 |---|---|---|
@@ -663,6 +670,8 @@ Every server→client message:
 | `comment.updated` | list | Comment |
 | `comment.deleted` | list | `{"id", "task_id"}` |
 | `list.updated` | workspace | List (rename/recolor/archive/move/counts changed) |
+| `permission.updated` | workspace | `{"workspace_id", "version"}` (v1.1.0, R23 — see §18.6) |
+| `access.revoked` | `user.<id>` | `{"workspace_id", "space_id"\|null}` (v1.1.0, R23 — see §18.6) |
 | `presence.join` / `presence.leave` | list | `{"user": UserSummary}` |
 | `presence.sync` | list | `{"users": [UserSummary]}` (sent to a client right after its own ack) |
 | `error` | both | `{"code", "message"}` (mirrors §1.6 codes, e.g. `permission_denied`), then the socket closes |
@@ -673,10 +682,11 @@ A mutation that fails validation/permission emits **no** event. Every successful
 
 ---
 
-## 16. Endpoint inventory (64)
+## 16. Endpoint inventory (69)
 
 | Group | Count | Endpoints |
 |---|---|---|
+| Permissions | 5 | catalog, matrix GET/PUT, matrix reset, my-permissions |
 | Auth | 5 | register, login, refresh, logout, password/change |
 | Profile | 3 | me GET/PATCH, me/avatar POST |
 | Workspaces | 6 | list, create, retrieve, update, delete, tree |
@@ -717,5 +727,109 @@ WebSocket: `/ws/list/{list_id}/`, `/ws/workspaces/{workspace_id}/`.
 | R15 | `token_not_valid` (PRD) vs the current handler mapping all 401s to `authentication_failed` | Both codes are in the vocabulary; the exception handler must map simplejwt `InvalidToken`/`TokenError` to `token_not_valid` (small backend amendment) so clients can trigger silent refresh. |
 | R16 | `my_role` on Workspace is not in DATA_MODEL | Added as a serializer-derived read-only field — the frontend needs the caller's role to gate UI and guests cannot read the roster. Not a column. |
 | R17 | Subtasks | Out of scope (no `Task.parent` in DATA_MODEL); no subtask endpoints exist. |
+| R18 | §1.7's static role table vs the editable matrix (`DESIGN_PERMISSIONS.md` §A) | **Matrix wins.** §1.7 now describes the *default*; effective authority is `DEFAULT_MATRIX` + the workspace's `RolePermission` overrides (§18). `owner` is locked to the full catalog. |
+| R19 | DATA_MODEL D8 (no per-space membership) vs the PM requirement | **D8 is superseded**: `SpaceMember(space, user, access, source)` is introduced (`space_members` table). `Space.is_private` becomes the "ACL is mandatory" flag rather than a role cut-off. |
+| R20 | Private-space visibility: role-based (guest cut-off) vs ACL-based | Target rule: a private space is visible only via `space.read_private` **or** a `SpaceMember` row; migration `workspaces.0004` backfills so nobody loses access. **Staged**: the ACL rule ships behind `SPACE_ACL_ENABLED` (default off); until it is enabled the v1.0.0 rule (guest × private → `404`) stands, extended so an explicit `SpaceMember` row also grants visibility. |
+| R21 | Register response has no workspace reference when joining via invite | `AuthResponse.workspace_id` is reserved as an optional field (`DESIGN_PERMISSIONS.md` §D.8). **Not implemented yet.** |
+| R22 | `invitations/lookup/` returns a minimal payload | To be extended with workspace colour, inviter summary and `account_exists`, never exposing `id` fields, plus an `invite_lookup` 30/min per-IP throttle (§D.7). **Not implemented yet.** |
+| R23 | WS event vocabulary was closed at v1.0.0 | Extended with `permission.updated` (workspace channel) and `access.revoked` (`user.<id>` channel) — see §15.3. |
 
-*End of contract — version 1.0.0, 2026-08-07.*
+---
+
+## 18. Permissions — granular matrix
+
+Upstream: `docs/DESIGN_PERMISSIONS.md` §A–§D.5. The permission **catalog lives in code** (`backend/apps/core/permissions.py`, 44 codes in 8 groups, `catalog_version = 1`); **grants live in the database** (`RolePermission`). A missing row falls back to the catalog default, so new codes need no backfill.
+
+- `owner` is never stored: `role == "owner"` short-circuits to allow, and the table carries `CheckConstraint(role != 'owner')`.
+- `Workspace.permissions_version` (read-only, serialized on the Workspace object) is both the optimistic-concurrency token and the permission cache key.
+- Codes are `<resource>.<action>`, `[a-z_]+\.[a-z_]+`, max 64 chars. Codes are never removed, only deprecated.
+
+### 18.1 `GET permissions/`
+
+Auth required, no role required, **not paginated**.
+
+```json
+{
+  "catalog_version": 1,
+  "groups": [{
+    "key": "task", "label": "Vazifalar",
+    "permissions": [{
+      "code": "task.delete", "label": "Vazifani o'chirish",
+      "description": "Vazifani soft-delete qiladi; 30 kun ichida tiklash mumkin.",
+      "default_roles": ["admin", "member"], "owner_only": false, "sensitive": false
+    }]
+  }]
+}
+```
+
+`default_roles` **never** contains `owner`. `group.label` and every `label`/`description` are Uzbek UI strings; `key` and `code` are stable English identifiers and are never localized.
+
+### 18.2 `GET workspaces/{id}/role-permissions/`
+
+Requires `workspace.manage_permissions` (owner-only by default).
+
+```json
+{
+  "workspace_id": "…", "version": 7, "catalog_version": 1,
+  "roles": {
+    "owner":  { "locked": true,  "permissions": ["…all 44 codes…"] },
+    "admin":  { "locked": false, "permissions": ["…"] },
+    "member": { "locked": false, "permissions": ["…"] },
+    "guest":  { "locked": false, "permissions": ["…"] }
+  },
+  "overrides": [
+    { "role": "member", "permission": "space.create", "allowed": true,
+      "updated_by_id": "…", "updated_at": "2026-08-10T11:00:00Z" }
+  ]
+}
+```
+
+`permissions` is alphabetically sorted. `overrides` lists only rows that differ from the catalog default (the UI's "changed" badge). Errors: `401`, `403`, `404`.
+
+### 18.3 `PUT workspaces/{id}/role-permissions/`
+
+```json
+{ "expected_version": 7,
+  "roles": { "member": { "space.create": true, "task.delete": false },
+             "guest":  { "comment.create": false } } }
+```
+
+**200:** identical shape to `GET`, with `version` = 8. Side effects: `permissions_version += 1` and a `permission.updated` WebSocket frame on the workspace channel.
+
+| HTTP | `code` | When | `details` |
+|---|---|---|---|
+| 400 | `validation_error` | `expected_version` missing | `{"expected_version": ["This field is required."]}` |
+| 400 | `validation_error` | Unknown code | `{"roles.member.foo_bar": ["Noma'lum ruxsat kodi."]}` |
+| 400 | `validation_error` | Writing the `owner` row | `{"roles.owner": ["Owner ruxsatlarini o'zgartirib bo'lmaydi."]}` |
+| 400 | `validation_error` | Granting an `owner_only` code | `{"roles.admin.workspace.manage_permissions": ["Bu ruxsat faqat owner uchun."]}` |
+| 400 | `validation_error` | Monotonicity broken | `{"monotonic": ["'space.create' member'da yoqilgan, admin'da o'chirilgan."]}` |
+| 403 | `permission_denied` | Caller lacks `workspace.manage_permissions` | `{}` |
+| 403 | `permission_denied` | Editing one's own role or above | `{"reason": "self_escalation", "role": "admin"}` |
+| 409 | `conflict` | `expected_version` mismatch | `{"expected_version": 7, "current_version": 9}` |
+
+`roles` is a strict whitelist over the catalog and over `{admin, member, guest}` — an unknown key is a `400`, never a silent ignore. Every rejection is side-effect free: `permissions_version` does not move.
+
+### 18.4 `POST workspaces/{id}/role-permissions/reset/`
+
+Body `{"role": "member"}` resets one role, `{"role": null}` (or `{}`) resets all three. **200** returns the `GET` shape with the bumped `version`. Same permission and rank guard as `PUT`.
+
+### 18.5 `GET workspaces/{id}/my-permissions/`
+
+Any member, guests included. The frontend builds all UI gating from this single request.
+
+```json
+{ "workspace_id": "…", "role": "member", "version": 7,
+  "permissions": ["comment.create", "list.create", "task.create", "…"],
+  "spaces": [{ "space_id": "…", "access": "manager" }] }
+```
+
+For `owner`, `permissions` is the entire catalog. `spaces` lists the caller's `SpaceMember` rows in this workspace (`access` ∈ `viewer` | `contributor` | `manager`). Client-side `can()` is an affordance only — the server always re-checks.
+
+### 18.6 New WebSocket events (see §15.3)
+
+| `type` | Channel | `data` | Client action |
+|---|---|---|---|
+| `permission.updated` | workspace | `{"workspace_id", "version"}` | Invalidate `my-permissions/` and `role-permissions/` |
+| `access.revoked` | `user.<id>` | `{"workspace_id", "space_id"\|null}` | Invalidate; if viewing the resource, navigate to `/w/{id}` |
+
+*End of contract — version 1.1.0, 2026-08-10.*

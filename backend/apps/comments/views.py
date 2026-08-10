@@ -7,9 +7,8 @@ from rest_framework.views import APIView
 from apps.comments import services
 from apps.comments.models import Comment
 from apps.comments.serializers import CommentInputSerializer, CommentSerializer
-from apps.core.access import check_space_visible, require_membership
+from apps.core.access import check_space_visible, require_membership, require_space_perm
 from apps.core.api import client_id_of, paginate
-from apps.core.enums import WorkspaceRole
 from apps.tasks.views import get_task
 
 
@@ -44,7 +43,8 @@ class TaskCommentsView(APIView):
         return paginate(request, comments, CommentSerializer)
 
     def post(self, request, task_id):
-        task, _ = get_task(request.user, task_id)  # any member incl. guest
+        task, membership = get_task(request.user, task_id)
+        require_space_perm(membership, task.list.space, "comment.create")
         serializer = CommentInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = dict(serializer.validated_data)
@@ -60,9 +60,13 @@ class TaskCommentsView(APIView):
 
 class CommentDetailView(APIView):
     def patch(self, request, comment_id):
-        comment, _ = _get_comment(request.user, comment_id)
+        comment, membership = _get_comment(request.user, comment_id)
+        # Muallif invarianti permission'dan USTUN: `comment.update_any` kodi
+        # ataylab mavjud emas — hech kim, owner ham, boshqaning izohini
+        # tahrirlay olmaydi (kontrakt §12).
         if comment.author_id != request.user.id:
-            raise PermissionDenied()  # admins may NOT edit others' comments
+            raise PermissionDenied()
+        require_space_perm(membership, comment.task.list.space, "comment.update_own")
         serializer = CommentInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         comment = services.edit_comment(
@@ -72,9 +76,11 @@ class CommentDetailView(APIView):
 
     def delete(self, request, comment_id):
         comment, membership = _get_comment(request.user, comment_id)
-        is_author = comment.author_id == request.user.id
-        is_admin = membership.role in (WorkspaceRole.OWNER, WorkspaceRole.ADMIN)
-        if not (is_author or is_admin):
-            raise PermissionDenied()
+        code = (
+            "comment.delete_own"
+            if comment.author_id == request.user.id
+            else "comment.delete_any"
+        )
+        require_space_perm(membership, comment.task.list.space, code)
         services.delete_comment(comment, request.user, client_id=client_id_of(request))
         return Response(status=http.HTTP_204_NO_CONTENT)

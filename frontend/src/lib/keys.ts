@@ -21,4 +21,10 @@ export const keys = {
     ["tasks", listId, {}, { groupBy: "status" }] as const,
   task: (taskId: string) => ["task", taskId] as const,
   comments: (taskId: string) => ["comments", taskId] as const,
+  /** Static permission catalog — workspace-independent, effectively immutable. */
+  permissionCatalog: ["permissions", "catalog"] as const,
+  myPermissions: (workspaceId: string) =>
+    ["workspace", workspaceId, "my-permissions"] as const,
+  rolePermissions: (workspaceId: string) =>
+    ["workspace", workspaceId, "role-permissions"] as const,
 };

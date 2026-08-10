@@ -10,7 +10,10 @@ import type {
   Invitation,
   List,
   Member,
+  MyPermissions,
   Paginated,
+  PermissionCatalog,
+  RolePermissionMatrix,
   SearchResponse,
   Status,
   StatusSet,
@@ -209,6 +212,57 @@ export function useComments(taskId: string | null) {
     queryFn: () =>
       api.get<Paginated<Comment>>(`tasks/${taskId}/comments/`, { page_size: 100 }),
     enabled: enabled && !!taskId,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// §18 Permissions (docs/DESIGN_PERMISSIONS.md §D.1–D.5)
+// ---------------------------------------------------------------------------
+
+/**
+ * The permission catalog is derived from server *code*, not from the database:
+ * it only ever changes on deploy. `staleTime: Infinity` keeps it to one fetch
+ * per session (risk R4 — never add a round trip per screen).
+ */
+export function usePermissionCatalog() {
+  const enabled = useAuthed();
+  return useQuery({
+    queryKey: keys.permissionCatalog,
+    queryFn: () => api.get<PermissionCatalog>("permissions/"),
+    enabled,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
+}
+
+/**
+ * The caller's own effective permissions — every UI affordance in the
+ * workspace is gated off this single request. Available to any member,
+ * guests included. Invalidated by the `permission.updated` WS frame.
+ */
+export function useMyPermissions(workspaceId: string) {
+  const enabled = useAuthed();
+  return useQuery({
+    queryKey: keys.myPermissions(workspaceId),
+    queryFn: () => api.get<MyPermissions>(`workspaces/${workspaceId}/my-permissions/`),
+    enabled: enabled && !!workspaceId,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/**
+ * The full role × permission matrix. Requires `workspace.manage_permissions`
+ * (owner-only by default), so the caller passes `canRead` to avoid a
+ * guaranteed 403. `version` is the optimistic-concurrency token.
+ */
+export function useRolePermissions(workspaceId: string, canRead: boolean) {
+  const enabled = useAuthed();
+  return useQuery({
+    queryKey: keys.rolePermissions(workspaceId),
+    queryFn: () =>
+      api.get<RolePermissionMatrix>(`workspaces/${workspaceId}/role-permissions/`),
+    enabled: enabled && !!workspaceId && canRead,
+    staleTime: 30_000,
   });
 }
 

@@ -31,12 +31,21 @@ test.describe("authentication", () => {
 
     await page.getByRole("button", { name: "Kirish" }).click();
 
-    const alert = page.getByRole("alert");
+    // Next.js o'zining `__next-route-announcer__` elementiga ham role="alert"
+    // beradi — shuning uchun aynan formadagi banner tanlanadi.
+    const alert = page.locator('form p[role="alert"]');
     await expect(alert).toBeVisible();
     await expect(alert).toContainText("Bunday email va parolga ega faol hisob topilmadi.");
     await expect(page).toHaveURL(/\/login/);
   });
 
+  /**
+   * MA'LUM BUG: hisob menyusini ochish `Base UI: MenuGroupContext is missing`
+   * xatosi bilan yiqiladi (`components/ui/dropdown-menu.tsx` dagi
+   * `DropdownMenuLabel` `<Menu.Group>` ichida emas), shuning uchun "Chiqish"
+   * bandiga yetib bo'lmaydi. Test ataylab saqlanadi — tuzatilgach yashil
+   * bo'ladi.
+   */
   test("logs out and returns to /login", async ({ page }) => {
     await login(page, USERS.malika);
 

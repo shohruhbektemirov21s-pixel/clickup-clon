@@ -119,6 +119,11 @@ export interface Workspace {
   member_count: number;
   /** Serializer-derived, read-only: the caller's role (contract R16). */
   my_role: Role;
+  /**
+   * Optimistic-concurrency counter for the role/permission matrix (§18).
+   * Bumped server-side on every matrix write; read-only for clients.
+   */
+  permissions_version: number;
   created_at: string;
   updated_at: string;
 }
@@ -444,6 +449,8 @@ export type SearchResponse = Paginated<SearchResultItem>;
 
 export type WsEventType =
   | "connection.ack"
+  | "permission.updated"
+  | "access.revoked"
   | "task.created"
   | "task.updated"
   | "task.moved"
@@ -502,4 +509,149 @@ export interface WsErrorData {
 export interface WsPresenceData {
   user?: UserSummary;
   users?: UserSummary[];
+}
+
+export interface WsPermissionUpdatedData {
+  workspace_id: string;
+  version: number;
+}
+
+export interface WsAccessRevokedData {
+  workspace_id: string;
+  space_id: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// §18 Granular permission matrix (docs/DESIGN_PERMISSIONS.md §D, §E)
+// ---------------------------------------------------------------------------
+
+/**
+ * The closed catalog of permission codes — 44 codes across 8 groups.
+ * Codes are never removed from the catalog, only flagged `deprecated`
+ * server-side, so this union only ever grows.
+ */
+export type PermissionCode =
+  | "workspace.read"
+  | "workspace.update"
+  | "workspace.delete"
+  | "workspace.manage_permissions"
+  | "workspace.transfer_ownership"
+  | "member.read"
+  | "member.invite"
+  | "member.remove"
+  | "member.role_change"
+  | "invitation.read"
+  | "invitation.manage"
+  | "space.read"
+  | "space.read_private"
+  | "space.create"
+  | "space.update"
+  | "space.delete"
+  | "space.manage_members"
+  | "space.manage_statuses"
+  | "folder.create"
+  | "folder.update"
+  | "folder.delete"
+  | "folder.delete_cascade"
+  | "list.create"
+  | "list.update"
+  | "list.delete"
+  | "list.move"
+  | "list.manage_statuses"
+  | "task.read"
+  | "task.create"
+  | "task.update"
+  | "task.update_assigned"
+  | "task.delete"
+  | "task.move"
+  | "task.assign"
+  | "task.watch"
+  | "task.restore"
+  | "task.view_deleted"
+  | "comment.create"
+  | "comment.update_own"
+  | "comment.delete_own"
+  | "comment.delete_any"
+  | "tag.create"
+  | "tag.update"
+  | "tag.delete";
+
+export type PermissionGroupKey =
+  | "workspace"
+  | "member"
+  | "space"
+  | "folder"
+  | "list"
+  | "task"
+  | "comment"
+  | "tag";
+
+/** Roles a matrix row can exist for. `owner` is never stored (AD-3). */
+export type AssignableRole = Exclude<Role, "owner">;
+
+/** Access level of a `SpaceMember` row (§B.1). */
+export type SpaceAccess = "viewer" | "contributor" | "manager";
+
+export interface PermissionDef {
+  code: PermissionCode;
+  label: string;
+  description: string;
+  /** Default grants. `owner` is NEVER present here. */
+  default_roles: AssignableRole[];
+  /** Never grantable to a non-owner role — the server rejects it with 400. */
+  owner_only: boolean;
+  /** Destructive / far-reaching — the UI shows a warning marker. */
+  sensitive: boolean;
+}
+
+export interface PermissionGroup {
+  key: PermissionGroupKey;
+  label: string;
+  permissions: PermissionDef[];
+}
+
+/** `GET permissions/` — static catalog, no pagination envelope. */
+export interface PermissionCatalog {
+  catalog_version: number;
+  groups: PermissionGroup[];
+}
+
+/** One stored deviation from the default matrix. */
+export interface RolePermissionRow {
+  role: AssignableRole;
+  permission: PermissionCode;
+  allowed: boolean;
+  updated_by_id: string | null;
+  updated_at: string;
+}
+
+/** `GET|PUT workspaces/{id}/role-permissions/`. */
+export interface RolePermissionMatrix {
+  workspace_id: string;
+  /** Optimistic-concurrency token — echo it back as `expected_version`. */
+  version: number;
+  catalog_version: number;
+  roles: Record<Role, { locked: boolean; permissions: PermissionCode[] }>;
+  /** Cells differing from the default matrix — drives the "changed" marker. */
+  overrides: RolePermissionRow[];
+}
+
+/** Sparse patch: only the cells that actually changed are sent. */
+export interface UpdateRolePermissionsRequest {
+  expected_version: number;
+  roles: Partial<Record<AssignableRole, Partial<Record<PermissionCode, boolean>>>>;
+}
+
+/** `null` resets every role back to the catalog defaults. */
+export interface ResetRolePermissionsRequest {
+  role: AssignableRole | null;
+}
+
+/** `GET workspaces/{id}/my-permissions/` — the single source for UI gating. */
+export interface MyPermissions {
+  workspace_id: string;
+  role: Role;
+  version: number;
+  permissions: PermissionCode[];
+  spaces: { space_id: string; access: SpaceAccess }[];
 }

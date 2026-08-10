@@ -20,9 +20,12 @@ import type {
   MoveTaskRequest,
   MoveTaskResponse,
   Paginated,
+  ResetRolePermissionsRequest,
   Role,
+  RolePermissionMatrix,
   Task,
   TaskWriteRequest,
+  UpdateRolePermissionsRequest,
   Workspace,
 } from "@/types/api";
 
@@ -406,6 +409,79 @@ export function useResendInvitation(workspaceId: string) {
       // §5: resend is throttled 1/5min and capped at 5 sends.
       if (isApiError(err) && err.code === "conflict") {
         toast.error("Bu taklif uchun yuborish chegarasi tugagan.");
+        return;
+      }
+      toast.error(errorMessage(err));
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// §18 Role permission matrix
+// ---------------------------------------------------------------------------
+
+/** Uzbek message for a 409 on the matrix — someone else saved in between. */
+export const MATRIX_CONFLICT_MESSAGE =
+  "Boshqa admin matritsani o'zgartirdi. Eng so'nggi holat qayta yuklandi — o'zgarishlaringizni ko'rib chiqing va qaytadan saqlang.";
+
+/**
+ * Writes a sparse patch of the matrix. `expected_version` is mandatory: the
+ * server answers 409 when the stored version moved on, and we then reload the
+ * matrix so the screen re-renders from the winning state.
+ */
+export function useUpdateRolePermissions(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: UpdateRolePermissionsRequest) =>
+      api.put<RolePermissionMatrix>(
+        `workspaces/${workspaceId}/role-permissions/`,
+        body,
+      ),
+    onSuccess: (matrix) => {
+      queryClient.setQueryData(keys.rolePermissions(workspaceId), matrix);
+      // Own affordances and the workspace `permissions_version` both move.
+      queryClient.invalidateQueries({ queryKey: keys.myPermissions(workspaceId) });
+      queryClient.invalidateQueries({ queryKey: keys.workspace(workspaceId) });
+      toast.success("Huquqlar saqlandi");
+    },
+    onError: (err) => {
+      if (isApiError(err) && err.code === "conflict") {
+        // Optimistic-concurrency loss — refetch so the UI shows the winner.
+        queryClient.invalidateQueries({ queryKey: keys.rolePermissions(workspaceId) });
+        toast.error(MATRIX_CONFLICT_MESSAGE);
+        return;
+      }
+      if (isApiError(err) && err.code === "validation_error") {
+        const monotonic = err.fieldError("monotonic");
+        if (monotonic) {
+          toast.error(monotonic);
+          return;
+        }
+      }
+      toast.error(errorMessage(err));
+    },
+  });
+}
+
+/** `role: null` resets every role back to the catalog defaults. */
+export function useResetRolePermissions(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ResetRolePermissionsRequest) =>
+      api.post<RolePermissionMatrix>(
+        `workspaces/${workspaceId}/role-permissions/reset/`,
+        body,
+      ),
+    onSuccess: (matrix) => {
+      queryClient.setQueryData(keys.rolePermissions(workspaceId), matrix);
+      queryClient.invalidateQueries({ queryKey: keys.myPermissions(workspaceId) });
+      queryClient.invalidateQueries({ queryKey: keys.workspace(workspaceId) });
+      toast.success("Standart huquqlar tiklandi");
+    },
+    onError: (err) => {
+      if (isApiError(err) && err.code === "conflict") {
+        queryClient.invalidateQueries({ queryKey: keys.rolePermissions(workspaceId) });
+        toast.error(MATRIX_CONFLICT_MESSAGE);
         return;
       }
       toast.error(errorMessage(err));
