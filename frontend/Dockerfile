@@ -9,7 +9,7 @@
 # Debian-slim, not Alpine: Next.js' prebuilt native binaries are glibc-linked,
 # so glibc images need no shim package at all. Alpine would need libc6-compat,
 # and installing it fails outright on networks that MITM TLS to the apk CDN.
-FROM node:22-slim AS base
+FROM node:26-slim AS base
 
 # Networks that inspect TLS re-sign registry.npmjs.org with a private root, and
 # npm then fails with UNABLE_TO_VERIFY_LEAF_SIGNATURE. Drop such roots into
