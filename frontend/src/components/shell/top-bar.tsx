@@ -155,7 +155,7 @@ function AccountMenu({ workspaceId }: { workspaceId: string }) {
             className="text-xs font-semibold text-primary-foreground"
             style={{ backgroundColor: me?.avatar_color || "#7B68EE" }}
           >
-            {initials(me?.full_name, me?.email)}
+            {initials(me?.full_name, me?.email ?? undefined)}
           </AvatarFallback>
         </Avatar>
       </DropdownMenuTrigger>
@@ -172,7 +172,7 @@ function AccountMenu({ workspaceId }: { workspaceId: string }) {
               className="text-xs font-semibold text-primary-foreground"
               style={{ backgroundColor: me?.avatar_color || "#7B68EE" }}
             >
-              {initials(me?.full_name, me?.email)}
+              {initials(me?.full_name, me?.email ?? undefined)}
             </AvatarFallback>
           </Avatar>
           <span className="flex min-w-0 flex-col">

@@ -208,7 +208,9 @@ class TaskActivity(UUIDModel, TimeStampedModel):
         blank=True,
         related_name="task_activities",
     )
-    verb = models.CharField(max_length=16, choices=ActivityVerb.choices, db_index=True)
+    # 32: eng uzun verb "attachment_removed" (18 belgi) sig'sin — 16 da
+    # PostgreSQL varchar(16) ni kesib/xato berib yuborardi.
+    verb = models.CharField(max_length=32, choices=ActivityVerb.choices, db_index=True)
     from_value = models.CharField(max_length=255, null=True, blank=True)
     to_value = models.CharField(max_length=255, null=True, blank=True)
     metadata = models.JSONField(default=dict, blank=True)

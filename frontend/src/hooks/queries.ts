@@ -17,6 +17,7 @@ import type {
   PermissionCatalog,
   RolePermissionMatrix,
   SearchResponse,
+  SpaceMember,
   Status,
   StatusSet,
   Tag,
@@ -351,6 +352,25 @@ export function useRolePermissions(workspaceId: string, canRead: boolean) {
     queryFn: () =>
       api.get<RolePermissionMatrix>(`workspaces/${workspaceId}/role-permissions/`),
     enabled: enabled && !!workspaceId && canRead,
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * `GET spaces/{id}/members/` (§D.6) — bo'lim jamoasi.
+ *
+ * O'qish uchun alohida ruxsat kodi yo'q: bo'limni ko'ra olgan har qanday a'zo
+ * jamoani ham ko'radi (yozish esa `space.manage_members` yoki lokal `manager`
+ * talab qiladi). Ko'rinmaydigan bo'lim 404 beradi — shuning uchun retry yo'q.
+ */
+export function useSpaceMembers(spaceId: string | null) {
+  const enabled = useAuthed();
+  return useQuery({
+    queryKey: keys.spaceMembers(spaceId ?? ""),
+    queryFn: () =>
+      api.get<Paginated<SpaceMember>>(`spaces/${spaceId}/members/`, { page_size: 200 }),
+    enabled: enabled && !!spaceId,
+    retry: false,
     staleTime: 30_000,
   });
 }

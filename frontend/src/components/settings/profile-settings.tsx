@@ -72,7 +72,7 @@ export function ProfileSettings() {
               className="text-lg font-semibold text-primary-foreground"
               style={{ backgroundColor: me.avatar_color || "#7B68EE" }}
             >
-              {initials(me.full_name, me.email)}
+              {initials(me.full_name, me.email ?? undefined)}
             </AvatarFallback>
           </Avatar>
           <div className="flex flex-col gap-1.5">

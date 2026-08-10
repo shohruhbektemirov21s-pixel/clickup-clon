@@ -191,8 +191,16 @@ class TaskMoveView(APIView):
 
 
 class TaskWatchView(APIView):
+    """Kuzatuvchi bo'lish / bekor qilish.
+
+    `task.watch` kodi katalogda va grant to'plamlarida bor edi, lekin bu yerda
+    hech qachon tekshirilmasdi — ya'ni matritsadan uni olib tashlash REST
+    xatti-harakatiga ta'sir qilmasdi ("yolg'on nazorat").
+    """
+
     def post(self, request, task_id):
-        task, _ = get_task(request.user, task_id)
+        task, membership = get_task(request.user, task_id)
+        require_space_perm(membership, task.list.space, "task.watch")
         created = services.watch_task(task, request.user)
         task, _ = get_task(request.user, task_id)
         return Response(
@@ -201,7 +209,8 @@ class TaskWatchView(APIView):
         )
 
     def delete(self, request, task_id):
-        task, _ = get_task(request.user, task_id)
+        task, membership = get_task(request.user, task_id)
+        require_space_perm(membership, task.list.space, "task.watch")
         services.unwatch_task(task, request.user)
         return Response(status=http.HTTP_204_NO_CONTENT)
 

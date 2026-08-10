@@ -20,8 +20,12 @@ def task_url(task_id, suffix=""):
 
 @pytest.fixture
 def empty_list(env):
-    """A fresh list with no sample tasks."""
-    response = env.member_client.post(
+    """A fresh list with no sample tasks.
+
+    2026-08 siyosati: `list.create` endi faqat admin+ da, shuning uchun setup
+    `admin_client` bilan quriladi (ilgari `member_client` edi).
+    """
+    response = env.admin_client.post(
         f"/api/v1/spaces/{env.space.id}/lists/", {"name": "Fresh"}, format="json"
     )
     return TaskList.objects.get(pk=response.json()["id"])
@@ -142,7 +146,7 @@ def test_patch_task_assignees_and_tags(env, empty_list):
     ).json()
     task = env.member_client.post(tasks_url(empty_list.id), {"title": "X"}, format="json").json()
 
-    patched = env.member_client.patch(
+    patched = env.admin_client.patch(
         task_url(task["id"]),
         {"assignee_ids": [str(env.guest.id)], "tag_ids": [tag["id"]], "priority": "urgent"},
         format="json",
@@ -156,7 +160,7 @@ def test_patch_task_assignees_and_tags(env, empty_list):
     assert str(env.guest.id) in [w["id"] for w in body["watchers"]]
 
     # non-member assignee -> 400
-    bad = env.member_client.patch(
+    bad = env.admin_client.patch(
         task_url(task["id"]), {"assignee_ids": [str(env.outsider.id)]}, format="json"
     )
     assert_error(bad, 400, "validation_error")
@@ -179,16 +183,23 @@ def test_start_date_after_due_date(env, empty_list):
 
 
 def make_tasks(env, task_list, titles):
+    """Setup uchun vazifalar — `admin_client` bilan.
+
+    `member` hali ham `task.create` ga ega, lekin **begona** vazifani keyin
+    tahrirlay/ko'chira/o'chira olmaydi, shuning uchun umumiy CRUD testlari
+    admin nomidan quriladi. Member/PM/guest xatti-harakati
+    `apps/core/tests/test_permission_policy.py` da alohida tekshiriladi.
+    """
     out = []
     for title in titles:
-        response = env.member_client.post(tasks_url(task_list.id), {"title": title}, format="json")
+        response = env.admin_client.post(tasks_url(task_list.id), {"title": title}, format="json")
         out.append(response.json())
     return out
 
 
 def test_move_reorder_within_column(env, empty_list):
     a, b, c = make_tasks(env, empty_list, ["A", "B", "C"])
-    moved = env.member_client.patch(
+    moved = env.admin_client.patch(
         task_url(c["id"], "move/"),
         {
             "list_id": str(empty_list.id),
@@ -211,7 +222,7 @@ def test_move_cross_list_and_status(env, empty_list):
     (task,) = make_tasks(env, empty_list, ["Ship it"])
     closed = env.statuses[2]
     target = env.list  # Getting Started
-    moved = env.member_client.patch(
+    moved = env.admin_client.patch(
         task_url(task["id"], "move/"),
         {"list_id": str(target.id), "status_id": str(closed.id)},
         format="json",
@@ -231,14 +242,14 @@ def test_move_cross_list_and_status(env, empty_list):
 
 def test_move_missing_status_and_stale_neighbours(env, empty_list):
     a, b = make_tasks(env, empty_list, ["A", "B"])
-    no_status = env.member_client.patch(
+    no_status = env.admin_client.patch(
         task_url(a["id"], "move/"), {"list_id": str(empty_list.id)}, format="json"
     )
     assert_error(no_status, 400, "validation_error")
 
     # neighbour from a different column -> 409 position_conflict
     other_status = env.statuses[1]
-    stale = env.member_client.patch(
+    stale = env.admin_client.patch(
         task_url(a["id"], "move/"),
         {
             "list_id": str(empty_list.id),
@@ -267,7 +278,11 @@ def test_group_by_status_shape(env, empty_list):
 
 def test_soft_delete_restore_and_include_deleted(env, empty_list):
     (task,) = make_tasks(env, empty_list, ["Doomed"])
-    deleted = env.member_client.delete(task_url(task["id"]))
+    # 2026-08 siyosati: `task.delete` member'dan olib tashlandi.
+    member_denied = env.member_client.delete(task_url(task["id"]))
+    assert_error(member_denied, 403, "permission_denied")
+
+    deleted = env.admin_client.delete(task_url(task["id"]))
     assert deleted.status_code == 204
 
     gone = env.member_client.get(task_url(task["id"]))
@@ -319,7 +334,7 @@ def test_guest_permissions(env, empty_list):
     not_assigned = env.guest_client.patch(task_url(a["id"]), {"title": "no"}, format="json")
     assert_error(not_assigned, 403, "permission_denied")
 
-    env.member_client.patch(
+    env.admin_client.patch(
         task_url(a["id"]), {"assignee_ids": [str(env.guest.id)]}, format="json"
     )
     allowed = env.guest_client.patch(task_url(a["id"]), {"title": "Guest edit"}, format="json")
@@ -335,8 +350,8 @@ def test_guest_permissions(env, empty_list):
 
 def test_filters_and_ordering(env, empty_list):
     a, b, c = make_tasks(env, empty_list, ["Alpha", "Beta", "Gamma"])
-    env.member_client.patch(task_url(a["id"]), {"priority": "urgent"}, format="json")
-    env.member_client.patch(
+    env.admin_client.patch(task_url(a["id"]), {"priority": "urgent"}, format="json")
+    env.admin_client.patch(
         task_url(b["id"]), {"assignee_ids": [str(env.member.id)]}, format="json"
     )
 
@@ -406,14 +421,14 @@ def test_activity_logged_on_create(env, empty_list):
     row = body["results"][0]
     assert row["verb"] == "created"
     assert row["to_value"] == "Historic"
-    assert row["actor"]["id"] == str(env.member.id)
+    assert row["actor"]["id"] == str(env.admin.id)
     assert row["metadata"]["status"] == env.statuses[0].name
 
 
 def test_activity_status_change_also_records_completed(env, empty_list):
     (task,) = make_tasks(env, empty_list, ["Ship it"])
     closed = env.statuses[2]
-    patched = env.member_client.patch(
+    patched = env.admin_client.patch(
         task_url(task["id"]), {"status_id": str(closed.id)}, format="json"
     )
     assert patched.status_code == 200, patched.content
@@ -425,7 +440,7 @@ def test_activity_status_change_also_records_completed(env, empty_list):
     changed = by_verb["status_changed"]
     assert changed["from_value"] == env.statuses[0].name
     assert changed["to_value"] == closed.name
-    assert changed["actor"]["id"] == str(env.member.id)
+    assert changed["actor"]["id"] == str(env.admin.id)
     assert changed["metadata"]["to_status_id"] == str(closed.id)
     assert by_verb["completed"]["to_value"] == closed.name
     # the created row is the oldest, so it sorts last
@@ -434,8 +449,8 @@ def test_activity_status_change_also_records_completed(env, empty_list):
 
 def test_activity_endpoint_shape_and_ordering(env, empty_list):
     (task,) = make_tasks(env, empty_list, ["Alpha"])
-    env.member_client.patch(task_url(task["id"]), {"title": "Beta"}, format="json")
-    env.member_client.patch(
+    env.admin_client.patch(task_url(task["id"]), {"title": "Beta"}, format="json")
+    env.admin_client.patch(
         task_url(task["id"]),
         {"priority": "urgent", "assignee_ids": [str(env.guest.id)]},
         format="json",
@@ -506,9 +521,17 @@ def test_tag_crud(env):
     dup = env.member_client.post(url, {"name": "backend"}, format="json")
     assert_error(dup, 409, "conflict")
 
-    renamed = env.member_client.patch(
+    # 2026-08 siyosati: `tag.create` member'da qoldi, `tag.update`/`tag.delete` yo'q.
+    member_rename = env.member_client.patch(
+        f"/api/v1/tags/{tag.json()['id']}/", {"name": "Nope"}, format="json"
+    )
+    assert_error(member_rename, 403, "permission_denied")
+    member_delete = env.member_client.delete(f"/api/v1/tags/{tag.json()['id']}/")
+    assert_error(member_delete, 403, "permission_denied")
+
+    renamed = env.admin_client.patch(
         f"/api/v1/tags/{tag.json()['id']}/", {"name": "Core"}, format="json"
     )
     assert renamed.status_code == 200
-    gone = env.member_client.delete(f"/api/v1/tags/{tag.json()['id']}/")
+    gone = env.admin_client.delete(f"/api/v1/tags/{tag.json()['id']}/")
     assert gone.status_code == 204

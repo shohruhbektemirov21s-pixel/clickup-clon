@@ -193,7 +193,7 @@ export function MembersSection({ workspaceId }: { workspaceId: string }) {
                       className="text-[10px] font-semibold text-primary-foreground"
                       style={{ backgroundColor: member.user.avatar_color || "#7B68EE" }}
                     >
-                      {initials(member.user.full_name, member.user.email)}
+                      {initials(member.user.full_name, member.user.email ?? undefined)}
                     </AvatarFallback>
                   </Avatar>
                   <span className="font-medium">

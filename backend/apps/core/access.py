@@ -118,11 +118,38 @@ def get_membership(user, workspace_id):
     )
 
 
+def remember_membership(user, membership):
+    """Chaqiruvchining shu request'dagi a'zoligini `request.user` da saqlaydi.
+
+    Nega atribut, nega serializer `context` emas: `UserSummarySerializer`
+    o'nlab joyda (assignee, watcher, izoh muallifi, `created_by`, faoliyat
+    aktori, biriktirma yuklovchisi) ichma-ich ishlatiladi. Har bir view'ga
+    `context={"membership": ...}` qo'shish — **bitta joyni unutsang email
+    sizib chiqadigan** dizayn. `request.user` obyekti har HTTP request'da
+    autentifikatsiya qatlamida qaytadan yaratiladi, shuning uchun bu atribut
+    request'lar orasida oqib ketmaydi (contextvar/thread-local dan farqli).
+
+    `membership.user` — DB'dan kelgan **boshqa** instans, shuning uchun bayroq
+    ataylab `require_membership()` ga uzatilgan `user` obyektiga qo'yiladi.
+    """
+    try:
+        user._current_membership = membership
+    except AttributeError:  # AnonymousUser va sinovdagi soxta obyektlar
+        pass
+    return membership
+
+
+def current_membership_of(user):
+    """`remember_membership()` saqlagan a'zolik yoki None."""
+    return getattr(user, "_current_membership", None)
+
+
 def require_membership(user, workspace_id, min_role="guest"):
     """Return the caller's membership or raise 404 (outside) / 403 (role)."""
     membership = get_membership(user, workspace_id)
     if membership is None:
         raise NotFound()
+    remember_membership(user, membership)
     if ROLE_RANK[membership.role] < MIN_RANK[min_role]:
         raise PermissionDenied()
     return membership

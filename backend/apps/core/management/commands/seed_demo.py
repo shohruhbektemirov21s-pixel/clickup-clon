@@ -28,11 +28,16 @@ from apps.workspaces.services import (
 DEMO_EMAIL = "demo@clickish.dev"
 DEMO_PASSWORD = "clickish-demo-2026"
 
+#: (email, ism, rol, rang, kasb). Kasb — profil yorlig'i, ruxsat EMAS: PM
+#: loyihaga odam tanlaganda shu bo'yicha saralaydi.
 DEMO_TEAM = [
-    ("aziz@clickish.dev", "Aziz Karimov", WorkspaceRole.ADMIN, "#E44343"),
-    ("malika@clickish.dev", "Malika Yusupova", WorkspaceRole.MEMBER, "#2ECD6F"),
-    ("jasur@clickish.dev", "Jasur Rahimov", WorkspaceRole.MEMBER, "#49CCF9"),
-    ("nodira@clickish.dev", "Nodira Tosheva", WorkspaceRole.GUEST, "#FD71AF"),
+    ("aziz@clickish.dev", "Aziz Karimov", WorkspaceRole.ADMIN, "#E44343", "project_manager"),
+    ("malika@clickish.dev", "Malika Yusupova", WorkspaceRole.MEMBER, "#2ECD6F", "designer"),
+    ("jasur@clickish.dev", "Jasur Rahimov", WorkspaceRole.MEMBER, "#49CCF9", "developer"),
+    ("sarvar@clickish.dev", "Sarvar Aliyev", WorkspaceRole.MEMBER, "#F2C94C", "developer"),
+    ("kamola@clickish.dev", "Kamola Rasulova", WorkspaceRole.MEMBER, "#9B51E0", "qa"),
+    ("bekzod@clickish.dev", "Bekzod Ismoilov", WorkspaceRole.MEMBER, "#56CCF2", "analyst"),
+    ("nodira@clickish.dev", "Nodira Tosheva", WorkspaceRole.GUEST, "#FD71AF", "marketing"),
 ]
 
 #: "Demo rejimda kirish" tugmasi shu hisobga kiritadi. U ataylab `demo@` dan
@@ -199,15 +204,17 @@ class Command(BaseCommand):
         """Idempotent: extra demo members + a few assignments and comments so
         multi-user UI (avatar stack, assignee picker, threads) is populated."""
         team = {}
-        for member_email, full_name, role, color in DEMO_TEAM:
+        for member_email, full_name, role, color, profession in DEMO_TEAM:
             member = User.objects.filter(email__iexact=member_email).first()
             if member is None:
                 member = User.objects.create_user(
                     email=member_email, password=DEMO_PASSWORD, full_name=full_name
                 )
-                member.avatar_color = color
-                member.save(update_fields=["avatar_color", "updated_at"])
                 self.stdout.write(f"Created user {member_email}")
+            # Rang va kasb har safar majburlanadi — demo ma'lumoti izchil qolsin.
+            member.avatar_color = color
+            member.profession = profession
+            member.save(update_fields=["avatar_color", "profession", "updated_at"])
             team[member_email] = member
             _, added = WorkspaceMember.objects.get_or_create(
                 workspace=workspace, user=member, defaults={"role": role}

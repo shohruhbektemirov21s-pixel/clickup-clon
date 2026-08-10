@@ -81,12 +81,15 @@ def test_matrix_hides_existence_from_outsiders(env):
 
 
 def test_put_updates_matrix_and_bumps_version(env):
+    # `overrides` faqat **defaultdan farq qiladigan** qatorlarni qaytaradi.
+    # 2026-08 siyosatidan keyin `task.delete` member uchun allaqachon False,
+    # shuning uchun bekor qilinadigan kod sifatida `task.create` olinadi.
     before = version(env)
     response = env.owner_client.put(
         matrix_url(env),
         {
             "expected_version": before,
-            "roles": {"member": {"space.create": True, "task.delete": False}},
+            "roles": {"member": {"space.create": True, "task.create": False}},
         },
         format="json",
     )
@@ -94,17 +97,17 @@ def test_put_updates_matrix_and_bumps_version(env):
     body = response.json()
     assert body["version"] == before + 1 == version(env)
     assert "space.create" in body["roles"]["member"]["permissions"]
-    assert "task.delete" not in body["roles"]["member"]["permissions"]
+    assert "task.create" not in body["roles"]["member"]["permissions"]
 
     overrides = {(o["role"], o["permission"]): o["allowed"] for o in body["overrides"]}
-    assert overrides == {("member", "space.create"): True, ("member", "task.delete"): False}
+    assert overrides == {("member", "space.create"): True, ("member", "task.create"): False}
     assert overrides and all(o["updated_by_id"] == str(env.owner.id) for o in body["overrides"])
 
     member = WorkspaceMember.objects.select_related("workspace").get(
         workspace=env.workspace, user=env.member
     )
     assert has_perm(member, "space.create") is True
-    assert has_perm(member, "task.delete") is False
+    assert has_perm(member, "task.create") is False
 
 
 def test_matrix_version_conflict_returns_409(env):

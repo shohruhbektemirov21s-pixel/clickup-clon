@@ -6,8 +6,12 @@ import { WS_BASE_URL } from "@/lib/env";
 import { getClientId } from "@/lib/client-id";
 import { keys } from "@/lib/keys";
 import { refreshAccessToken } from "@/lib/api";
+import {
+  realtimeHandshakeQuery,
+  WS_CLOSE_ACCESS_REVOKED,
+} from "@/hooks/use-list-channel";
 import { useAuthStore } from "@/stores/auth-store";
-import type { WsFrame } from "@/types/api";
+import type { WsAccessRevokedData, WsFrame } from "@/types/api";
 
 /** Three-state badge vocabulary for workspace-wide views. */
 export type WorkspaceConnectionStatus = "connecting" | "live" | "offline";
@@ -19,7 +23,7 @@ const OFFLINE_AFTER_ATTEMPTS = 3;
 const FLUSH_MS = 120;
 
 /**
- * §15 — native WebSocket to ws://<host>/ws/workspaces/{workspace_id}/?token=…
+ * §15 — native WebSocket to ws://<host>/ws/workspaces/{workspace_id}/?ticket=…
  *
  * The workspace channel carries the frames that no single list channel can
  * cover: `task.*` for every list the caller can read, `list.updated` for the
@@ -29,8 +33,9 @@ const FLUSH_MS = 120;
  * client cannot re-evaluate, so the frames are used purely as invalidation
  * signals and the refetch stays authoritative.
  *
- * Same wire discipline as the list channel: token from the store on every
- * (re)connect, exponential backoff 1s → 30s with jitter, `connection.ack`
+ * Same wire discipline as the list channel: a fresh single-use handshake
+ * ticket (§15.1) on every (re)connect, exponential backoff 1s → 30s with
+ * jitter, a terminal 4403 close when access is revoked, `connection.ack`
  * gates the "live" state, `event_id` makes application idempotent, and frames
  * carrying this tab's own `client_id` are dropped (its mutations already
  * updated the cache).
@@ -126,6 +131,18 @@ export function useWorkspaceChannel(
           schedule({ permissions: true });
           break;
         }
+        case "access.revoked": {
+          // §D.10 — arrives on the private `user.<id>` group, which this
+          // socket also joins. The caller just lost a space (or the whole
+          // workspace), so everything scoped by visibility is now stale:
+          // the tree, the task lists and the caller's own permission set.
+          schedule({ permissions: true, tasks: true, tree: true });
+          const spaceId = (payload.data as WsAccessRevokedData | undefined)?.space_id;
+          if (spaceId) {
+            void queryClient.invalidateQueries({ queryKey: keys.spaceMembers(spaceId) });
+          }
+          break;
+        }
         default:
           // comment.*/attachment.*/presence.* belong to the list channel.
           break;
@@ -141,9 +158,10 @@ export function useWorkspaceChannel(
         setStatus("offline");
         return;
       }
-      socket = new WebSocket(
-        `${WS_BASE_URL}/ws/workspaces/${workspaceId}/?token=${encodeURIComponent(token)}`,
-      );
+      // §15.1 — bir martalik chipta; chipta olinmasa deprecated `?token=`.
+      const query = await realtimeHandshakeQuery(token);
+      if (closed) return;
+      socket = new WebSocket(`${WS_BASE_URL}/ws/workspaces/${workspaceId}/?${query}`);
       socket.onmessage = (event) => {
         try {
           applyFrame(JSON.parse(event.data as string) as WsFrame);
@@ -151,8 +169,15 @@ export function useWorkspaceChannel(
           // Malformed frame — ignore.
         }
       };
-      socket.onclose = () => {
+      socket.onclose = (event) => {
         if (closed) return;
+        if (event.code === WS_CLOSE_ACCESS_REVOKED) {
+          // Workspace a'zoligi bekor qilindi — qayta ulanishning ma'nosi yo'q.
+          closed = true;
+          setStatus("offline");
+          schedule({ tasks: true, tree: true, permissions: true });
+          return;
+        }
         attempt += 1;
         setStatus(attempt >= OFFLINE_AFTER_ATTEMPTS ? "offline" : "connecting");
         const backoff = Math.min(1000 * 2 ** (attempt - 1), 30_000);

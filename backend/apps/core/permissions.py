@@ -8,8 +8,26 @@ saqlanmaydi — `has_perm()` owner uchun short-circuit qiladi.
 
 AD-5: `DEFAULT_MATRIX` monoton: guest ⊆ member ⊆ admin ⊆ owner.
 
-AD-9: defaultlar `docs/API_CONTRACT.md §1.7` ning bugungi xatti-harakatini
-bit-ma-bit takrorlaydi — mavjud testlar regressiya detektori bo'lib qoladi.
+AD-9: defaultlar `docs/API_CONTRACT.md §1.7` bilan bir xil bo'lishi shart —
+jadval o'zgarsa, hujjat ham **shu commit'da** yangilanadi.
+
+**2026-08 siyosati (v3).** `member` endi "ko'radi va o'ziga biriktirilganini
+bajaradi" rolidir: struktura (bo'lim/jild/ro'yxat) va begona vazifalar ustidagi
+yozish huquqlari faqat `admin`/`owner` da qoldi. `member` dan olib tashlangan
+kodlar: `task.update`, `task.delete`, `task.move`, `task.assign`,
+`folder.create/update/delete`, `list.create/update/delete/move`, `tag.update`,
+`tag.delete`. `member` da qolganlari: o'qish kodlari, `task.create`,
+`task.update_assigned`, `task.watch`, `comment.*_own` + `comment.create`,
+`attachment.read/create/delete_own`, `tag.create`.
+
+**2026-08 (v4) — jamoa ko'rinishi.** `member.read` `guest` ga ham berildi:
+a'zolar ro'yxati va profillari HAMMAGA ochiq. Ma'lumot sizib chiqmasligi uchun
+`apps.accounts.serializers.UserSummarySerializer` mehmonga **begona `email`
+o'rniga `null`** qaytaradi (AppSec O-1).
+
+"Loyiha menejeri" alohida workspace roli EMAS — bu bo'lim darajasidagi
+`SpaceAccess.MANAGER` (`apps.core.access.SPACE_MANAGER_GRANTS`), ya'ni yuqorida
+olib tashlangan kodlar PM ga **o'z bo'limi ichida** lokal qaytariladi.
 
 Kod formati: ``<resource>.<action>``, ``[a-z_]+\\.[a-z_]+``, max 64 belgi.
 Kodlar **hech qachon o'chirilmaydi**, faqat ``deprecated=True`` qilinadi.
@@ -23,7 +41,10 @@ from dataclasses import dataclass
 # Katalog sxemasi o'zgarganda (yangi kod / guruh) oshiriladi; frontend
 # `staleTime: Infinity` bilan keshlaydi va shu raqamga qarab yangilanadi.
 # v2 — `attachment` guruhi (4 kod) qo'shildi.
-CATALOG_VERSION = 2
+# v3 — `member` defaultlari qisqartirildi (yuqoridagi 2026-08 siyosati);
+#      kod ro'yxati o'zgarmagan, lekin `default_roles` payload'i o'zgardi.
+# v4 — `member.read` guest'ga ham berildi (jamoa ro'yxati hammaga ochiq).
+CATALOG_VERSION = 4
 
 CODE_RE = re.compile(r"^[a-z_]+\.[a-z_]+$")
 MAX_CODE_LENGTH = 64
@@ -118,8 +139,10 @@ PERMISSIONS: tuple[PermissionDef, ...] = (
         code="member.read",
         group="member",
         label="A'zolar ro'yxatini ko'rish",
-        description="Ish maydoni a'zolari ro'yxatini va ularning rollarini ko'rish.",
-        defaults=AM,
+        description="Ish maydoni a'zolari ro'yxatini, rollarini va profillarini "
+        "ko'rish. Mehmon uchun ham ochiq, lekin ular begona `email` ni ko'rmaydi "
+        "(`UserSummarySerializer` maskalaydi).",
+        defaults=AMG,
     ),
     PermissionDef(
         code="member.invite",
@@ -216,14 +239,14 @@ PERMISSIONS: tuple[PermissionDef, ...] = (
         group="folder",
         label="Jild yaratish",
         description="Bo'lim ichida yangi jild yaratish.",
-        defaults=AM,
+        defaults=A,
     ),
     PermissionDef(
         code="folder.update",
         group="folder",
         label="Jildni tahrirlash",
         description="Jild nomi, rangi va arxiv holatini o'zgartirish.",
-        defaults=AM,
+        defaults=A,
     ),
     PermissionDef(
         code="folder.delete",
@@ -231,7 +254,7 @@ PERMISSIONS: tuple[PermissionDef, ...] = (
         label="Jildni o'chirish (ro'yxatlarni saqlab)",
         description="Jildni o'chirish, ro'yxatlar bo'lim ildiziga ko'chiriladi "
         "(`?strategy=detach`).",
-        defaults=AM,
+        defaults=A,
     ),
     PermissionDef(
         code="folder.delete_cascade",
@@ -248,21 +271,21 @@ PERMISSIONS: tuple[PermissionDef, ...] = (
         group="list",
         label="Ro'yxat yaratish",
         description="Bo'lim yoki jild ichida yangi ro'yxat yaratish.",
-        defaults=AM,
+        defaults=A,
     ),
     PermissionDef(
         code="list.update",
         group="list",
         label="Ro'yxatni tahrirlash",
         description="Ro'yxat nomi, tavsifi, rangi va arxiv holatini o'zgartirish.",
-        defaults=AM,
+        defaults=A,
     ),
     PermissionDef(
         code="list.delete",
         group="list",
         label="Ro'yxatni o'chirish",
         description="Ro'yxatni vazifalari bilan o'chirish.",
-        defaults=AM,
+        defaults=A,
         sensitive=True,
     ),
     PermissionDef(
@@ -270,7 +293,7 @@ PERMISSIONS: tuple[PermissionDef, ...] = (
         group="list",
         label="Ro'yxatni ko'chirish",
         description="Ro'yxatni jildlar orasida ko'chirish va tartibini o'zgartirish.",
-        defaults=AM,
+        defaults=A,
     ),
     PermissionDef(
         code="list.manage_statuses",
@@ -299,7 +322,7 @@ PERMISSIONS: tuple[PermissionDef, ...] = (
         group="task",
         label="Har qanday vazifani tahrirlash",
         description="Ro'yxatdagi istalgan vazifani tahrirlash.",
-        defaults=AM,
+        defaults=A,
     ),
     PermissionDef(
         code="task.update_assigned",
@@ -313,21 +336,21 @@ PERMISSIONS: tuple[PermissionDef, ...] = (
         group="task",
         label="Vazifani o'chirish",
         description="Vazifani soft-delete qiladi; 30 kun ichida tiklash mumkin.",
-        defaults=AM,
+        defaults=A,
     ),
     PermissionDef(
         code="task.move",
         group="task",
         label="Vazifani ko'chirish",
         description="Har qanday vazifani ro'yxat/status orasida ko'chirish.",
-        defaults=AM,
+        defaults=A,
     ),
     PermissionDef(
         code="task.assign",
         group="task",
         label="Vazifani biriktirish",
         description="Vazifaning `assignee_ids` ro'yxatini o'zgartirish.",
-        defaults=AM,
+        defaults=A,
     ),
     PermissionDef(
         code="task.watch",
@@ -425,14 +448,14 @@ PERMISSIONS: tuple[PermissionDef, ...] = (
         group="tag",
         label="Tegni tahrirlash",
         description="Teg nomi yoki rangini o'zgartirish.",
-        defaults=AM,
+        defaults=A,
     ),
     PermissionDef(
         code="tag.delete",
         group="tag",
         label="Tegni o'chirish",
         description="Tegni o'chirish; barcha vazifalardan olib tashlanadi.",
-        defaults=AM,
+        defaults=A,
     ),
 )
 

@@ -130,7 +130,7 @@ function CommentItem({
           className="text-[10px] font-semibold text-primary-foreground"
           style={{ backgroundColor: comment.author?.avatar_color || "#87909E" }}
         >
-          {comment.author ? initials(comment.author.full_name, comment.author.email) : "?"}
+          {comment.author ? initials(comment.author.full_name, comment.author.email ?? undefined) : "?"}
         </AvatarFallback>
       </Avatar>
       <div className="min-w-0 flex-1">

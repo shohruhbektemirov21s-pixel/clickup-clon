@@ -114,6 +114,176 @@ def ensure_space_member(space, user, *, access, source, added_by=None) -> SpaceM
     return row
 
 
+# --- space members (PM biriktiruvi, docs/DESIGN_PERMISSIONS.md §D.6) ---------
+
+
+def resolve_space_candidates(space, user_ids):
+    """`user_id` → `User`, faqat shu workspace a'zolari (§B.4 invarianti).
+
+    Bittasi ham a'zo bo'lmasa **400** — `404` EMAS: chaqiruvchi allaqachon
+    bo'limni ko'rmoqda, demak "yo'q" emas "noto'g'ri" javobi to'g'ri (§D.6).
+    """
+    wanted = [str(uid) for uid in user_ids]
+    if not wanted:
+        return {}
+    rows = WorkspaceMember.objects.select_related("user").filter(
+        workspace_id=space.workspace_id, user_id__in=wanted
+    )
+    found = {str(m.user_id): m.user for m in rows}
+    bad = [uid for uid in wanted if uid not in found]
+    if bad:
+        raise ValidationError(
+            {"user_id": [f"Ish maydoni a'zosi emas: {', '.join(sorted(bad))}."]}
+        )
+    return found
+
+
+def _guard_last_manager(space, losing_user_ids):
+    """Yopiq bo'lim boshqaruvsiz qolmasin (§D.6 `last_manager`).
+
+    Faqat **yopiq** bo'limga tegishli: ochiq bo'limni workspace admini baribir
+    boshqara oladi, yopiq bo'lim esa menejersiz qolsa hech kim a'zo qo'sha
+    olmaydi va bo'lim qulflanib qoladi.
+    """
+    if not space.is_private:
+        return
+    losing = {str(uid) for uid in losing_user_ids}
+    managers = {
+        str(uid)
+        for uid in SpaceMember.objects.filter(
+            space=space, access=SpaceAccess.MANAGER
+        ).values_list("user_id", flat=True)
+    }
+    if managers and not (managers - losing):
+        raise Conflict(
+            "Yopiq bo'limning oxirgi menejerini olib tashlab bo'lmaydi.",
+            details={"reason": "last_manager"},
+        )
+
+
+def _revoke(space, user_id):
+    """`access.revoked` — huquq pasayganda ochiq WS soketlarini xabardor qiladi."""
+    workspace_id = space.workspace_id
+    transaction.on_commit(
+        lambda: events.emit_access_revoked(
+            user_id, workspace_id=workspace_id, space_id=space.id
+        )
+    )
+
+
+@transaction.atomic
+def add_space_member(space, *, user_id, access, actor=None) -> SpaceMember:
+    user = resolve_space_candidates(space, [user_id])[str(user_id)]
+    if SpaceMember.objects.filter(space=space, user=user).exists():
+        raise Conflict("Bu foydalanuvchi allaqachon bo'lim a'zosi.")
+    row = SpaceMember.objects.create(
+        space=space,
+        user=user,
+        access=access,
+        source=SpaceMemberSource.MANUAL,
+        added_by=actor,
+    )
+    if access == SpaceAccess.VIEWER:
+        _revoke(space, user.id)
+    return row
+
+
+@transaction.atomic
+def update_space_member(row, *, access, actor=None) -> SpaceMember:
+    space = row.space
+    if row.access == SpaceAccess.MANAGER and access != SpaceAccess.MANAGER:
+        _guard_last_manager(space, [row.user_id])
+    if row.access == access:
+        return row
+    downgraded = access == SpaceAccess.VIEWER
+    row.access = access
+    row.added_by = row.added_by or actor
+    row.save(update_fields=["access", "added_by", "updated_at"])
+    if downgraded:
+        _revoke(space, row.user_id)
+    return row
+
+
+@transaction.atomic
+def remove_space_member(row) -> None:
+    space = row.space
+    _guard_last_manager(space, [row.user_id])
+    user_id = row.user_id
+    row.delete()
+    _revoke(space, user_id)
+
+
+@transaction.atomic
+def bulk_space_members(space, *, add, remove, actor=None) -> dict:
+    """§D.6 bulk — bitta tranzaksiya, qisman muvaffaqiyat yo'q.
+
+    `add` upsert: mavjud qatorda faqat `access` yangilanadi (`source` saqlanadi,
+    ya'ni avtomatik biriktirilgan odam qo'lda tasdiqlanganda ham tarix yo'qolmaydi).
+    """
+    add = list(add or [])
+    remove = [str(uid) for uid in (remove or [])]
+
+    users = resolve_space_candidates(space, [row["user_id"] for row in add])
+    existing = {
+        str(m.user_id): m
+        for m in SpaceMember.objects.select_related("user").filter(space=space)
+    }
+
+    missing = [uid for uid in remove if uid not in existing]
+    if missing:
+        raise ValidationError(
+            {"remove": [f"Bo'lim a'zosi emas: {', '.join(sorted(missing))}."]}
+        )
+
+    # Har ikki amal ham menejerni yo'qotishi mumkin — guard bitta yig'ma ro'yxat
+    # ustidan ishlaydi, aks holda "birini tushir, ikkinchisini o'chir" teshigi qolardi.
+    losing_manager = set(remove)
+    for row in add:
+        uid = str(row["user_id"])
+        current = existing.get(uid)
+        if (
+            current is not None
+            and current.access == SpaceAccess.MANAGER
+            and row["access"] != SpaceAccess.MANAGER
+        ):
+            losing_manager.add(uid)
+    _guard_last_manager(space, losing_manager)
+
+    revoked = set()
+    added = 0
+    for payload in add:
+        uid = str(payload["user_id"])
+        access = payload["access"]
+        current = existing.get(uid)
+        if current is None:
+            SpaceMember.objects.create(
+                space=space,
+                user=users[uid],
+                access=access,
+                source=SpaceMemberSource.MANUAL,
+                added_by=actor,
+            )
+            added += 1
+            if access == SpaceAccess.VIEWER:
+                revoked.add(uid)
+        elif current.access != access:
+            if access == SpaceAccess.VIEWER:
+                revoked.add(uid)
+            current.access = access
+            current.added_by = current.added_by or actor
+            current.save(update_fields=["access", "added_by", "updated_at"])
+
+    removed = 0
+    if remove:
+        SpaceMember.objects.filter(space=space, user_id__in=remove).delete()
+        removed = len(remove)
+        revoked.update(remove)
+
+    for uid in revoked:
+        _revoke(space, uid)
+    return {"added": added, "removed": removed}
+
+
 @transaction.atomic
 def create_space(workspace, actor, *, name, description="", color=None, icon="",
                  is_private=False, space_id=None) -> Space:

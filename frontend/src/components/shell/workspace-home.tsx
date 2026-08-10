@@ -643,7 +643,7 @@ function TeamTasksSection({
                         backgroundColor: group.user.avatar_color || "#7B68EE",
                       }}
                     >
-                      {initials(group.user.full_name, group.user.email)}
+                      {initials(group.user.full_name, group.user.email ?? undefined)}
                     </AvatarFallback>
                   </Avatar>
                 ) : (
@@ -777,7 +777,7 @@ function TeamSection({
                     className="text-[11px] font-semibold text-primary-foreground"
                     style={{ backgroundColor: member.user.avatar_color || "#7B68EE" }}
                   >
-                    {initials(member.user.full_name, member.user.email)}
+                    {initials(member.user.full_name, member.user.email ?? undefined)}
                   </AvatarFallback>
                 </Avatar>
                 <div className="min-w-0 flex-1">

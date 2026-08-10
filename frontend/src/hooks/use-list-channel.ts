@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { WS_BASE_URL } from "@/lib/env";
+import { API_BASE_URL, WS_BASE_URL } from "@/lib/env";
 import { getClientId } from "@/lib/client-id";
 import { keys } from "@/lib/keys";
 import { removeTaskFromGroups, writeTaskEverywhere } from "@/lib/task-cache";
@@ -22,11 +22,50 @@ import type {
 
 export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "offline";
 
+/** Server yopish kodlari (§15.1). 4403 = kirish huquqi bekor qilindi. */
+export const WS_CLOSE_ACCESS_REVOKED = 4403;
+
 /**
- * §15 — native WebSocket to ws://<host>/ws/list/{list_id}/?token=<access>.
+ * §15.1 — bir martalik WS handshake chiptasini oladi.
+ *
+ * Nega: access token'ni `?token=` da yuborish uni har bir proxy/APM access
+ * log'iga yozib qo'yadi. Chipta 30 soniya yashaydi va bir marta ishlaydi,
+ * shuning uchun log'dan olingan URL bilan soket ochib bo'lmaydi.
+ *
+ * `null` qaytsa chaqiruvchi eski `?token=` yo'liga tushadi — eskiroq backend
+ * bilan ham ulanish uzilib qolmasligi uchun (deprecated fallback).
+ *
+ * `use-workspace-channel.ts` ham shu yordamchini import qiladi: mantiq bitta
+ * joyda tursin.
+ */
+export async function fetchRealtimeTicket(accessToken: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/realtime/ticket/`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { ticket?: unknown };
+    return typeof body.ticket === "string" && body.ticket ? body.ticket : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Chipta bo'lsa u bilan, aks holda deprecated token bilan handshake qatori. */
+export async function realtimeHandshakeQuery(accessToken: string): Promise<string> {
+  const ticket = await fetchRealtimeTicket(accessToken);
+  return ticket
+    ? `ticket=${encodeURIComponent(ticket)}`
+    : `token=${encodeURIComponent(accessToken)}`;
+}
+
+/**
+ * §15 — native WebSocket to ws://<host>/ws/list/{list_id}/?ticket=<opaque>.
  * Applies task.* / comment.* events to the TanStack Query cache, suppresses
  * this tab's own echoes via actor.client_id, reconnects with exponential
  * backoff (1s → 30s + jitter) and refetches on resume (no server replay).
+ * A 4403 close (access revoked) is terminal: no reconnect, cache invalidated.
  */
 export function useListChannel(listId: string | null) {
   const queryClient = useQueryClient();
@@ -184,9 +223,9 @@ export function useListChannel(listId: string | null) {
         setStatus("offline");
         return;
       }
-      socket = new WebSocket(
-        `${WS_BASE_URL}/ws/list/${listId}/?token=${encodeURIComponent(token)}`,
-      );
+      const query = await realtimeHandshakeQuery(token);
+      if (closed) return;
+      socket = new WebSocket(`${WS_BASE_URL}/ws/list/${listId}/?${query}`);
       socket.onmessage = (event) => {
         try {
           applyFrame(JSON.parse(event.data as string) as WsFrame);
@@ -197,8 +236,17 @@ export function useListChannel(listId: string | null) {
       socket.onopen = () => {
         attempt = 0;
       };
-      socket.onclose = () => {
+      socket.onclose = (event) => {
         if (closed) return;
+        if (event.code === WS_CLOSE_ACCESS_REVOKED) {
+          // Server a'zolikni bekor qildi (§15.1). Qayta ulanish faqat 403
+          // sikliga aylanadi — soketni butunlay tark etamiz va cache'ni
+          // yangilaymiz, shunda UI yo'qolgan huquqni darhol aks ettiradi.
+          closed = true;
+          setStatus("offline");
+          void queryClient.invalidateQueries({ queryKey: keys.tasksRoot(listId) });
+          return;
+        }
         setStatus("reconnecting");
         const backoff = Math.min(1000 * 2 ** attempt, 30_000);
         const jitter = backoff * (0.5 + Math.random() * 0.5);

@@ -153,12 +153,16 @@ test.describe("realtime list channel", () => {
     // (Server `presence.join` ni butun guruhga yuboradi, shu jumladan
     // ulangan foydalanuvchining o'ziga ham — shuning uchun aynan aziz
     // uchun kelgan freym qidiriladi.)
+    // Presence payload'ida ATAYLAB email yo'q: mehmon boshqa a'zolarning ish
+    // pochtasini WS orqali yig'ib olmasligi uchun server faqat
+    // {id, full_name, avatar, avatar_color} yuboradi (§15.3 PresenceUser).
+    const azizId = (await sessionFor(USERS.aziz)).user.id;
     await pageB.goto(listUrl());
-    const joinedEmails = () =>
+    const joinedIds = () =>
       framesA.frames
         .filter((f) => f.type === "presence.join")
-        .map((f) => (f.payload?.data?.user as { email?: string } | undefined)?.email);
+        .map((f) => (f.payload?.data?.user as { id?: string } | undefined)?.id);
 
-    await expect.poll(joinedEmails, { timeout: 25_000 }).toContain(USERS.aziz.email);
+    await expect.poll(joinedIds, { timeout: 25_000 }).toContain(azizId);
   });
 });

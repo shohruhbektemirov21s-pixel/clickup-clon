@@ -8,6 +8,7 @@ eskirib qoladi va jimgina xavfsizlik teshigi paydo bo'ladi — R3).
 
 from django.contrib import admin
 
+from apps.accounts.admin import NoBulkDeleteMixin
 from apps.core.access import bump_permissions_version
 from apps.core.enums import SpaceAccess, SpaceMemberSource
 from apps.core.permissions import PERMISSION_GROUPS
@@ -74,6 +75,16 @@ class RolePermissionInline(admin.TabularInline):
     def has_add_permission(self, request, obj=None):
         return False
 
+    # F-7: inline `RolePermissionAdmin` ning superuser qulfini MEROS OLMAYDI —
+    # Django bu yerda oddiy `workspaces.change_rolepermission` ruxsatini
+    # tekshiradi. Ya'ni `is_staff` xodim workspace sahifasi orqali matritsani
+    # tahrirlab, o'ziga `space.read_private` yoki `task.delete` bera olardi.
+    def has_change_permission(self, request, obj=None):
+        return bool(request.user.is_superuser)
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
 
 class SpaceMemberInline(admin.TabularInline):
     model = SpaceMember
@@ -88,7 +99,7 @@ class SpaceMemberInline(admin.TabularInline):
 
 
 @admin.register(Workspace)
-class WorkspaceAdmin(admin.ModelAdmin):
+class WorkspaceAdmin(NoBulkDeleteMixin, admin.ModelAdmin):
     list_display = (
         "name",
         "slug",
@@ -215,7 +226,7 @@ class RolePermissionAdmin(admin.ModelAdmin):
 
 
 @admin.register(WorkspaceMember)
-class WorkspaceMemberAdmin(admin.ModelAdmin):
+class WorkspaceMemberAdmin(NoBulkDeleteMixin, admin.ModelAdmin):
     list_display = ("workspace", "user", "role", "joined_at")
     list_filter = ("role",)
     list_select_related = ("workspace", "user")

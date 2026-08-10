@@ -10,17 +10,24 @@ import {
   List as ListIcon,
   Plus,
   Settings,
+  Users,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useMembers, useWorkspace, useWorkspaceTree } from "@/hooks/queries";
+import {
+  useMembers,
+  useMyPermissions,
+  useWorkspace,
+  useWorkspaceTree,
+} from "@/hooks/queries";
 import { CreateEntityDialog } from "@/components/shell/create-entity-dialog";
 import { TreeNodeActions } from "@/components/shell/tree-node-actions";
 import { InviteMemberDialog } from "@/components/workspace/invite-member-dialog";
 import type { Member, TreeFolder, TreeList, TreeSpace } from "@/types/api";
 import { initials } from "@/lib/format";
+import { canInSpace } from "@/lib/permissions";
 import { ROLE_LABEL, ROLE_RANK } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +38,7 @@ type CreateTarget =
 export function Sidebar({ workspaceId }: { workspaceId: string }) {
   const { data: tree, isPending, isError, refetch } = useWorkspaceTree(workspaceId);
   const { data: workspace } = useWorkspace(workspaceId);
+  const { data: my } = useMyPermissions(workspaceId);
   const [createTarget, setCreateTarget] = React.useState<CreateTarget | null>(null);
   const params = useParams<{ listId?: string }>();
   const router = useRouter();
@@ -100,6 +108,7 @@ export function Sidebar({ workspaceId }: { workspaceId: string }) {
               space={space}
               canCreateList={canCreateList}
               canManageSpace={canManage}
+              canManageTeam={canInSpace(my, space.id, "space.manage_members")}
               activeListId={activeListId}
               onLeaveIfActive={leaveIfActive}
               onCreateList={(spaceId, folderId) =>
@@ -138,6 +147,7 @@ function SpaceNode({
   space,
   canCreateList,
   canManageSpace,
+  canManageTeam,
   activeListId,
   onLeaveIfActive,
   onCreateList,
@@ -146,6 +156,8 @@ function SpaceNode({
   space: TreeSpace;
   canCreateList: boolean;
   canManageSpace: boolean;
+  /** `space.manage_members` or a local `manager` row — mirrors the server. */
+  canManageTeam: boolean;
   activeListId?: string;
   onLeaveIfActive: (containsActive: boolean) => void;
   onCreateList: (spaceId: string, folderId?: string | null) => void;
@@ -174,6 +186,21 @@ function SpaceNode({
         />
         <span className="truncate text-[13px] font-medium">{space.name}</span>
         <span className="ml-auto flex items-center">
+          {/* §D.6 — "Jamoa" faqat bo'lim a'zolarini boshqara oladiganga.
+              Qolganlar jamoani baribir ko'radi, lekin bo'lim sahifasidagi
+              read-only avatarlar orqali (SpaceTeamStrip). */}
+          {canManageTeam ? (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="opacity-0 group-hover:opacity-100"
+              aria-label={`${space.name} jamoasi`}
+              title="Jamoa"
+              render={<Link href={`/w/${workspaceId}/s/${space.id}/members`} />}
+            >
+              <Users />
+            </Button>
+          ) : null}
           {canCreateList ? (
             <Button
               variant="ghost"
@@ -373,7 +400,11 @@ function TeamSection({
   const members: Member[] = React.useMemo(() => {
     const rows = data?.results ?? [];
     return [...rows].sort(
-      (a, b) => ROLE_RANK[a.role] - ROLE_RANK[b.role] || a.user.email.localeCompare(b.user.email),
+      (a, b) =>
+        ROLE_RANK[a.role] - ROLE_RANK[b.role] ||
+        // Mehmon emailni ko'rmaydi (§4), shuning uchun ism birlamchi kalit.
+        a.user.full_name.localeCompare(b.user.full_name) ||
+        (a.user.email ?? "").localeCompare(b.user.email ?? ""),
     );
   }, [data]);
 
@@ -432,7 +463,7 @@ function TeamSection({
                 <Link
                   href={`/w/${workspaceId}/settings`}
                   className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] hover:bg-muted"
-                  title={member.user.email}
+                  title={member.user.email ?? member.user.full_name}
                 >
                   <Avatar className="size-5 shrink-0">
                     {member.user.avatar ? (
@@ -442,7 +473,7 @@ function TeamSection({
                       className="text-[9px] font-semibold text-primary-foreground"
                       style={{ backgroundColor: member.user.avatar_color || "#7B68EE" }}
                     >
-                      {initials(member.user.full_name, member.user.email)}
+                      {initials(member.user.full_name, member.user.email ?? undefined)}
                     </AvatarFallback>
                   </Avatar>
                   <span className="truncate">

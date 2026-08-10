@@ -10,6 +10,7 @@ import { useListChannel } from "@/hooks/use-list-channel";
 import { ListView } from "@/components/list/list-view";
 import { BoardView } from "@/components/board/board-view";
 import { TaskPanel } from "@/components/task/task-panel";
+import { SpaceTeamStrip } from "@/components/workspace/space-team-strip";
 import type { ViewKind } from "@/types/api";
 import { cn } from "@/lib/utils";
 
@@ -80,7 +81,8 @@ export function ListPage({
             </TabsTrigger>
           </TabsList>
         </Tabs>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-3">
+          <SpaceTeamStrip workspaceId={workspaceId} spaceId={list?.space_id} />
           <Badge
             variant="secondary"
             className="gap-1.5 font-normal text-muted-foreground"

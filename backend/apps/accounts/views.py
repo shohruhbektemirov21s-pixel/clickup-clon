@@ -164,6 +164,31 @@ class PasswordChangeView(APIView):
         return Response(token_pair_for(user))
 
 
+class RealtimeTicketView(APIView):
+    """`POST realtime/ticket/` — bir martalik WebSocket handshake chiptasi (§15.1).
+
+    Brauzer WS handshake'ida `Authorization` sarlavhasini qo'ya olmaydi, shuning
+    uchun ilgari access token to'g'ridan-to'g'ri URL'da (`?token=`) ketardi va
+    proxy/APM access log'larida qolardi. Bu endpoint uning o'rniga hech qanday
+    da'vo olib yurmaydigan, 30 soniya yashaydigan va **bir marta** ishlatiladigan
+    opaque chipta beradi: log'dan olingan URL bilan endi soket ochib bo'lmaydi.
+
+    Autentifikatsiya talab qilinadi (chipta faqat so'rovchining o'ziga tegishli),
+    `realtime_ticket` throttle scope'i esa chipta zavodiga aylanishiga yo'l
+    qo'ymaydi.
+    """
+
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "realtime_ticket"
+
+    def post(self, request):
+        from apps.realtime.tickets import TICKET_TTL_SECONDS, issue_ticket
+
+        return Response(
+            {"ticket": issue_ticket(request.user), "expires_in": TICKET_TTL_SECONDS}
+        )
+
+
 class MeView(APIView):
     def get(self, request):
         return Response(UserSerializer(request.user, context={"request": request}).data)

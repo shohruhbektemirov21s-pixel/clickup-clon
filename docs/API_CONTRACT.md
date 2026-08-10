@@ -3,18 +3,24 @@
 | | |
 |---|---|
 | **Document** | API_CONTRACT.md |
-| **Version** | 1.2.0 |
+| **Version** | 1.3.2 |
 | **Date** | 2026-08-10 |
 | **Status** | **Binding** — backend and frontend implement against this document in parallel. Changes require a PR that updates this file in the same commit. |
 | **Authority** | This doc > PRD.md for API surface. `docs/DATA_MODEL.md` is authoritative for field names/types; this doc mirrors it field-for-field. |
 | **Upstream** | `docs/DATA_MODEL.md`, `docs/PRD.md`, `docs/DESIGN_PERMISSIONS.md`, `backend/config/{settings,pagination,exceptions}.py`, `backend/apps/realtime/middleware.py` |
 
-**Inventory: 78 REST endpoints + 2 WebSocket channels.** Adding an endpoint requires amending this doc in the same commit.
+**Inventory: 83 REST endpoints + 2 WebSocket channels.** Adding an endpoint requires amending this doc in the same commit.
 
-> **v1.1.0 changelog.** Adds §18 (granular permission matrix, `docs/DESIGN_PERMISSIONS.md` §A–D.5) and rulings R18–R23. The role table in §1.7 now describes the **default** matrix, not a hard-coded one. Space-member endpoints (`DESIGN_PERMISSIONS.md` §D.6) and the extended `invitations/lookup/` payload (§D.7) are specified there but **not yet implemented**; they will land with their own contract bump.
+> **v1.1.0 changelog.** Adds §18 (granular permission matrix, `docs/DESIGN_PERMISSIONS.md` §A–D.5) and rulings R18–R23. The role table in §1.7 now describes the **default** matrix, not a hard-coded one. The extended `invitations/lookup/` payload (§D.7) is specified there but **not yet implemented**; it will land with its own contract bump. (Space-member endpoints landed in v1.3.0 — see §6.1.)
 >
 > **v1.1.1 changelog (§2 only).** Register-with-invite (`DESIGN_PERMISSIONS.md` §D.8) is now **implemented**: `auth/register/` accepts `invite_token` and may answer with `workspace_id` (R21). The `User`/`UserSummary` objects gain `profession` — a **profile label, never a permission**. New dev-only endpoint `POST auth/demo/` (endpoint #70).
 
+> **v1.3.2 changelog (team visibility + email privacy).** `member.read` is now a `guest` default: the member roster (§4) and the member profile (§4.1) are open to **every** role. To keep that from turning into a company-wide email harvest, the `UserSummary` object now returns **`email: null` to a `guest` for every user other than themselves** — everywhere it appears (roster, assignees, watchers, `created_by`/`updated_by`, comment authors, attachment uploaders, activity actors). `full_name`, `avatar`, `avatar_color` and `profession` are unaffected, and non-guest callers see emails exactly as before. `/me/` is never masked. No endpoint, status code or field-name changes — only the value of `UserSummary.email`.
+>
+> **v1.3.1 changelog (default permission matrix — §1.7 only).** No endpoint, payload or error code changes. The **default** role matrix (`DEFAULT_MATRIX`, catalog v3) narrows `member` to "read + work on what is assigned to me": `task.update`, `task.delete`, `task.move`, `task.assign`, `folder.create/update/delete`, `list.create/update/delete/move`, `tag.update` and `tag.delete` are no longer member defaults. `owner`, `admin` and `guest` are unchanged. Per-workspace `RolePermission` overrides (§18) can restore any of them, and a **space manager** (`SpaceAccess.manager`, §6.1) still gets them back inside their own space. See `DESIGN_PERMISSIONS.md` §A.
+>
+> **v1.3.0 changelog (space members / PM assignment).** Adds §6.1 — the five space-member endpoints of `DESIGN_PERMISSIONS.md` §D.6 (#79–#83), previously specified but unimplemented. `SpaceMember` rows now also gate nothing new on their own: visibility still follows R20's staged rule. Assigning a task auto-creates a `SpaceMember(access=viewer, source=auto_assignee)` row **only for a user who cannot already see the space** (AD-7, see §6.1). Inventory 78 → **83**.
+>
 > **v1.2.0 changelog (member profile & activity feed).** Adds §4.1 `GET workspaces/{id}/members/{user_id}/profile/` (endpoint #75) and §10.8 `GET workspaces/{id}/activity/` (endpoint #77), and **documents §10.6 `GET tasks/{id}/activity/`** (endpoint #76), which shipped in the code but was missing from this file. The §4 Member object now shows `profession` explicitly (it always travelled inside `UserSummary`). The inventory is corrected to **78** — the previous header said 70 while the §16 table summed to 75.
 
 ---
@@ -115,6 +121,26 @@ Per-workspace role on `WorkspaceMember.role`: **`owner` > `admin` > `member` > `
 
 > **R18 (v1.1.0):** the table below is the **default** permission matrix, not a fixed one. Effective authority is `DEFAULT_MATRIX` (catalog in `backend/apps/core/permissions.py`) overlaid with the workspace's `RolePermission` rows — see §18. `owner` is always the full set and can never be edited. The matrix is monotonic: `guest ⊆ member ⊆ admin ⊆ owner`.
 
+> **Default matrix (v1.3.1, BINDING).** The defaults are now:
+>
+> | Role | Default authority |
+> |---|---|
+> | `owner` | the full catalog, locked — 48 codes |
+> | `admin` | everything except the 4 owner-locked codes — 44 codes |
+> | `member` | **read + own work** — 14 codes: `workspace.read`, `member.read`, `space.read`, `task.read`, `task.create`, `task.update_assigned`, `task.watch`, `comment.create`, `comment.update_own`, `comment.delete_own`, `attachment.read`, `attachment.create`, `attachment.delete_own`, `tag.create` |
+> | `guest` | read + comment + watch + edit tasks assigned to them + **read the member roster** — 10 codes (v1.3.2) |
+>
+> A `member` therefore **cannot** edit, move or delete a task that is not assigned
+> to them, cannot create or edit spaces/folders/lists, and cannot edit or delete
+> tags. They **can** create a task, edit a task assigned to them
+> (`task.update_assigned`), comment, and upload/delete their own attachments.
+>
+> **"Project manager" is not a workspace role.** It is `SpaceAccess.manager` on a
+> `SpaceMember` row (§6.1): inside that one space the caller gets
+> `space.update`, `space.manage_members/statuses`, the whole `folder.*` and
+> `list.*` groups and `task.update/delete/move/assign/restore` back. It never
+> grants `space.delete`, `member.*`, `workspace.*` or `tag.*`.
+
 > **Enforcement (v1.1.0).** Views no longer test the role rank; every guarded endpoint resolves a **permission code** through `require_perm` / `require_membership_perm` / `require_space_perm` (`backend/apps/core/access.py`). Changing the matrix therefore changes REST behaviour immediately (`DESIGN_PERMISSIONS.md` §B.7, cache invalidated by `permissions_version`). The role names below are shorthand for "roles holding that code by default".
 
 | Endpoint group | Code(s) enforced |
@@ -141,7 +167,8 @@ Per-workspace role on `WorkspaceMember.role`: **`owner` > `admin` > `member` > `
 | `POST/PATCH/DELETE tags/` | `tag.create` / `tag.update` / `tag.delete` |
 
 Special cases (these **outrank** the matrix — granting a code cannot unlock them):
-- `guest` may **PATCH/move only tasks where they are in the assignees** ("Assignee" below), may create comments, may watch/unwatch, everything else read-only. Guests cannot read the member roster or invitations, and cannot see private spaces (`is_private=true`).
+- `member` (default) may **PATCH/move only tasks where they are in the assignees** — the same resolution order as `guest`, because `task.update`/`task.move` are no longer member defaults (v1.3.1).
+- `guest` may **PATCH/move only tasks where they are in the assignees** ("Assignee" below), may create comments, may watch/unwatch, everything else read-only. Guests **can** read the member roster and member profiles (v1.3.2, `member.read`) but every `UserSummary` they receive has `email: null` except their own; they still cannot read invitations, and cannot see private spaces (`is_private=true`).
 - Everyone edits/deletes **their own** comments; admin+ may delete (not edit) any comment. There is deliberately **no `comment.update_any` code** — not even the owner can edit someone else's comment (§12).
 - The **last owner** cannot be demoted, removed, or leave → `409 conflict`, regardless of who holds `member.role_change` / `member.remove`.
 - A caller who is not an `owner` can neither modify an `owner` member nor grant the `owner` role → `403`, even with `member.role_change`.
@@ -213,6 +240,8 @@ The new member's role comes **only** from `Invitation.role`. A client-supplied `
 ```
 
 **UserSummary** (embedded everywhere a user appears inside another resource): `{"id", "email", "full_name", "avatar", "avatar_color", "profession"}`.
+
+> **`email` is role-dependent (v1.3.2, BINDING).** When the caller's role in the workspace being served is `guest`, `email` is **`null`** for every user except the caller themselves. Every other role sees the real address. This holds wherever `UserSummary` is embedded — roster, assignees, watchers, `created_by`/`updated_by`, comment authors, attachment uploaders and activity actors — so clients must treat `email` as nullable and fall back to `full_name`. `GET me/` is never masked.
 
 **`profession`** — closed set: `""` (unset) | `project_manager` | `developer` | `designer` | `qa` | `analyst` | `marketing` | `other`. It is a **profile label only**: it exists so a PM can pick the right people, and it is deliberately independent of `WorkspaceMember.role` and of §18's permission matrix. No permission check reads it; writing it grants and removes nothing. Writable on `register` and `PATCH me/`; read-only inside `UserSummary`.
 
@@ -286,7 +315,7 @@ The new member's role comes **only** from `Invitation.role`. A client-supplied `
 | 16 | PATCH | `workspaces/{id}/members/{user_id}/` | owner; admin (non-owner targets, non-owner roles only) | `200` Member |
 | 17 | DELETE | `workspaces/{id}/members/{user_id}/` | owner; admin (non-owner targets) | `204` empty |
 | 18 | POST | `workspaces/{id}/members/leave/` | any member | `204` empty |
-| 75 | GET | `workspaces/{id}/members/{user_id}/profile/` | `member.read` (owner/admin/member by default) | `200` MemberProfile |
+| 75 | GET | `workspaces/{id}/members/{user_id}/profile/` | `member.read` (every role by default, v1.3.2) | `200` MemberProfile |
 
 - `{user_id}` in the path is the **user's** id, not the membership row id.
 - `PATCH` body: `{"role": "owner"|"admin"|"member"|"guest"}`. Rules: only an owner may grant `owner` or touch an owner; admin may change roles among `admin`/`member`/`guest` for non-owners; member/guest → `403`.
@@ -331,7 +360,7 @@ The new member's role comes **only** from `Invitation.role`. A client-supplied `
 ```
 
 - **Visibility is the CALLER's, not the target's (BINDING).** `spaces` lists only spaces the caller can see (`visible_spaces_q`, §1.7 / `DESIGN_PERMISSIONS.md` §C.5), and **every counter is computed inside that same set**. A guest who cannot see a private space must not learn it exists from a larger number — a server that counts tasks outside the caller's visibility violates this contract.
-- `{user_id}` is the **user's** id. A user who is not a member of this workspace — including a member of another workspace, and including a user who exists but was removed — → `404 not_found`, never `403`. A caller outside the workspace → `404`. A caller inside the workspace without `member.read` (guest by default) → `403 permission_denied`.
+- `{user_id}` is the **user's** id. A user who is not a member of this workspace — including a member of another workspace, and including a user who exists but was removed — → `404 not_found`, never `403`. A caller outside the workspace → `404`. A caller inside the workspace without `member.read` → `403 permission_denied`; since v1.3.2 `member.read` is a default for **every** role, so this only happens when a workspace revokes it through §18.
 - Counter semantics (mirroring §10.5): "open" = not archived and status type ≠ `closed`; `overdue_tasks` = open **and** `due_date < now`; `due_today` = open **and** due between `now` and the end of the caller's local day — so `overdue_tasks` and `due_today` never overlap. `completed_tasks` counts assigned tasks with `completed_at != null`. `created_tasks` counts tasks the member created; `comments` counts their comments. Soft-deleted tasks are excluded everywhere.
 - `spaces[].open_tasks` is the **target member's** open task count in that space, ordered by the space `position`.
 - Every aggregate is computed with `annotate`/`aggregate`; the query count does not grow with the number of spaces, members or tasks.
@@ -402,6 +431,61 @@ The new member's role comes **only** from `Invitation.role`. A client-supplied `
   "created_at": "2026-08-07T09:20:00Z", "updated_at": "2026-08-07T09:20:00Z"
 }
 ```
+
+### 6.1 Space members (PM assignment)
+
+Upstream: `docs/DESIGN_PERMISSIONS.md` §D.6 / §B.4 / §B.5 / F-5. This is how a project manager picks the right people for a project.
+
+| # | Method | Path | Permission | Success |
+|---|---|---|---|---|
+| 79 | GET | `spaces/{id}/members/` | any member who can see the space | `200` paginated SpaceMember[] |
+| 80 | POST | `spaces/{id}/members/` | `space.manage_members` **or** local `manager` | `201` SpaceMember |
+| 81 | PATCH | `spaces/{id}/members/{user_id}/` | same | `200` SpaceMember |
+| 82 | DELETE | `spaces/{id}/members/{user_id}/` | same | `204` empty |
+| 83 | POST | `spaces/{id}/members/bulk/` | same | `200` BulkSpaceMembersResponse |
+
+Reading the roster needs **no** permission code: anyone who can see the space can see who is on it. Writing needs one of two things — the workspace-level `space.manage_members` code (admin by default), or a local `SpaceMember(access="manager")` row in *this* space. A local `manager` never gains `space.delete`, `member.*`, `workspace.*` or `tag.*` (F-5).
+
+**SpaceMember object:**
+
+```json
+{
+  "id": "…", "space_id": "…",
+  "user": { "id": "…", "email": "dan@acme.io", "full_name": "Dan Ortiz",
+            "avatar": null, "avatar_color": "#49CCF9", "profession": "developer" },
+  "access": "contributor", "source": "manual", "added_by_id": "…",
+  "created_at": "2026-08-10T09:20:00Z", "updated_at": "2026-08-10T09:20:00Z"
+}
+```
+
+- `access` ∈ `viewer` | `contributor` | `manager`. **Lowest privilege wins**: a `viewer` row cuts every write inside the space regardless of the workspace role; `contributor` defers to the workspace role; `manager` adds the fixed local PM grant set (§B.5).
+- `source` ∈ `manual` | `auto_creator` | `auto_assignee` | `backfill` — provenance only, never authority.
+- Rows are ordered `manager`, `contributor`, `viewer`, then by email.
+
+**POST body:** `{"user_id": "…", "access"?: "viewer"|"contributor"|"manager"}` — `access` defaults to `contributor`.
+
+**PATCH body:** `{"access": "viewer"|"contributor"|"manager"}`.
+
+**Bulk body:** `{"add": [{"user_id", "access"}], "remove": ["…user uuid…"]}`. One transaction, no partial success. `add` is an **upsert** (an existing row has its `access` updated, keeping `source`), which is what the PM panel's single "Saqlash" button needs. A `user_id` in both arrays → `400`. **Bulk response:** `{"added": <int>, "removed": <int>, "results": SpaceMember[]}` where `results` is the space's **full** roster after the transaction, so the client can replace its state in one step.
+
+| HTTP | `code` | When |
+|---|---|---|
+| 400 | `validation_error` | `user_id` is not a member of this workspace (`details.user_id`), or a bulk payload contradicts itself |
+| 403 | `permission_denied` | Neither `space.manage_members` nor a local `manager` row |
+| 404 | `not_found` | The space is not visible to the caller, **or** the `user_id` has no `SpaceMember` row (PATCH/DELETE) |
+| 409 | `conflict` | Duplicate `(space, user)` on POST |
+| 409 | `conflict` | Removing/demoting the last `manager` of a **private** space → `details.reason = "last_manager"` |
+
+The `last_manager` guard applies to private spaces only: an open space stays reachable through the workspace role, whereas a private space with no manager could never have a member added back.
+
+**Lifecycle rules (binding):**
+
+- `create_space()` writes `SpaceMember(access=manager, source=auto_creator)` for the creator (§B.6).
+- Removing someone from the workspace (`DELETE workspaces/{id}/members/{user_id}/`, `members/leave/`) deletes their `SpaceMember` rows — a `SpaceMember` never outlives its `WorkspaceMember` (§B.4).
+- **AD-7:** assigning a task writes `SpaceMember(access=viewer, source=auto_assignee)` for the assignee **only when that user cannot already see the space**. Writing it unconditionally would be self-defeating: `viewer` is the lowest privilege and wins over the workspace role, so an assignee in an open space would lose the right to edit the very task they were assigned (`task.update_assigned` → `403`). Scoped this way the row only ever *grants* visibility and never removes authority.
+- Dropping to `access = "viewer"` or removing a row emits `access.revoked` on the `user.<id>` channel (§18.6).
+
+---
 
 ---
 
@@ -648,8 +732,17 @@ Applies to `lists/{id}/tasks/` and `workspaces/{id}/tasks/`. Different keys AND;
 | `moved` | source list name | destination list name |
 | `deleted` | task title | — |
 | `restored` | — | task title |
+| `attachment_added` | — | attachment `original_name` |
+| `attachment_removed` | attachment `original_name` | — |
 
 `actor` is `null` when the acting user was hard-deleted — history outlives the user. Values are plain display strings, not ids; ids that matter live in `metadata`.
+
+The two `attachment_*` rows are written from `apps.tasks.attachments` (the only
+exception to "services only" — they use the same `services.activity()` builder)
+and carry `metadata = {"attachment_id", "content_type", "size_bytes"}`. The
+`attachment_id` may already be gone: an `attachment_removed` row outlives the
+file it describes. **Clients must tolerate unknown verbs** — render a generic
+sentence instead of failing when the vocabulary grows.
 
 ### 10.8 Workspace activity feed (endpoint 77)
 
@@ -718,6 +811,9 @@ part named `file`. A JSON body → `415 unsupported_media_type`.
 | Declared MIME | must be in the allow-list or neutral (`application/octet-stream`); anything else → `400` |
 | Stored `content_type` | derived **server-side from the extension** — the client's value is never trusted |
 | Stored filename | generated server-side as `<uuid4>.<ext>`; the client's name is sanitized and kept only in `original_name` (path traversal and double extensions cannot reach storage) |
+| **File signature** | the first bytes must match the declared extension → otherwise `400 validation_error`. `png`/`jpg`/`jpeg`/`webp`/`gif` are checked strictly, `pdf` must start with `%PDF-`, `zip`/`docx`/`xlsx`/`pptx` must start with `PK\x03\x04`, `doc`/`xls`/`ppt` must be OLE2 (or RTF for `doc`) |
+| **Text types** | `txt`/`md`/`csv` have no signature: the first 8 KB must decode as UTF-8 and contain no null byte → otherwise `400` |
+| **Archive contents** | for every zip-family upload the central directory is inspected without extracting: an entry with a `..` segment or an absolute path (zip-slip) → `400`; total uncompressed / compressed ratio above **100** or more than 5000 entries (decompression bomb) → `400` |
 | Throttle | `attachment` scope, `ATTACHMENT_THROTTLE_RATE` (default `30/hour`) → `429 throttled` |
 
 **Download** — `GET attachments/{id}/download/` streams the bytes with:
@@ -735,6 +831,19 @@ file needs `attachment.delete_any` (admin+ by default).
 or inside a private space they cannot see — is always `404 not_found`, never
 `403` (§1.7). `attachment_count` on the Task object is maintained by the
 server on every upload/delete.
+
+**History:** every successful upload writes an `attachment_added` row and every
+successful delete an `attachment_removed` row to the task history (§10.6), so a
+file that appeared and vanished is still traceable.
+
+**Orphaned files (operations).** A cascade delete (task → list → space →
+workspace) removes `TaskAttachment` rows without touching the bytes on disk;
+only `DELETE attachments/{id}/` deletes both. The
+`python manage.py prune_attachments` command reconciles
+`MEDIA_ROOT/attachments/` against the table. It is **dry-run by default**
+(`--delete` to actually unlink) and ignores files younger than
+`--older-than-days` (default `7`) so an upload whose transaction has not
+committed yet is never removed.
 
 ---
 
@@ -827,13 +936,32 @@ Workspace-scoped; the same tag may label tasks across spaces.
 
 | Channel | URL | Who may connect | Carries |
 |---|---|---|---|
-| List | `ws(s)://<host>/ws/list/{list_id}/?token=<access>` | anyone with read access to the list | `task.*`, `comment.*` for that list; presence for that list |
-| Workspace | `ws(s)://<host>/ws/workspaces/{workspace_id}/?token=<access>` | any workspace member | `list.updated` and hierarchy-level changes for the sidebar |
+| List | `ws(s)://<host>/ws/list/{list_id}/?ticket=<ticket>` | anyone with read access to the list | `task.*`, `comment.*` for that list; presence for that list |
+| Workspace | `ws(s)://<host>/ws/workspaces/{workspace_id}/?ticket=<ticket>` | any workspace member | `list.updated` and hierarchy-level changes for the sidebar |
 
-- **Auth is the JWT access token as the `token` query parameter** (browsers cannot set WS headers) — exactly what `apps/realtime/middleware.py` (`JWTAuthMiddleware`) implements. No cookie auth.
-- Invalid/expired token, or no read permission on the target: the server sends one `error` frame (or nothing for bad tokens) and closes the socket. No `connection.ack` is ever sent on a rejected socket.
+**Handshake ticket (v1.3.0, BINDING).** Browsers cannot set headers on a WebSocket handshake, so the credential has to travel in the query string — where every proxy, load-balancer access log, APM trace and browser history entry records it verbatim. The credential is therefore a **single-use ticket**, not an access token:
+
+```
+POST realtime/ticket/          Auth: Bearer <access>       throttle scope `realtime_ticket` (60/min)
+200 → {"ticket": "…opaque…", "expires_in": 30}
+```
+
+- The ticket is opaque (no claims), lives **30 seconds**, and is destroyed the moment it is redeemed. A ticket recovered from a log is worthless: it is either expired or already spent. The server stores only a SHA-256 of it, so a cache dump does not hand out live tickets either.
+- Two handshakes racing on the same ticket: exactly one wins, the other is rejected.
+- `?token=<access>` **remains accepted for backwards compatibility but is DEPRECATED** and will be removed in a later version. Clients must prefer `?ticket=`, falling back to `?token=` only when `realtime/ticket/` is unavailable. When both params are present, `ticket` wins and `token` is not read.
+- No cookie auth in either mode — `apps/realtime/middleware.py` (`JWTAuthMiddleware`) is deliberately not stacked on channels' `AuthMiddlewareStack`.
+- Invalid/expired/replayed ticket, invalid token, or no read permission on the target: the server sends one `error` frame (or nothing at all for a bad credential) and closes the socket. No `connection.ack` is ever sent on a rejected socket.
 - On success the first server frame is `connection.ack`. Group names server-side: `list.<list_id>`, `workspace.<workspace_id>`, `user.<user_id>`.
-- Reconnect: exponential backoff 1s → 30s with jitter; on `connection.ack` the client **refetches** the affected queries. There is no server-side replay/backfill — refetch is authoritative.
+- Reconnect: exponential backoff 1s → 30s with jitter, and a **fresh ticket per attempt**; on `connection.ack` the client **refetches** the affected queries. There is no server-side replay/backfill — refetch is authoritative.
+
+**Close codes (application range).**
+
+| Code | Meaning | Client behaviour |
+|---|---|---|
+| `4403` | Access to this workspace/space was revoked while the socket was open (§15.3 `access.revoked`) | **Terminal** — do not reconnect; invalidate the affected queries and let the REST layer (`404`/`403`) drive the UI |
+| `4029` | Inbound rate limit exceeded (see below) | Reconnect with the normal backoff; fix the client's send loop |
+
+**Inbound rate limit (BINDING).** Each socket carries a token bucket of **30 client→server frames per 10 seconds** (burst 30, refill 3/s). Exceeding it produces one `error` frame with code `throttled` and then a `4029` close. `presence.ping` cadence must stay well inside this budget.
 
 ### 15.2 Frame format
 
@@ -877,17 +1005,21 @@ Every server→client message:
 | `list.updated` | workspace | List (rename/recolor/archive/move/counts changed) |
 | `permission.updated` | workspace | `{"workspace_id", "version"}` (v1.1.0, R23 — see §18.6) |
 | `access.revoked` | `user.<id>` | `{"workspace_id", "space_id"\|null}` (v1.1.0, R23 — see §18.6) |
-| `presence.join` / `presence.leave` | list | `{"user": UserSummary}` |
-| `presence.sync` | list | `{"users": [UserSummary]}` (sent to a client right after its own ack) |
+| `presence.join` / `presence.leave` | list | `{"user": PresenceUser}` |
+| `presence.sync` | list | `{"users": [PresenceUser]}` (sent to a client right after its own ack) |
 | `error` | both | `{"code", "message"}` (mirrors §1.6 codes, e.g. `permission_denied`), then the socket closes |
 
-Client→server messages (closed set): `{"type": "presence.ping"}`, `{"type": "presence.typing"}`. Presence liveness is ping-driven; a client that misses its ping window gets a `presence.leave` broadcast on its behalf. Anything else from the client is ignored.
+`PresenceUser` is a **strict subset** of `UserSummary`: `{"id", "full_name", "avatar", "avatar_color"}` — **no `email`, no `profession`** (v1.3.0, BINDING). Presence is readable by anyone who can open the list channel, including guests, and a work-email roster must not be harvestable from it. Clients that need an email read it from `workspaces/{id}/members/` — readable by every role since v1.3.2, but a guest receives `email: null` there too.
+
+`access.revoked` on a socket whose scope it covers is **not** a hint: the server emits the frame and then closes that socket with `4403`. A list socket is covered by a workspace-level revoke (`space_id: null`) and by a space-level revoke naming its own space; a workspace socket is covered only by a workspace-level revoke, because losing access to one space does not end workspace membership.
+
+Client→server messages (closed set): `{"type": "presence.ping"}`, `{"type": "presence.typing"}`. Presence liveness is ping-driven; a client that misses its ping window gets a `presence.leave` broadcast on its behalf. Anything else from the client is ignored, and more than 30 inbound frames per 10s closes the socket with `4029` (§15.1).
 
 A mutation that fails validation/permission emits **no** event. Every successful mutation emits exactly one event (except status-set replacement: one `task.updated` per re-pointed task).
 
 ---
 
-## 16. Endpoint inventory (78)
+## 16. Endpoint inventory (84)
 
 | Group | Count | Endpoints |
 |---|---|---|
@@ -898,6 +1030,7 @@ A mutation that fails validation/permission emits **no** event. Every successful
 | Members | 5 | list, profile, role PATCH, remove, leave |
 | Invitations | 7 | list, create, revoke, resend, lookup, accept, decline |
 | Spaces | 5 | list, create, retrieve, update, delete |
+| Space members | 5 | list, add, update access, remove, bulk |
 | Folders | 5 | list, create, retrieve, update, delete |
 | Lists | 6 | list, create, retrieve, update, delete, move |
 | Status sets | 5 | space GET/PUT, list GET/PUT/DELETE |

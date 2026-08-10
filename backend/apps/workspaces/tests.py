@@ -80,14 +80,21 @@ def test_tree_shape(env):
 # ------------------------------------------------------------- members
 
 
-def test_member_roster_order_and_guest_403(env):
+def test_member_roster_order_and_guest_can_read_it(env):
+    """2026-08: `member.read` guest'ga ham berildi — roster hammaga ochiq.
+
+    Ilgari bu test mehmon uchun `403` kutardi. Endi `200`, ammo emaillar
+    mehmondan yashiriladi — `apps/core/tests/test_permission_policy.py`
+    dagi `test_guest_sees_names_but_not_emails` shuni qulflaydi.
+    """
     response = env.member_client.get(ws_url(env.workspace.id, "members/"))
     assert response.status_code == 200
     roles = [m["role"] for m in response.json()["results"]]
     assert roles == ["owner", "admin", "member", "guest"]
 
-    denied = env.guest_client.get(ws_url(env.workspace.id, "members/"))
-    assert_error(denied, 403, "permission_denied")
+    as_guest = env.guest_client.get(ws_url(env.workspace.id, "members/"))
+    assert as_guest.status_code == 200, as_guest.content
+    assert [m["role"] for m in as_guest.json()["results"]] == roles
 
 
 def test_role_change_rules(env):
@@ -271,15 +278,20 @@ def test_space_delete_requires_confirm_name(env):
 
 def test_folder_crud_and_detach(env):
     url = f"/api/v1/spaces/{env.space.id}/folders/"
-    created = env.member_client.post(url, {"name": "Q3"}, format="json")
+    # 2026-08 siyosati: `folder.*` va `list.*` member'dan olib tashlandi —
+    # struktura faqat admin+ (yoki o'z bo'limidagi PM) qo'lida.
+    member_denied = env.member_client.post(url, {"name": "Nope"}, format="json")
+    assert_error(member_denied, 403, "permission_denied")
+
+    created = env.admin_client.post(url, {"name": "Q3"}, format="json")
     assert created.status_code == 201
     folder_id = created.json()["id"]
 
-    dup = env.member_client.post(url, {"name": "q3"}, format="json")
+    dup = env.admin_client.post(url, {"name": "q3"}, format="json")
     assert_error(dup, 409, "conflict")
 
     # a list inside the folder
-    inside = env.member_client.post(
+    inside = env.admin_client.post(
         f"/api/v1/spaces/{env.space.id}/lists/",
         {"name": "Sprint 24", "folder_id": folder_id},
         format="json",
@@ -287,12 +299,14 @@ def test_folder_crud_and_detach(env):
     assert inside.status_code == 201
     list_id = inside.json()["id"]
 
-    # cascade delete is admin+
+    # ikkala strategiya ham endi admin+ (`folder.delete` ham member'da yo'q)
     denied = env.member_client.delete(f"/api/v1/folders/{folder_id}/?strategy=cascade")
     assert_error(denied, 403, "permission_denied")
+    denied_detach = env.member_client.delete(f"/api/v1/folders/{folder_id}/?strategy=detach")
+    assert_error(denied_detach, 403, "permission_denied")
 
     # detach moves lists to the space root
-    ok = env.member_client.delete(f"/api/v1/folders/{folder_id}/?strategy=detach")
+    ok = env.admin_client.delete(f"/api/v1/folders/{folder_id}/?strategy=detach")
     assert ok.status_code == 204
     moved = TaskList.objects.get(pk=list_id)
     assert moved.folder_id is None
@@ -301,34 +315,39 @@ def test_folder_crud_and_detach(env):
 
 def test_list_create_validation_and_scope_conflict(env):
     url = f"/api/v1/spaces/{env.space.id}/lists/"
-    dup = env.member_client.post(url, {"name": "boshlash"}, format="json")
+    # 403 tekshiruvi validatsiyadan oldin: member uchun `list.create` yo'q.
+    member_denied = env.member_client.post(url, {"name": "Nope"}, format="json")
+    assert_error(member_denied, 403, "permission_denied")
+
+    dup = env.admin_client.post(url, {"name": "boshlash"}, format="json")
     assert_error(dup, 409, "conflict")
 
     other_space = env.admin_client.post(
         ws_url(env.workspace.id, "spaces/"), {"name": "Other"}, format="json"
     ).json()
-    foreign_folder = env.member_client.post(
+    foreign_folder = env.admin_client.post(
         f"/api/v1/spaces/{other_space['id']}/folders/", {"name": "Elsewhere"}, format="json"
     ).json()
-    bad = env.member_client.post(
+    bad = env.admin_client.post(
         url, {"name": "New List", "folder_id": foreign_folder["id"]}, format="json"
     )
     assert_error(bad, 400, "validation_error")
 
-    patch_folder = env.member_client.patch(
+    patch_folder = env.admin_client.patch(
         f"/api/v1/lists/{env.list.id}/", {"folder_id": None}, format="json"
     )
     assert_error(patch_folder, 400, "validation_error")
 
 
 def test_list_move_reorder_and_reparent(env):
+    """`list.move` endi admin+ — setup va harakatlar `admin_client` bilan."""
     space_lists = f"/api/v1/spaces/{env.space.id}/lists/"
-    b = env.member_client.post(space_lists, {"name": "B"}, format="json").json()
-    c = env.member_client.post(space_lists, {"name": "C"}, format="json").json()
+    b = env.admin_client.post(space_lists, {"name": "B"}, format="json").json()
+    c = env.admin_client.post(space_lists, {"name": "C"}, format="json").json()
     a = env.list  # position "n"
 
     # move C between A and B
-    moved = env.member_client.patch(
+    moved = env.admin_client.patch(
         f"/api/v1/lists/{c['id']}/move/",
         {"folder_id": None, "before_id": str(a.id), "after_id": b["id"]},
         format="json",
@@ -338,7 +357,7 @@ def test_list_move_reorder_and_reparent(env):
     assert [x["name"] for x in listing] == ["Boshlash", "C", "B"]
 
     # sending space_id is a validation error (OQ-2 ruling)
-    bad = env.member_client.patch(
+    bad = env.admin_client.patch(
         f"/api/v1/lists/{c['id']}/move/",
         {"folder_id": None, "space_id": str(env.space.id)},
         format="json",
@@ -346,10 +365,10 @@ def test_list_move_reorder_and_reparent(env):
     assert_error(bad, 400, "validation_error")
 
     # stale neighbours -> 409 position_conflict
-    folder = env.member_client.post(
+    folder = env.admin_client.post(
         f"/api/v1/spaces/{env.space.id}/folders/", {"name": "F"}, format="json"
     ).json()
-    stale = env.member_client.patch(
+    stale = env.admin_client.patch(
         f"/api/v1/lists/{c['id']}/move/",
         {"folder_id": folder["id"], "before_id": b["id"]},  # b is not in the folder
         format="json",
@@ -357,7 +376,7 @@ def test_list_move_reorder_and_reparent(env):
     assert_error(stale, 409, "position_conflict")
 
     # re-parent into the folder
-    reparented = env.member_client.patch(
+    reparented = env.admin_client.patch(
         f"/api/v1/lists/{c['id']}/move/", {"folder_id": folder["id"]}, format="json"
     )
     assert reparented.status_code == 200

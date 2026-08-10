@@ -7,6 +7,7 @@ from django.utils import timezone
 from rest_framework.throttling import SimpleRateThrottle
 
 from apps.accounts.models import User
+from apps.accounts.serializers import token_pair_for
 from apps.core.enums import InvitationStatus, WorkspaceRole
 from apps.workspaces.models import Invitation, Workspace, WorkspaceMember
 from apps.workspaces.services import create_invitation
@@ -598,7 +599,10 @@ def test_readonly_flag_only_removes_permissions(env):
 
     # Mehmon roli yopiq bo'limlarni ko'rmaydi — bayroq buni o'zgartirmaydi.
     assert has_perm(membership, "space.read_private") is False
-    assert has_perm(membership, "member.read") is False  # guest'da yo'q
+    # `member.read` 2026-08 (katalog v4) dan guest'da HAM bor, shuning uchun
+    # "rol bermagan o'qish" namunasi sifatida `invitation.read` olinadi.
+    assert has_perm(membership, "invitation.read") is False  # guest'da yo'q
+    assert has_perm(membership, "member.read") is True  # rol berdi, bayroq emas
 
     codes = my_permissions(membership)
     assert "task.read" in codes
@@ -617,3 +621,41 @@ def test_demo_login_refuses_a_writable_account(api, db):
     """Noto'g'ri sozlama ochiq eshikka aylanmasin: hisob readonly bo'lishi shart."""
     make_user(DEMO_EMAIL)  # is_readonly=False
     assert_error(api.post(DEMO, {}, format="json"), 404, "not_found")
+
+
+def test_readonly_account_is_blocked_on_paths_outside_the_matrix(env):
+    """Fail-closed qulf: ruxsat matritsasidan o'tmaydigan yozish yo'llari ham yopiq.
+
+    AppSec auditi topgan holat — `is_readonly` faqat `has_perm` ichida
+    tekshirilganda parolni almashtirish, workspace'dan chiqish, profilni
+    tahrirlash va workspace yaratish ochiq qolardi. Demo paroli `seed_demo`
+    da ochiq yozilgani uchun bu hisobni butunlay egallab olish demakdi.
+    """
+    env.member.is_readonly = True
+    env.member.save(update_fields=["is_readonly"])
+    client = env.member_client
+
+    blocked = [
+        ("post", PASSWORD_CHANGE, {"current_password": PASSWORD, "new_password": "N3w!passw0rd"}),
+        ("post", f"/api/v1/workspaces/{env.workspace.id}/members/leave/", {}),
+        ("patch", ME, {"full_name": "Buzg'unchi"}),
+        ("post", "/api/v1/workspaces/", {"name": "Spam"}),
+        ("post", "/api/v1/invitations/accept/", {"token": "x"}),
+    ]
+    for method, url, body in blocked:
+        response = getattr(client, method)(url, body, format="json")
+        assert response.status_code == 403, f"{method.upper()} {url} -> {response.status_code}"
+
+    # O'qish buzilmaydi.
+    assert client.get(ME).status_code == 200
+    assert client.get(f"/api/v1/workspaces/{env.workspace.id}/tasks/").status_code == 200
+
+
+def test_readonly_account_may_still_end_its_own_session(env):
+    """Chiqish va token yangilash — sessiyaga tegishli, ma'lumotga emas."""
+    env.member.is_readonly = True
+    env.member.save(update_fields=["is_readonly"])
+    tokens = token_pair_for(env.member)
+
+    client = env.member_client
+    assert client.post(LOGOUT, {"refresh": tokens["refresh"]}, format="json").status_code == 204

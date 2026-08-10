@@ -24,56 +24,62 @@ from apps.core.permissions import (
 EXPECTED_CODE_COUNT = 48
 EXPECTED_GROUP_COUNT = 9
 
-#: AD-9 — §B.7 ko'chirish jadvalidan olingan kutilmalar. Bu jadval bugungi
-#: `min_role=` xatti-harakatini bit-ma-bit takrorlaydi; buzilsa mavjud
-#: testlar ham yiqilishi kerak edi.
-LEGACY_EXPECTATIONS = {
-    # (kod, rol) -> kutilgan default
-    "owner-only (min_role='owner')": {
+#: AD-9 — kutilgan defaultlar (§A jadvali + `API_CONTRACT.md` §1.7).
+#:
+#: **2026-08 siyosati.** Bu jadval endi "eski `min_role=` xatti-harakati" ni
+#: emas, **yangi siyosatni** kodifikatsiya qiladi: `member` — "ko'radi va
+#: o'ziga biriktirilganini bajaradi". Struktura (bo'lim/jild/ro'yxat), begona
+#: vazifani tahrirlash/o'chirish/ko'chirish va teg tahriri admin+ ga o'tdi.
+POLICY_EXPECTATIONS = {
+    # (kod → kutilgan default rollar)
+    "owner-only (defaults bo'sh)": {
         "workspace.update": set(),
         "workspace.delete": set(),
     },
-    "admin+ (min_role='admin')": {
+    "admin+ — boshqaruv va struktura": {
         "member.invite": {"admin"},
         "member.remove": {"admin"},
         "member.role_change": {"admin"},
         "invitation.read": {"admin"},
         "invitation.manage": {"admin"},
+        "space.read_private": {"admin"},
         "space.create": {"admin"},
         "space.update": {"admin"},
         "space.delete": {"admin"},
+        "space.manage_members": {"admin"},
         "space.manage_statuses": {"admin"},
-        "list.manage_statuses": {"admin"},
+        # ↓ 2026-08 da member'dan olib tashlandi
+        "folder.create": {"admin"},
+        "folder.update": {"admin"},
+        "folder.delete": {"admin"},
         "folder.delete_cascade": {"admin"},
+        "list.create": {"admin"},
+        "list.update": {"admin"},
+        "list.delete": {"admin"},
+        "list.move": {"admin"},
+        "list.manage_statuses": {"admin"},
+        "task.update": {"admin"},
+        "task.delete": {"admin"},
+        "task.move": {"admin"},
+        "task.assign": {"admin"},
         "task.restore": {"admin"},
         "task.view_deleted": {"admin"},
         "comment.delete_any": {"admin"},
         "attachment.delete_any": {"admin"},
-        "space.read_private": {"admin"},
-        "space.manage_members": {"admin"},
+        "tag.update": {"admin"},
+        "tag.delete": {"admin"},
     },
-    "member+ (min_role='member')": {
-        "member.read": {"admin", "member"},
-        "folder.create": {"admin", "member"},
-        "folder.update": {"admin", "member"},
-        "folder.delete": {"admin", "member"},
-        "list.create": {"admin", "member"},
-        "list.update": {"admin", "member"},
-        "list.delete": {"admin", "member"},
-        "list.move": {"admin", "member"},
+    "member+ — o'z ishini bajarish": {
         "task.create": {"admin", "member"},
-        "task.update": {"admin", "member"},
-        "task.delete": {"admin", "member"},
-        "task.move": {"admin", "member"},
-        "task.assign": {"admin", "member"},
-        "tag.create": {"admin", "member"},
-        "tag.update": {"admin", "member"},
-        "tag.delete": {"admin", "member"},
         "attachment.create": {"admin", "member"},
         "attachment.delete_own": {"admin", "member"},
+        "tag.create": {"admin", "member"},
     },
-    "guest+ (min_role='guest')": {
+    "guest+ — ko'rish va o'ziga biriktirilgani": {
         "workspace.read": {"admin", "member", "guest"},
+        # 2026-08 (v4): jamoa ro'yxati mehmonga ham ochiq. Emailni
+        # `UserSummarySerializer` maskalaydi (AppSec O-1).
+        "member.read": {"admin", "member", "guest"},
         "space.read": {"admin", "member", "guest"},
         "task.read": {"admin", "member", "guest"},
         "task.update_assigned": {"admin", "member", "guest"},
@@ -83,6 +89,46 @@ LEGACY_EXPECTATIONS = {
         "comment.delete_own": {"admin", "member", "guest"},
         "attachment.read": {"admin", "member", "guest"},
     },
+}
+
+#: `member` ning to'liq va **yakuniy** default to'plami (14 kod). Ro'yxatga
+#: yangi kod qo'shilsa bu test ataylab yiqiladi — siyosat o'zgarishi ko'rinsin.
+MEMBER_DEFAULTS = {
+    "workspace.read",
+    "member.read",
+    "space.read",
+    "task.read",
+    "task.create",
+    "task.update_assigned",
+    "task.watch",
+    "comment.create",
+    "comment.update_own",
+    "comment.delete_own",
+    "attachment.read",
+    "attachment.create",
+    "attachment.delete_own",
+    "tag.create",
+}
+
+#: `member` dan 2026-08 da OLIB TASHLANGAN kodlar.
+MEMBER_REVOKED = {
+    "task.update",
+    "task.delete",
+    "task.move",
+    "task.assign",
+    "folder.create",
+    "folder.update",
+    "folder.delete",
+    "folder.delete_cascade",
+    "list.create",
+    "list.update",
+    "list.delete",
+    "list.move",
+    "tag.update",
+    "tag.delete",
+    "space.create",
+    "space.update",
+    "space.delete",
 }
 
 
@@ -135,18 +181,47 @@ def test_owner_only_codes_have_no_defaults():
         assert PERMISSION_BY_CODE[code].defaults == frozenset()
 
 
-@pytest.mark.parametrize("group_name", sorted(LEGACY_EXPECTATIONS))
-def test_default_matrix_matches_legacy_roles(group_name):
-    """AD-9 — regressiya detektori: defaultlar §1.7 ni bit-ma-bit takrorlaydi."""
-    for code, expected in LEGACY_EXPECTATIONS[group_name].items():
+@pytest.mark.parametrize("group_name", sorted(POLICY_EXPECTATIONS))
+def test_default_matrix_matches_the_documented_policy(group_name):
+    """AD-9 — defaultlar §A jadvali / §1.7 bilan bit-ma-bit mos."""
+    for code, expected in POLICY_EXPECTATIONS[group_name].items():
         assert set(PERMISSION_BY_CODE[code].defaults) == expected, code
 
 
-def test_legacy_expectations_cover_every_code():
+def test_policy_expectations_cover_every_code():
     covered = {
-        code for table in LEGACY_EXPECTATIONS.values() for code in table
+        code for table in POLICY_EXPECTATIONS.values() for code in table
     } | OWNER_ONLY_CODES
     assert covered == ALL_CODES, sorted(ALL_CODES - covered)
+
+
+def test_member_defaults_are_exactly_the_policy_set():
+    """2026-08: member = ko'rish + o'ziga biriktirilgani + fayl/izoh."""
+    assert DEFAULT_MATRIX["member"] == MEMBER_DEFAULTS
+    assert len(DEFAULT_MATRIX["member"]) == 14
+
+
+def test_revoked_codes_left_member_but_stayed_with_admin():
+    for code in sorted(MEMBER_REVOKED):
+        assert code not in DEFAULT_MATRIX["member"], code
+        assert code in DEFAULT_MATRIX["admin"], code
+
+
+def test_admin_and_guest_defaults_are_unchanged():
+    """Talab: admin va guest ustunlariga tegilmadi."""
+    assert len(DEFAULT_MATRIX["admin"]) == len(ALL_CODES) - 4  # 4 kod owner-only/owner
+    assert DEFAULT_MATRIX["guest"] == {
+        "workspace.read",
+        "member.read",
+        "space.read",
+        "task.read",
+        "task.update_assigned",
+        "task.watch",
+        "comment.create",
+        "comment.update_own",
+        "comment.delete_own",
+        "attachment.read",
+    }
 
 
 def test_grouped_catalog_shape():

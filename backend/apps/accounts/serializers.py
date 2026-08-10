@@ -48,11 +48,55 @@ def token_pair_for(user):
 
 
 class UserSummarySerializer(serializers.ModelSerializer):
+    """Har joyda ishlatiladigan qisqa foydalanuvchi obyekti.
+
+    **AppSec O-1 — mehmonga email ko'rsatilmaydi.** `member.read` endi `guest`
+    da ham bor (jamoa ro'yxati hammaga ochiq), lekin mehmon ko'pincha tashqi
+    kontraktor yoki mijoz bo'ladi: roster + assignee + izoh muallifi orqali u
+    bitta so'rovda butun jamoaning ish emaillarini yig'ib olardi — targeted
+    phishing uchun tayyor ro'yxat. Shuning uchun **mehmon uchun begona `email`
+    `null`** bo'ladi (maska emas, `null`: "m***@acme.io" ham domenni va nom
+    uzunligini oshkor qiladi, ya'ni muammoni faqat kichraytirardi).
+
+    Ism, avatar va kasb ochiq qoladi — talab aynan "userlarga boshqa userlar
+    ko'rinsin" edi, va ular phishing uchun email kabi to'g'ridan-to'g'ri
+    foydali emas.
+
+    Qoidalar:
+
+    * chaqiruvchi mehmon **va** obyekt o'zi emas → `email is None`;
+    * chaqiruvchi o'zini ko'rayotgan bo'lsa → o'z emaili doim ko'rinadi;
+    * a'zolik aniqlanmasa (masalan `/me/`, WS broadcast) → maskalanmaydi.
+
+    A'zolikni `apps.core.access.require_membership()` `request.user` ga
+    yozib qo'yadi (`remember_membership`), shuning uchun view'larga qo'shimcha
+    `context` uzatish shart emas. Aniq ko'rsatish kerak bo'lsa
+    `context={"membership": ...}` ustunlik qiladi.
+    """
+
+    email = serializers.SerializerMethodField()
+
     class Meta:
         model = User
         # `profession` — profil yorlig'i, ruxsatga ta'sir qilmaydi (§1).
         fields = ["id", "email", "full_name", "avatar", "avatar_color", "profession"]
         read_only_fields = fields
+
+    def _caller_membership(self):
+        from apps.core.access import current_membership_of
+
+        membership = self.context.get("membership")
+        if membership is not None:
+            return membership
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        return current_membership_of(user) if user is not None else None
+
+    def get_email(self, obj) -> str | None:
+        membership = self._caller_membership()
+        if membership is None or membership.role != WorkspaceRole.GUEST:
+            return obj.email
+        return obj.email if str(membership.user_id) == str(obj.id) else None
 
 
 class UserSerializer(serializers.ModelSerializer):

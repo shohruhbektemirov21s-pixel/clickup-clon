@@ -1,6 +1,6 @@
 from django.urls import path
 
-from apps.workspaces import views
+from apps.workspaces import space_members, views
 
 urlpatterns = [
     # workspaces
@@ -68,6 +68,23 @@ urlpatterns = [
         "spaces/<uuid:space_id>/status-set/",
         views.SpaceStatusSetView.as_view(),
         name="space-status-set",
+    ),
+    # space members (docs/DESIGN_PERMISSIONS.md D.6) — `bulk/` `<uuid:user_id>/`
+    # dan OLDIN kelishi shart, aks holda u hech qachon mos kelmaydi.
+    path(
+        "spaces/<uuid:space_id>/members/",
+        space_members.SpaceMemberListCreateView.as_view(),
+        name="space-member-list",
+    ),
+    path(
+        "spaces/<uuid:space_id>/members/bulk/",
+        space_members.SpaceMemberBulkView.as_view(),
+        name="space-member-bulk",
+    ),
+    path(
+        "spaces/<uuid:space_id>/members/<uuid:user_id>/",
+        space_members.SpaceMemberDetailView.as_view(),
+        name="space-member-detail",
     ),
     # folders
     path(

@@ -40,6 +40,8 @@ export const keys = {
     ["workspace", workspaceId, "my-permissions"] as const,
   rolePermissions: (workspaceId: string) =>
     ["workspace", workspaceId, "role-permissions"] as const,
+  /** Bo'lim jamoasi (§D.6) — `GET spaces/{id}/members/`. */
+  spaceMembers: (spaceId: string) => ["space", spaceId, "members"] as const,
   /** Public taklif ko'rinishi — `/invite/[token]`. */
   invitationLookup: (token: string) => ["invitation-lookup", token] as const,
 };

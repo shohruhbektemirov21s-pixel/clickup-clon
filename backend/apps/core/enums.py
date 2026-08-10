@@ -121,3 +121,8 @@ class ActivityVerb(models.TextChoices):
     COMPLETED = "completed", "Completed"
     DELETED = "deleted", "Deleted"
     RESTORED = "restored", "Restored"
+    # Biriktirma hodisalari — yozuv `apps.tasks.attachments` dan chiqadi
+    # (servis qatlamiga tegmasdan). `attachment_removed` 18 belgi, shuning
+    # uchun `TaskActivity.verb.max_length` 32 ga kengaytirilgan.
+    ATTACHMENT_ADDED = "attachment_added", "Attachment added"
+    ATTACHMENT_REMOVED = "attachment_removed", "Attachment removed"

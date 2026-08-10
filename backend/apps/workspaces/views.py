@@ -266,8 +266,16 @@ def _remove_member(membership):
     SpaceMember.objects.filter(
         user=membership.user, space__workspace=workspace
     ).delete()
+    user_id = membership.user_id
     membership.delete()
     services.refresh_member_count(workspace)
+    # REST endi 404 qaytaradi, lekin ochiq WebSocket soketi a'zolikni faqat
+    # `connect()` da bir marta tekshirgan — xabarsiz u chiqarilgan odamga
+    # `task.*`/`comment.*` freymlarini oqizishda davom etardi. `space_id=None`
+    # ikkala consumer'ni ham (workspace va list) 4403 bilan yopadi.
+    transaction.on_commit(
+        lambda: events.emit_access_revoked(user_id, workspace_id=workspace.id, space_id=None)
+    )
 
 
 ROSTER_RANK = Case(

@@ -11,6 +11,9 @@ import {
   writeTaskEverywhere,
 } from "@/lib/task-cache";
 import type {
+  AddSpaceMemberRequest,
+  BulkSpaceMembersRequest,
+  BulkSpaceMembersResponse,
   Comment,
   CreateCommentRequest,
   GroupedTasksResponse,
@@ -23,6 +26,8 @@ import type {
   ResetRolePermissionsRequest,
   Role,
   RolePermissionMatrix,
+  SpaceAccess,
+  SpaceMember,
   Task,
   TaskAttachment,
   TaskWriteRequest,
@@ -680,5 +685,109 @@ export function useCreateList(workspaceId: string) {
       queryClient.invalidateQueries({ queryKey: keys.tree(workspaceId) });
     },
     onError: (err) => toast.error(errorMessage(err)),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// §D.6 Space members (PM biriktiruvi)
+// ---------------------------------------------------------------------------
+
+/**
+ * Uzbek message for the `last_manager` conflict. The server refuses to leave a
+ * private space without a manager — otherwise nobody could ever add a member
+ * back and the space would lock itself shut.
+ */
+const LAST_MANAGER_MESSAGE =
+  "Bu yopiq bo'limning oxirgi menejeri — avval boshqa menejer tayinlang.";
+
+function spaceMemberError(err: unknown): string {
+  if (isApiError(err)) {
+    if (err.details?.reason === "last_manager") return LAST_MANAGER_MESSAGE;
+    if (err.code === "conflict") return "Bu foydalanuvchi allaqachon bo'lim a'zosi.";
+    const fieldError = err.fieldError("user_id") ?? err.fieldError("remove");
+    if (fieldError) return fieldError;
+  }
+  return errorMessage(err);
+}
+
+/** `POST spaces/{id}/members/` — add one person to the space. */
+export function useAddSpaceMember(spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: AddSpaceMemberRequest) =>
+      api.post<SpaceMember>(`spaces/${spaceId}/members/`, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: keys.spaceMembers(spaceId) });
+      toast.success("Bo'limga qo'shildi");
+    },
+    onError: (err) => toast.error(spaceMemberError(err)),
+  });
+}
+
+/** `PATCH spaces/{id}/members/{userId}/` — change one person's access level. */
+export function useUpdateSpaceMember(spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, access }: { userId: string; access: SpaceAccess }) =>
+      api.patch<SpaceMember>(`spaces/${spaceId}/members/${userId}/`, { access }),
+    onSuccess: (row) => {
+      queryClient.setQueryData<Paginated<SpaceMember>>(
+        keys.spaceMembers(spaceId),
+        (old) =>
+          old
+            ? { ...old, results: old.results.map((m) => (m.id === row.id ? row : m)) }
+            : old,
+      );
+    },
+    onError: (err) => toast.error(spaceMemberError(err)),
+  });
+}
+
+/** `DELETE spaces/{id}/members/{userId}/`. */
+export function useRemoveSpaceMember(spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => api.delete(`spaces/${spaceId}/members/${userId}/`),
+    onSuccess: (_data, userId) => {
+      queryClient.setQueryData<Paginated<SpaceMember>>(
+        keys.spaceMembers(spaceId),
+        (old) =>
+          old
+            ? {
+                ...old,
+                count: Math.max(0, old.count - 1),
+                results: old.results.filter((m) => m.user.id !== userId),
+              }
+            : old,
+      );
+      toast.success("Bo'limdan olib tashlandi");
+    },
+    onError: (err) => toast.error(spaceMemberError(err)),
+  });
+}
+
+/**
+ * `POST spaces/{id}/members/bulk/` — the PM panel's "Saqlash" button.
+ * One transaction on the server: either every change lands or none does, so
+ * the client can safely replace its whole roster with `results`.
+ */
+export function useBulkSpaceMembers(spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: BulkSpaceMembersRequest) =>
+      api.post<BulkSpaceMembersResponse>(`spaces/${spaceId}/members/bulk/`, body),
+    onSuccess: (data) => {
+      queryClient.setQueryData<Paginated<SpaceMember>>(keys.spaceMembers(spaceId), {
+        count: data.results.length,
+        next: null,
+        previous: null,
+        results: data.results,
+      });
+      const parts: string[] = [];
+      if (data.added) parts.push(`${data.added} ta qo'shildi`);
+      if (data.removed) parts.push(`${data.removed} ta olib tashlandi`);
+      toast.success(parts.length ? parts.join(", ") : "O'zgarishlar saqlandi");
+    },
+    onError: (err) => toast.error(spaceMemberError(err)),
   });
 }

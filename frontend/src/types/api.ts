@@ -84,7 +84,12 @@ export interface User {
 /** Embedded everywhere a user appears inside another resource. */
 export interface UserSummary {
   id: string;
-  email: string;
+  /**
+   * Mehmon (`guest`) uchun `null`: jamoa ro'yxati hammaga ochiq, lekin ish
+   * pochtalari yig'ib olinmasin (AppSec O-1, kontrakt §4). O'z emaili doim
+   * ko'rinadi.
+   */
+  email: string | null;
   full_name: string;
   avatar: string | null;
   avatar_color: string;
@@ -458,7 +463,9 @@ export type ActivityVerb =
   | "moved"
   | "completed"
   | "deleted"
-  | "restored";
+  | "restored"
+  | "attachment_added"
+  | "attachment_removed";
 
 /** Task context embedded in a workspace activity row (§10.8). */
 export interface ActivityTaskRef {
@@ -818,4 +825,49 @@ export interface MyPermissions {
   version: number;
   permissions: PermissionCode[];
   spaces: { space_id: string; access: SpaceAccess }[];
+}
+
+// ---------------------------------------------------------------------------
+// §D.6 Space members — PM biriktiruvi
+// ---------------------------------------------------------------------------
+
+/** How a `SpaceMember` row came to exist — the UI shows automatic rows greyed. */
+export type SpaceMemberSource = "manual" | "auto_creator" | "auto_assignee" | "backfill";
+
+/** `GET spaces/{id}/members/` row. */
+export interface SpaceMember {
+  id: string;
+  space_id: string;
+  user: UserSummary;
+  access: SpaceAccess;
+  source: SpaceMemberSource;
+  added_by_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** `POST spaces/{id}/members/` body; also one element of a bulk `add[]`. */
+export interface AddSpaceMemberRequest {
+  user_id: string;
+  access: SpaceAccess;
+}
+
+/** `POST spaces/{id}/members/bulk/` — one transaction, no partial success. */
+export interface BulkSpaceMembersRequest {
+  add: AddSpaceMemberRequest[];
+  /** `user_id`s to drop from the space. */
+  remove: string[];
+}
+
+/** `results` is the space's **full** roster after the transaction. */
+export interface BulkSpaceMembersResponse {
+  added: number;
+  removed: number;
+  results: SpaceMember[];
+}
+
+/** `access.revoked` payload data (§18.6). `space_id: null` = whole workspace. */
+export interface WsAccessRevokedData {
+  workspace_id: string;
+  space_id: string | null;
 }

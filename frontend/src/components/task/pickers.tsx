@@ -186,7 +186,7 @@ export function AvatarStack({ users, max = 3 }: { users: UserSummary[]; max?: nu
             className="text-[10px] font-semibold text-primary-foreground"
             style={{ backgroundColor: u.avatar_color || "#7B68EE" }}
           >
-            {initials(u.full_name, u.email)}
+            {initials(u.full_name, u.email ?? undefined)}
           </AvatarFallback>
         </Avatar>
       ))}
@@ -266,7 +266,7 @@ export function AssigneePicker({
                         className="text-[9px] font-semibold text-primary-foreground"
                         style={{ backgroundColor: member.user.avatar_color || "#7B68EE" }}
                       >
-                        {initials(member.user.full_name, member.user.email)}
+                        {initials(member.user.full_name, member.user.email ?? undefined)}
                       </AvatarFallback>
                     </Avatar>
                     <span className="flex min-w-0 flex-col">

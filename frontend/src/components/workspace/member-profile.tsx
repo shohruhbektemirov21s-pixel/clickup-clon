@@ -12,6 +12,7 @@ import {
   CircleAlert,
   CircleCheck,
   CircleDot,
+  Paperclip,
   Flag,
   FolderOpen,
   ListChecks,
@@ -66,6 +67,8 @@ const VERB_ICON: Record<
   completed: { icon: CircleCheck, tone: "text-brand-green" },
   deleted: { icon: Trash2, tone: "text-danger" },
   restored: { icon: RotateCcw },
+  attachment_added: { icon: Paperclip },
+  attachment_removed: { icon: Trash2, tone: "text-danger" },
 };
 
 /** Priority is stored as the English enum value; show the Uzbek label. */
@@ -147,6 +150,20 @@ function activitySentence(row: WorkspaceActivity, title: React.ReactNode): React
       );
     case "deleted":
       return <>{quoted} vazifasini o&apos;chirdi</>;
+    case "attachment_added":
+      return (
+        <>
+          {quoted} vazifasiga <strong className="font-medium">{row.to_value}</strong>{" "}
+          faylini biriktirdi
+        </>
+      );
+    case "attachment_removed":
+      return (
+        <>
+          {quoted} vazifasidan <strong className="font-medium">{row.from_value}</strong>{" "}
+          faylini o&apos;chirdi
+        </>
+      );
     case "restored":
       return <>{quoted} vazifasini tikladi</>;
     default:
@@ -201,7 +218,8 @@ export function MemberProfile({
   }
 
   const { user, role, joined_at, last_active_at, stats, spaces } = profile.data;
-  const name = user.full_name || user.email;
+  // Mehmonga email `null` keladi (§4) — ism har doim to'ldirilgan.
+  const name = user.full_name || user.email || "Foydalanuvchi";
   const isMe = me?.id === user.id;
 
   return (
@@ -225,7 +243,7 @@ export function MemberProfile({
               className="text-lg font-semibold text-primary-foreground"
               style={{ backgroundColor: user.avatar_color || "#7B68EE" }}
             >
-              {initials(user.full_name, user.email)}
+              {initials(user.full_name, user.email ?? undefined)}
             </AvatarFallback>
           </Avatar>
           <div className="min-w-0 flex-1">

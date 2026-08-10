@@ -9,7 +9,13 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from apps.accounts.models import User
-from apps.core.enums import ActivityVerb, StatusType, WatcherSource
+from apps.core.enums import (
+    ActivityVerb,
+    SpaceAccess,
+    SpaceMemberSource,
+    StatusType,
+    WatcherSource,
+)
 from apps.core.exceptions import Conflict, InvalidStatusForList, PositionConflict
 from apps.core.ordering import MAX_LEN_BEFORE_REBALANCE, evenly_spaced, midstring
 from apps.realtime import events
@@ -23,7 +29,7 @@ from apps.tasks.models import (
     TaskWatcher,
 )
 from apps.workspaces.models import Status, TaskList, WorkspaceMember
-from apps.workspaces.services import check_client_id, refresh_list_counts
+from apps.workspaces.services import check_client_id, ensure_space_member, refresh_list_counts
 
 
 def _effective_set(task_list):
@@ -113,6 +119,41 @@ def add_watcher(task, user, source):
     return created
 
 
+def _grant_assignee_space_access(space, users, actor):
+    """AD-7 — biriktirilgan odam o'z ishini KO'RA olishi shart.
+
+    Yopiq bo'limda `SpaceMember` qatorisiz vazifa unga `404` bo'lardi, shuning
+    uchun qator avtomatik yaratiladi (`source=auto_assignee`, migratsiya 0004
+    dagi backfill qoidasi bilan bir xil).
+
+    **Nega faqat ko'rmayotganlarga?** `viewer` §B.5 bo'yicha "eng past huquq
+    g'olib": qator bo'lim ichidagi HAR QANDAY yozishni kesadi. Uni bo'limni
+    allaqachon ko'rayotgan odamga yozish AD-7 ni maqsadiga qarshi ishlatgan
+    bo'lardi — o'ziga biriktirilgan vazifani tahrirlay olmay qolardi
+    (`task.update_assigned` → 403). Shuning uchun grant faqat kirish
+    YETISHMAYOTGAN odamga beriladi: u yutadi, hech kim yo'qotmaydi.
+    """
+    from apps.core.access import space_is_visible
+
+    if not users:
+        return
+    memberships = WorkspaceMember.objects.select_related("user", "workspace").filter(
+        workspace_id=space.workspace_id, user_id__in=[u.id for u in users]
+    )
+    for membership in memberships:
+        # `space_is_visible` mavjud `SpaceMember` qatorini ham hisobga oladi,
+        # ya'ni bu tekshiruv idempotentlikni ham ta'minlaydi.
+        if space_is_visible(membership, space):
+            continue
+        ensure_space_member(
+            space,
+            membership.user,
+            access=SpaceAccess.VIEWER,
+            source=SpaceMemberSource.AUTO_ASSIGNEE,
+            added_by=actor,
+        )
+
+
 def _set_assignees(task, assignee_ids, actor):
     """Returns (added, removed) User rows so the caller can log the history."""
     wanted = [uuid.UUID(str(a)) for a in assignee_ids]
@@ -128,6 +169,7 @@ def _set_assignees(task, assignee_ids, actor):
         TaskWatcher.objects.get_or_create(
             task=task, user_id=user_id, defaults={"source": WatcherSource.AUTO_ASSIGNEE}
         )
+    _grant_assignee_space_access(task.list.space, [users[u] for u in to_add if u in users], actor)
     added = [users[u] for u in to_add if u in users]
     removed = [users[u] for u in to_remove if u in users]
     return added, removed

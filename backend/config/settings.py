@@ -37,6 +37,10 @@ env = environ.Env(
     AVATAR_THROTTLE_RATE=(str, "10/hour"),
     ATTACHMENT_THROTTLE_RATE=(str, "30/hour"),
     COMMENT_THROTTLE_RATE=(str, "60/min"),
+    # WS handshake chiptasi (§15.1). Har qayta ulanish bitta chipta yoqadi, va
+    # backoff 1s->30s bo'lgani uchun 60/min sog'lom klient uchun keng, chipta
+    # zaxirasini yig'moqchi bo'lgan hisob uchun esa tor.
+    REALTIME_TICKET_THROTTLE_RATE=(str, "60/min"),
     # Vazifa biriktirmasining maksimal hajmi (MB) — §10.7.
     MAX_ATTACHMENT_MB=(int, 10),
     DEMO_THROTTLE_RATE=(str, "10/hour"),
@@ -215,7 +219,13 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
-    "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
+    "DEFAULT_PERMISSION_CLASSES": (
+        "rest_framework.permissions.IsAuthenticated",
+        # Faqat o'qish hisoblari uchun fail-closed yozish qulfi. Ruxsat
+        # matritsasi bu yo'llarning hammasini qamramaydi — izohni
+        # `apps/core/drf_permissions.py` da o'qing.
+        "apps.core.drf_permissions.BlockReadonlyAccountWrites",
+    ),
     "DEFAULT_FILTER_BACKENDS": (
         "django_filters.rest_framework.DjangoFilterBackend",
         "rest_framework.filters.SearchFilter",
@@ -239,6 +249,7 @@ REST_FRAMEWORK = {
         "avatar": env("AVATAR_THROTTLE_RATE"),
         "attachment": env("ATTACHMENT_THROTTLE_RATE"),
         "comments": env("COMMENT_THROTTLE_RATE"),
+        "realtime_ticket": env("REALTIME_TICKET_THROTTLE_RATE"),
         "demo": env("DEMO_THROTTLE_RATE"),
     },
 }

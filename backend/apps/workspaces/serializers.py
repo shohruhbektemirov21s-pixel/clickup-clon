@@ -1,7 +1,13 @@
 from rest_framework import serializers
 
 from apps.accounts.serializers import UserSummarySerializer
-from apps.core.enums import AssignableRole, InvitationRole, InvitationStatus, StatusType
+from apps.core.enums import (
+    AssignableRole,
+    InvitationRole,
+    InvitationStatus,
+    SpaceAccess,
+    StatusType,
+)
 from apps.workspaces.models import (
     Folder,
     Invitation,
@@ -340,3 +346,50 @@ class SpaceMemberSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = fields
+
+
+class AddSpaceMemberSerializer(serializers.Serializer):
+    """`POST spaces/{id}/members/` va bulk `add[]` elementi (§D.6).
+
+    `access` berilmasa `contributor` — ya'ni odam bo'lim ichida o'z workspace
+    roli bo'yicha ishlaydi, na ko'proq na kamroq.
+    """
+
+    user_id = serializers.UUIDField()
+    access = serializers.ChoiceField(
+        choices=SpaceAccess.choices, required=False, default=SpaceAccess.CONTRIBUTOR
+    )
+
+
+class UpdateSpaceMemberSerializer(serializers.Serializer):
+    """`PATCH spaces/{id}/members/{user_id}/` — faqat `access` o'zgaradi."""
+
+    access = serializers.ChoiceField(choices=SpaceAccess.choices)
+
+
+class BulkSpaceMembersSerializer(serializers.Serializer):
+    """`POST spaces/{id}/members/bulk/` — bitta tranzaksiya, qisman muvaffaqiyat yo'q.
+
+    `add` upsert semantikasi bilan ishlaydi (PM panelidagi "saqlash" tugmasi
+    bir vaqtda yangi odam qo'shadi va mavjudlarining darajasini o'zgartiradi),
+    `remove` esa faqat `user_id` ro'yxati.
+    """
+
+    add = AddSpaceMemberSerializer(many=True, required=False, default=list)
+    remove = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
+
+    def validate(self, attrs):
+        add_ids = [str(row["user_id"]) for row in attrs.get("add") or []]
+        remove_ids = [str(uid) for uid in attrs.get("remove") or []]
+        if len(set(add_ids)) != len(add_ids):
+            raise serializers.ValidationError({"add": ["Takroriy `user_id` yuborildi."]})
+        if len(set(remove_ids)) != len(remove_ids):
+            raise serializers.ValidationError({"remove": ["Takroriy `user_id` yuborildi."]})
+        overlap = set(add_ids) & set(remove_ids)
+        if overlap:
+            raise serializers.ValidationError(
+                {"remove": [f"Bir foydalanuvchi ham qo'shilib ham olib tashlanmaydi: {', '.join(sorted(overlap))}."]}
+            )
+        if not add_ids and not remove_ids:
+            raise serializers.ValidationError("`add` yoki `remove` dan biri bo'sh bo'lmasligi kerak.")
+        return attrs

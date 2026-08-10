@@ -161,7 +161,22 @@ def test_outsider_gets_404_not_403(env):
     assert_error(response, 404, "not_found")
 
 
+def test_guest_reads_profiles_by_default(env):
+    """2026-08 (katalog v4): `member.read` endi guest'da ham default."""
+    response = env.guest_client.get(profile_url(env.workspace.id, env.owner.id))
+    assert response.status_code == 200, response.content
+
+
 def test_guest_without_member_read_is_403(env):
+    """Matritsadan `member.read` olib tashlansa — profil yana 403 bo'ladi."""
+    RolePermission.objects.update_or_create(
+        workspace=env.workspace,
+        role="guest",
+        permission="member.read",
+        defaults={"allowed": False},
+    )
+    bump_permissions_version(env.workspace)
+
     response = env.guest_client.get(profile_url(env.workspace.id, env.owner.id))
     assert_error(response, 403, "permission_denied")
 

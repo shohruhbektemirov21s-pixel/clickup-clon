@@ -17,7 +17,7 @@
 | **AD-4** | Cache kaliti `wsperm:{workspace_id}:{workspace.permissions_version}`. | Invalidatsiya bir zumda, cross-process, qo'shimcha querysiz. |
 | **AD-5** | Matritsa **monoton**: `guest ⊆ member ⊆ admin ⊆ owner`. Buzilsa `400`. | Kontraktdagi rol modelini saqlaydi. |
 | **AD-6** | PM/loyiha biriktiruvi `SpaceMember` jadvali orqali (DATA_MODEL D8 bekor). | Talab: PM loyihaga odam biriktiradi. |
-| **AD-7** | Task'ga assign qilinganda avtomatik `SpaceMember(access=viewer, source=auto_assignee)`. | "Oddiy user o'ziga berilgan tasklarni boshidanoq ko'radi". |
+| **AD-7** *(v1.3.0 da tuzatildi)* | Task'ga assign qilinganda `SpaceMember(access=viewer, source=auto_assignee)` **faqat bo'limni hali ko'ra olmaydigan** foydalanuvchi uchun yaratiladi. | "Oddiy user o'ziga berilgan tasklarni boshidanoq ko'radi". **Shartsiz yozish xato edi:** §B.5 bo'yicha `viewer` eng past huquq va workspace rolidan ustun turadi, ya'ni ochiq bo'limda vazifa biriktirilgan mehmon yoki admin o'sha vazifani tahrirlay olmay qolardi (`task.update_assigned` → 403). Endi qator faqat **ko'rinish qo'shadi**, hech qachon vakolat olib qo'ymaydi — migratsiya 0004 backfill qoidasi bilan bir xil. |
 | **AD-8** | `ROLE_RANK` **o'chirilmaydi** — roster tartibi, monotonlik, rol-o'zgartirish vakolati, oxirgi-owner qoidalari uchun qoladi. | Xavfsizlik invariantlari matritsa orqali buzilmasin. |
 | **AD-9** | `DEFAULT_MATRIX` bugungi `API_CONTRACT.md §1.7` xatti-harakatini **bit-ma-bit** takrorlaydi. | Mavjud testlar o'zgarishsiz o'tishi — regressiya detektori. |
 
@@ -43,6 +43,41 @@ class PermissionDef:
 
 **O**=owner (doim ✔, lock), **A**=admin, **M**=member, **G**=guest — bular **default**.
 
+> **2026-08 siyosati (katalog v3, BINDING).** `member` ustuni qisqartirildi:
+> a'zo **ko'radi va o'ziga biriktirilganini bajaradi**. `member` dan olib
+> tashlangan kodlar: `task.update`, `task.delete`, `task.move`, `task.assign`,
+> `folder.create/update/delete`, `list.create/update/delete/move`,
+> `tag.update`, `tag.delete`. `member` da qolganlari (14 kod):
+> `workspace.read`, `member.read`, `space.read`, `task.read`, `task.create`,
+> `task.update_assigned`, `task.watch`, `comment.create`,
+> `comment.update_own`, `comment.delete_own`, `attachment.read`,
+> `attachment.create`, `attachment.delete_own`, `tag.create`.
+> `admin`, `guest` va `owner` ustunlariga **tegilmadi**. Monotonlik saqlanadi:
+> guest (9) ⊆ member (14) ⊆ admin (44) ⊆ owner (48).
+>
+> **"Loyiha menejeri" alohida workspace roli emas.** U bo'lim darajasidagi
+> `SpaceAccess.MANAGER` (`SPACE_MANAGER_GRANTS`, §B.5/§F-5) — yuqorida olib
+> tashlangan kodlar PM ga **faqat o'z bo'limi ichida** lokal qaytariladi.
+> `space.delete`, `member.*`, `workspace.*`, `tag.*` PM ga hech qachon o'tmaydi.
+> CI: `apps/core/tests/test_permission_policy.py`.
+>
+> **2026-08 (katalog v4) — jamoa ko'rinishi.** `member.read` `guest` ga ham
+> berildi: a'zolar ro'yxati (`GET workspaces/{id}/members/`) va a'zo profili
+> (`members/{uid}/profile/`) endi **hamma** rollarga ochiq. Guest 9 → **10**
+> kod; monotonlik saqlanadi (yuqori rollarda kod allaqachon bor edi).
+>
+> **Bunga bog'liq majburiy himoya (AppSec O-1).**
+> `apps.accounts.serializers.UserSummarySerializer` mehmonga **begona `email`
+> o'rniga `null`** qaytaradi (o'z emaili ko'rinadi). Sabab: mehmon ko'pincha
+> tashqi kontraktor/mijoz — roster + assignee + izoh muallifi orqali u bitta
+> so'rovda butun jamoaning ish emaillarini yig'ib olardi (targeted phishing
+> uchun tayyor ro'yxat). Kontrakt §1.7 rosterni aynan shu sababdan yopgan edi,
+> shuning uchun rosterni ochishda himoya serializer qatlamiga ko'chirildi.
+> Chaqiruvchining roli `require_membership()` `request.user` ga yozib
+> qo'yadigan `_current_membership` orqali olinadi (`remember_membership`) —
+> har bir view'ga `context` uzatish shart emas, ya'ni "bitta joyni unutdim →
+> email sizdi" xatosi tuzilmaviy ravishda mumkin emas.
+
 ### Guruh `workspace` — Ish maydoni
 | Kod | Tavsif | O | A | M | G | Flag |
 |---|---|:-:|:-:|:-:|:-:|---|
@@ -55,7 +90,7 @@ class PermissionDef:
 ### Guruh `member` — A'zolar va takliflar
 | Kod | Tavsif | O | A | M | G |
 |---|---|:-:|:-:|:-:|:-:|
-| `member.read` | A'zolar ro'yxati | ✔ | ✔ | ✔ | ✕ |
+| `member.read` | A'zolar ro'yxati va profillari | ✔ | ✔ | ✔ | ✔ |
 | `member.invite` | Taklif yuborish | ✔ | ✔ | ✕ | ✕ |
 | `member.remove` | A'zoni chiqarish | ✔ | ✔ | ✕ | ✕ |
 | `member.role_change` | Rolni o'zgartirish | ✔ | ✔ | ✕ | ✕ |
@@ -76,18 +111,18 @@ class PermissionDef:
 ### Guruh `folder` — Jildlar
 | Kod | O | A | M | G |
 |---|:-:|:-:|:-:|:-:|
-| `folder.create` | ✔ | ✔ | ✔ | ✕ |
-| `folder.update` | ✔ | ✔ | ✔ | ✕ |
-| `folder.delete` (`?strategy=detach`) | ✔ | ✔ | ✔ | ✕ |
+| `folder.create` | ✔ | ✔ | ✕ | ✕ |
+| `folder.update` | ✔ | ✔ | ✕ | ✕ |
+| `folder.delete` (`?strategy=detach`) | ✔ | ✔ | ✕ | ✕ |
 | `folder.delete_cascade` (`?strategy=cascade`) | ✔ | ✔ | ✕ | ✕ |
 
 ### Guruh `list` — Ro'yxatlar
 | Kod | O | A | M | G |
 |---|:-:|:-:|:-:|:-:|
-| `list.create` | ✔ | ✔ | ✔ | ✕ |
-| `list.update` | ✔ | ✔ | ✔ | ✕ |
-| `list.delete` | ✔ | ✔ | ✔ | ✕ |
-| `list.move` | ✔ | ✔ | ✔ | ✕ |
+| `list.create` | ✔ | ✔ | ✕ | ✕ |
+| `list.update` | ✔ | ✔ | ✕ | ✕ |
+| `list.delete` | ✔ | ✔ | ✕ | ✕ |
+| `list.move` | ✔ | ✔ | ✕ | ✕ |
 | `list.manage_statuses` | ✔ | ✔ | ✕ | ✕ |
 
 ### Guruh `task` — Vazifalar
@@ -95,11 +130,11 @@ class PermissionDef:
 |---|---|:-:|:-:|:-:|:-:|
 | `task.read` | Vazifalarni o'qish | ✔ | ✔ | ✔ | ✔ |
 | `task.create` | Vazifa yaratish | ✔ | ✔ | ✔ | ✕ |
-| `task.update` | **Har qanday** vazifani tahrirlash | ✔ | ✔ | ✔ | ✕ |
+| `task.update` | **Har qanday** vazifani tahrirlash | ✔ | ✔ | ✕ | ✕ |
 | `task.update_assigned` | **Faqat o'ziga biriktirilganini** tahrirlash/ko'chirish | ✔ | ✔ | ✔ | ✔ |
-| `task.delete` | Soft delete | ✔ | ✔ | ✔ | ✕ |
-| `task.move` | Har qanday vazifani ko'chirish | ✔ | ✔ | ✔ | ✕ |
-| `task.assign` | `assignee_ids` o'zgartirish | ✔ | ✔ | ✔ | ✕ |
+| `task.delete` | Soft delete | ✔ | ✔ | ✕ | ✕ |
+| `task.move` | Har qanday vazifani ko'chirish | ✔ | ✔ | ✕ | ✕ |
+| `task.assign` | `assignee_ids` o'zgartirish | ✔ | ✔ | ✕ | ✕ |
 | `task.watch` | Kuzatuvchi bo'lish | ✔ | ✔ | ✔ | ✔ |
 | `task.restore` | Tiklash | ✔ | ✔ | ✕ | ✕ |
 | `task.view_deleted` | `?include_deleted=true` | ✔ | ✔ | ✕ | ✕ |
@@ -120,10 +155,10 @@ class PermissionDef:
 | Kod | O | A | M | G |
 |---|:-:|:-:|:-:|:-:|
 | `tag.create` | ✔ | ✔ | ✔ | ✕ |
-| `tag.update` | ✔ | ✔ | ✔ | ✕ |
-| `tag.delete` | ✔ | ✔ | ✔ | ✕ |
+| `tag.update` | ✔ | ✔ | ✕ | ✕ |
+| `tag.delete` | ✔ | ✔ | ✕ | ✕ |
 
-**Jami: 44 kod, 8 guruh.** Defaultlar monotonlik shartini qanoatlantiradi — CI testi `test_default_matrix_is_monotonic` tekshiradi.
+**Jami: 48 kod, 9 guruh** (v2 da `attachment` guruhi qo'shilgan). Defaultlar monotonlik shartini qanoatlantiradi — CI testi `test_default_matrix_is_monotonic` tekshiradi; aniq ro'yxatni `test_member_defaults_are_exactly_the_policy_set` qulflaydi.
 
 ---
 

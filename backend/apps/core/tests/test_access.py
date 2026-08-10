@@ -57,7 +57,19 @@ def test_effective_permissions_matches_defaults(env):
 @pytest.mark.parametrize(
     "role_attr,code,expected",
     [
-        ("member", "list.create", True),
+        # 2026-08 siyosati: member ko'radi + o'ziga biriktirilganini bajaradi.
+        ("member", "task.read", True),
+        ("member", "task.create", True),
+        ("member", "task.update_assigned", True),
+        ("member", "attachment.create", True),
+        ("member", "tag.create", True),
+        ("member", "task.update", False),
+        ("member", "task.delete", False),
+        ("member", "task.move", False),
+        ("member", "task.assign", False),
+        ("member", "list.create", False),
+        ("member", "folder.create", False),
+        ("member", "tag.delete", False),
         ("member", "space.create", False),
         ("guest", "comment.create", True),
         ("guest", "task.create", False),
@@ -108,23 +120,25 @@ def test_require_membership_perm_is_404_before_403(env):
 def test_permission_revocation_is_immediate(env):
     """R3 merge gate: version bump → keyingi o'qish darhol yangi natija."""
     member = membership(env, env.member)
-    assert has_perm(member, "list.create") is True
+    # `list.create` endi member'da yo'q — bekor qilinadigan kod sifatida
+    # member'da haqiqatan mavjud bo'lgan `task.create` ishlatiladi.
+    assert has_perm(member, "task.create") is True
 
     RolePermission.objects.filter(
-        workspace=env.workspace, role="member", permission="list.create"
+        workspace=env.workspace, role="member", permission="task.create"
     ).update(allowed=False)
     bump_permissions_version(env.workspace)
 
     # Yangi membership obyekti = yangi request simulyatsiyasi.
     fresh = membership(env, env.member)
-    assert has_perm(fresh, "list.create") is False
+    assert has_perm(fresh, "task.create") is False
 
 
 def test_stale_version_key_is_never_read(env):
     member = membership(env, env.member)
     before = effective_permissions(member.workspace)
     RolePermission.objects.filter(
-        workspace=env.workspace, role="member", permission="task.delete"
+        workspace=env.workspace, role="member", permission="task.create"
     ).update(allowed=False)
     # Bump qilmasak — eski kalit, eski natija (kesh ishlayotganining isboti).
     assert effective_permissions(member.workspace) == before
@@ -132,7 +146,7 @@ def test_stale_version_key_is_never_read(env):
     after = effective_permissions(
         WorkspaceMember.objects.select_related("workspace").get(pk=member.pk).workspace
     )
-    assert "task.delete" not in after["member"]
+    assert "task.create" not in after["member"]
 
 
 def test_cache_hit_costs_no_queries(env, django_assert_num_queries):
@@ -197,7 +211,10 @@ def test_space_viewer_loses_every_write(env, private_space):
         space=private_space, user=env.member, access=SpaceAccess.VIEWER
     )
     assert has_space_perm(member, private_space, "task.read") is True
-    for code in ("task.create", "list.create", "comment.create", "folder.create"):
+    # Faqat member'da HAQIQATAN mavjud yozish kodlari — aks holda test
+    # viewer kesuvini emas, rol defaultini tekshirgan bo'lardi.
+    for code in ("task.create", "comment.create", "attachment.create"):
+        assert has_perm(member, code) is True, code
         assert has_space_perm(member, private_space, code) is False, code
     with pytest.raises(PermissionDenied):
         require_space_perm(member, private_space, "task.create")
