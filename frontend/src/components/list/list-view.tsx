@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useGroupedTasks, useMembers, useTags } from "@/hooks/queries";
-import { useListPermissions } from "@/components/list/use-list-permissions";
 import { useCreateTask, useUpdateTask } from "@/hooks/mutations";
 import { TaskActionsMenu } from "@/components/task/task-actions-menu";
 import { resolveAssignees, resolveTags } from "@/lib/resolve-embedded";
@@ -19,7 +18,6 @@ import {
   TagPicker,
 } from "@/components/task/pickers";
 import type { Status, Task } from "@/types/api";
-import type { ListPermissions } from "@/components/list/use-list-permissions";
 import { cn } from "@/lib/utils";
 
 export function ListView({
@@ -33,12 +31,9 @@ export function ListView({
   listId: string;
   statuses: Status[];
   onOpenTask: (taskId: string) => void;
-  /** Tashqi qo'pol darvoza (masalan arxivlangan ro'yxat). Haqiqiy qaror
-   * `useListPermissions` ichida — rol emas, ruxsat kodlari bo'yicha. */
   canEdit: boolean;
 }) {
   const { data, isPending, isError, refetch } = useGroupedTasks(listId);
-  const perms = useListPermissions(workspaceId, canEdit);
 
   if (isPending) return <ListSkeleton />;
   if (isError) {
@@ -59,7 +54,7 @@ export function ListView({
   return (
     <div className="flex-1 overflow-y-auto px-4 py-3">
       {total === 0 && orderedStatuses.length === 0 ? (
-        <EmptyState canEdit={perms.canCreate} />
+        <EmptyState canEdit={canEdit} />
       ) : (
         orderedStatuses.map((status) => (
           <StatusGroup
@@ -71,7 +66,7 @@ export function ListView({
             tasks={groupsByStatus.get(status.id)?.results ?? []}
             count={groupsByStatus.get(status.id)?.count ?? 0}
             onOpenTask={onOpenTask}
-            perms={perms}
+            canEdit={canEdit}
           />
         ))
       )}
@@ -100,7 +95,7 @@ function StatusGroup({
   tasks,
   count,
   onOpenTask,
-  perms,
+  canEdit,
 }: {
   workspaceId: string;
   listId: string;
@@ -109,7 +104,7 @@ function StatusGroup({
   tasks: Task[];
   count: number;
   onOpenTask: (taskId: string) => void;
-  perms: ListPermissions;
+  canEdit: boolean;
 }) {
   const [collapsed, setCollapsed] = React.useState(false);
   const [composing, setComposing] = React.useState(false);
@@ -133,7 +128,7 @@ function StatusGroup({
           </span>
           <span className="text-xs text-muted-foreground">{count}</span>
         </button>
-        {perms.canCreate && !collapsed ? (
+        {canEdit && !collapsed ? (
           <Button
             variant="ghost"
             size="xs"
@@ -166,11 +161,11 @@ function StatusGroup({
                 task={task}
                 statuses={statuses}
                 onOpen={() => onOpenTask(task.id)}
-                canEdit={perms.canEditTask(task)}
+                canEdit={canEdit}
               />
             ))
           )}
-          {perms.canCreate ? (
+          {canEdit ? (
             composing ? (
               <InlineComposer
                 listId={listId}
