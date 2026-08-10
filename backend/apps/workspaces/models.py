@@ -9,7 +9,15 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models.functions import Lower
 
-from apps.core.enums import InvitationRole, InvitationStatus, StatusType, WorkspaceRole
+from apps.core.enums import (
+    AssignableRole,
+    InvitationRole,
+    InvitationStatus,
+    SpaceAccess,
+    SpaceMemberSource,
+    StatusType,
+    WorkspaceRole,
+)
 from apps.core.models import HEX_COLOR, PositionedModel, TimeStampedModel, UUIDModel
 
 
@@ -34,6 +42,10 @@ class Workspace(UUIDModel, TimeStampedModel):
     )
 
     member_count = models.PositiveIntegerField(default=0)  # denormalised
+
+    # docs/DESIGN_PERMISSIONS.md AD-4/§B.2 — ruxsat keshi kalitining bir qismi.
+    # Matritsa har o'zgarganda `bump_permissions_version()` uni F()+1 qiladi.
+    permissions_version = models.PositiveIntegerField(default=1, editable=False)
 
     class Meta:
         db_table = "workspaces"
@@ -80,6 +92,54 @@ class WorkspaceMember(UUIDModel, TimeStampedModel):
 
     def __str__(self):
         return f"{self.user} in {self.workspace} ({self.role})"
+
+
+class RolePermission(UUIDModel, TimeStampedModel):
+    """Bir workspace uchun rol → ruxsat granti (docs/DESIGN_PERMISSIONS.md §B.3).
+
+    AD-1: `permission` — katalog kodi, FK EMAS (katalog kodda yashaydi).
+    AD-2: qator yo'q bo'lsa `DEFAULT_MATRIX` ga qaytadi, shuning uchun yangi
+    katalog kodlari backfillsiz ishlaydi.
+    AD-3: `owner` bu jadvalga hech qachon tushmaydi — DB constraint bilan.
+    """
+
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.CASCADE, related_name="role_permissions"
+    )
+    role = models.CharField(max_length=10, choices=AssignableRole.choices, db_index=True)
+    permission = models.CharField(max_length=64, db_index=True)  # katalog kodi
+    allowed = models.BooleanField(default=False)
+    updated_by = models.ForeignKey(
+        "accounts.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+
+    class Meta:
+        db_table = "workspace_role_permissions"
+        ordering = ["role", "permission"]
+        verbose_name = "rol ruxsati"
+        verbose_name_plural = "rol ruxsatlari"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "role", "permission"],
+                name="uniq_role_permission_per_workspace",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(role="owner"), name="role_permission_never_owner"
+            ),
+        ]
+        indexes = [models.Index(fields=["workspace", "role"], name="idx_roleperm_ws_role")]
+
+    def __str__(self):
+        return f"{self.role}:{self.permission}={'✔' if self.allowed else '✕'}"
+
+    def clean(self):
+        from apps.core.permissions import PERMISSION_BY_CODE
+
+        definition = PERMISSION_BY_CODE.get(self.permission)
+        if definition is None:
+            raise ValidationError({"permission": "Noma'lum ruxsat kodi."})
+        if definition.owner_only and self.allowed:
+            raise ValidationError({"permission": "Bu ruxsat faqat owner uchun."})
 
 
 class Invitation(UUIDModel, TimeStampedModel):
@@ -173,6 +233,50 @@ class Space(UUIDModel, TimeStampedModel, PositionedModel):
 
     def __str__(self):
         return self.name
+
+
+class SpaceMember(UUIDModel, TimeStampedModel):
+    """Bo'limga biriktirilgan foydalanuvchi (docs/DESIGN_PERMISSIONS.md §B.4).
+
+    AD-6: PM/loyiha biriktiruvi shu jadval orqali (DATA_MODEL D8 bekor).
+
+    Invariant: `user` shu space'ning workspace'ida `WorkspaceMember` bo'lishi
+    shart — servis qatlamida tekshiriladi; `_remove_member()` workspace'dan
+    chiqarishda space qatorlarini ham o'chiradi.
+    """
+
+    space = models.ForeignKey(Space, on_delete=models.CASCADE, related_name="space_members")
+    user = models.ForeignKey(
+        "accounts.User", on_delete=models.CASCADE, related_name="space_memberships"
+    )
+    access = models.CharField(
+        max_length=12,
+        choices=SpaceAccess.choices,
+        default=SpaceAccess.CONTRIBUTOR,
+        db_index=True,
+    )
+    source = models.CharField(
+        max_length=14, choices=SpaceMemberSource.choices, default=SpaceMemberSource.MANUAL
+    )
+    added_by = models.ForeignKey(
+        "accounts.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+
+    class Meta:
+        db_table = "space_members"
+        ordering = ["access", "user__email"]
+        verbose_name = "bo'lim a'zosi"
+        verbose_name_plural = "bo'lim a'zolari"
+        constraints = [
+            models.UniqueConstraint(fields=["space", "user"], name="uniq_space_member")
+        ]
+        indexes = [
+            models.Index(fields=["user", "space"], name="idx_spacemember_user_space"),
+            models.Index(fields=["space", "access"], name="idx_spacemember_space_access"),
+        ]
+
+    def __str__(self):
+        return f"{self.user} in {self.space} ({self.access})"
 
 
 class Folder(UUIDModel, TimeStampedModel, PositionedModel):

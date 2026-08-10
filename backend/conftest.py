@@ -21,6 +21,20 @@ def client_for(user):
     return client
 
 
+@pytest.fixture(autouse=True)
+def _reset_permission_cache():
+    """docs/DESIGN_PERMISSIONS.md R3 — permission cache never leaks across tests."""
+    from django.core.cache import cache
+
+    from apps.core.access import clear_permission_cache
+
+    cache.clear()
+    clear_permission_cache()
+    yield
+    cache.clear()
+    clear_permission_cache()
+
+
 @pytest.fixture
 def api():
     return APIClient()

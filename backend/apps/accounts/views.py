@@ -20,6 +20,7 @@ from apps.accounts.serializers import (
     UserSerializer,
     token_pair_for,
 )
+from apps.accounts.throttling import LoginEmailThrottle
 from apps.core.exceptions import ApiError
 
 MAX_AVATAR_BYTES = 2 * 1024 * 1024
@@ -29,7 +30,7 @@ AVATAR_FORMATS = {"JPEG": "jpg", "PNG": "png", "WEBP": "webp"}
 class RegisterView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
-    throttle_scope = "auth"
+    throttle_scope = "register"
 
     @transaction.atomic
     def post(self, request):
@@ -45,7 +46,8 @@ class RegisterView(APIView):
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
-    throttle_classes = [ScopedRateThrottle]
+    # Two buckets: per source address (auth) and per account (auth_burst).
+    throttle_classes = [ScopedRateThrottle, LoginEmailThrottle]
     throttle_scope = "auth"
 
     def post(self, request):
@@ -91,6 +93,9 @@ class LogoutView(APIView):
 
 
 class PasswordChangeView(APIView):
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "password_change"
+
     def post(self, request):
         serializer = PasswordChangeSerializer(data=request.data, context={"user": request.user})
         serializer.is_valid(raise_exception=True)
@@ -118,6 +123,10 @@ class MeView(APIView):
 
 class MeAvatarView(APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
+    # Decoding + resizing an uploaded image is the most expensive thing an
+    # authenticated user can trigger, so it gets its own budget.
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "avatar"
 
     def post(self, request):
         upload = request.FILES.get("avatar")

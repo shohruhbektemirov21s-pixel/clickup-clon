@@ -1,0 +1,108 @@
+# ClickUp clone — development stack.
+#
+#   cp .env.docker.example .env
+#   docker compose up -d --build
+#
+# Every secret/tunable lives in the repo-root .env (gitignored). Compose reads
+# that file automatically both for ${VAR} substitution below and, via env_file,
+# for the backend container's own environment. Nothing is hardcoded here.
+#
+# Production overrides live in docker-compose.prod.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+name: clickup
+
+services:
+  # ---------------------------------------------------------------- database
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Keeps initdb deterministic across host locales.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # Dev convenience: psql / a GUI client from the host. Removed in prod.
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # ------------------------------------------------------- channels layer
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # -------------------------------------------------- Django / Daphne (ASGI)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+    env_file:
+      - .env
+    environment:
+      # These two point at the compose services and therefore override whatever
+      # .env / backend/.env say. django-environ's read_env() uses setdefault,
+      # so real environment variables always win over the .env file.
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      # Entrypoint behaviour: migrate on boot, and re-collect static because the
+      # bind mount + named volume below replace the image's staticfiles dir.
+      RUN_MIGRATIONS: "1"
+      RUN_COLLECTSTATIC: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      # Dev bind mount: edit backend/ on the host, then `docker compose restart
+      # backend` to pick the change up (Daphne has no autoreloader).
+      - ./backend:/app
+      # Named volumes shadow the bind mount so collected static and uploaded
+      # media survive restarts and never leak back onto the host tree.
+      - static:/app/staticfiles
+      - media:/app/media
+
+  # ----------------------------------------------------------- Next.js front
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: runner
+      args:
+        # NEXT_PUBLIC_* is inlined at build time — changing it requires a
+        # rebuild (`docker compose up -d --build frontend`), not a restart.
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api/v1}
+        NEXT_PUBLIC_WS_BASE_URL: ${NEXT_PUBLIC_WS_BASE_URL:-ws://localhost:8000}
+        NEXT_PUBLIC_API_MODE: ${NEXT_PUBLIC_API_MODE:-real}
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+
+volumes:
+  pgdata:
+  redisdata:
+  static:
+  media:

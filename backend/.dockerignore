@@ -1,0 +1,36 @@
+# Build context = ./backend (see docker-compose.yml)
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local DB / secrets / generated assets — must never bake into the image
+*.sqlite3
+*.sqlite3-journal
+.env
+.env.*
+!.env.example
+media/
+staticfiles/
+
+# VCS / editors / OS
+.git/
+.gitignore
+.github/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Docs and container files that the image does not need
+*.md
+Dockerfile
+.dockerignore

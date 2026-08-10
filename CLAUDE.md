@@ -17,8 +17,14 @@ clickup/
       realtime/          Channels consumers, routing, broadcast helpers
     manage.py
     requirements.txt
+    Dockerfile           multi-stage; runtime serves ASGI via Daphne
+    docker-entrypoint.sh waits for the DB, migrates, then execs CMD
   frontend/              Next.js 15 App Router + TS + Tailwind
-  docs/                  PRD.md, DATA_MODEL.md, API_CONTRACT.md, SPRINT_PLAN.md, UI_SPEC.md
+    Dockerfile           multi-stage; Next standalone output
+  docs/                  PRD.md, DATA_MODEL.md, API_CONTRACT.md, SPRINT_PLAN.md, UI_SPEC.md, DOCKER.md
+  docker-compose.yml     dev stack: db + redis + backend + frontend
+  docker-compose.prod.yml  prod override
+  .env.docker.example    template for the repo-root .env compose reads
 ```
 
 ## Stack (fixed — do not swap)
@@ -28,7 +34,10 @@ clickup/
 **Frontend:** Next.js 15 (App Router) · TypeScript · Tailwind · shadcn/ui · TanStack Query · Zustand · native WebSocket
 **Tests:** pytest + pytest-django (backend), Playwright (E2E)
 
-No Docker on this machine. Redis is optional in dev — Channels falls back to the in-memory layer.
+Two ways to run the stack:
+
+- **venv + npm (primary).** Redis is optional — Channels falls back to the in-memory layer when `REDIS_URL` is empty, and the DB is SQLite. This is the default path for day-to-day work.
+- **Docker Compose (supported).** Full stack with PostgreSQL 16 + Redis 7, closer to prod. See `docs/DOCKER.md`.
 
 ## Commands
 
@@ -46,6 +55,24 @@ npm run dev
 npm run build
 npm run lint
 ```
+
+Docker Compose is the alternative; it does not replace the commands above.
+
+```bash
+# from the repo root — first run
+cp .env.docker.example .env          # PowerShell: Copy-Item .env.docker.example .env
+docker compose up -d --build         # backend migrates itself on boot
+
+# everyday
+docker compose logs -f backend
+docker compose exec backend python manage.py createsuperuser
+docker compose down                  # add -v to also drop pgdata/media/static
+
+# prod-shaped run (no bind mount, DEBUG=False, resource limits)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+Inside containers Python is on `PATH` (venv at `/opt/venv`) — no `../.venv/Scripts/python.exe` prefix.
 
 ## Conventions
 

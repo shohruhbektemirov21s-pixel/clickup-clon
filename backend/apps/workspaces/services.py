@@ -10,14 +10,22 @@ from django.utils import timezone
 from django.utils.text import slugify
 from rest_framework.exceptions import ValidationError
 
-from apps.core.enums import StatusType, WorkspaceRole
+from apps.core.enums import (
+    AssignableRole,
+    SpaceAccess,
+    SpaceMemberSource,
+    StatusType,
+    WorkspaceRole,
+)
 from apps.core.exceptions import Conflict, PositionConflict
 from apps.core.ordering import evenly_spaced, midstring
 from apps.realtime import events
 from apps.workspaces.models import (
     Folder,
     Invitation,
+    RolePermission,
     Space,
+    SpaceMember,
     Status,
     StatusSet,
     TaskList,
@@ -75,6 +83,43 @@ def seed_default_statuses(status_set: StatusSet) -> list[Status]:
     ]
 
 
+def ensure_role_permissions(workspace) -> int:
+    """Idempotent: yetishmayotgan (role, permission) qatorlarini defaultdan yaratadi.
+
+    docs/DESIGN_PERMISSIONS.md §B.6. Uch nuqtadan chaqiriladi:
+    (1) migratsiya 0003, (2) `bootstrap_workspace()`, (3) resolver fallback.
+    `bulk_create` signal chiqarmaydi va default qiymat yozadi — shuning uchun
+    bu yerda `bump_permissions_version()` chaqirilmaydi.
+    """
+    from apps.core.permissions import PERMISSIONS
+
+    existing = set(
+        RolePermission.objects.filter(workspace=workspace).values_list("role", "permission")
+    )
+    rows = [
+        RolePermission(
+            workspace=workspace, role=role, permission=p.code, allowed=(role in p.defaults)
+        )
+        for p in PERMISSIONS
+        if not p.deprecated
+        for role in AssignableRole.values
+        if (role, p.code) not in existing
+    ]
+    if rows:
+        RolePermission.objects.bulk_create(rows, ignore_conflicts=True)
+    return len(rows)
+
+
+def ensure_space_member(space, user, *, access, source, added_by=None) -> SpaceMember:
+    """Idempotent `SpaceMember` yozuvi; mavjud qator darajasini pasaytirmaydi."""
+    row, created = SpaceMember.objects.get_or_create(
+        space=space,
+        user=user,
+        defaults={"access": access, "source": source, "added_by": added_by},
+    )
+    return row
+
+
 @transaction.atomic
 def create_space(workspace, actor, *, name, description="", color=None, icon="",
                  is_private=False, space_id=None) -> Space:
@@ -94,6 +139,15 @@ def create_space(workspace, actor, *, name, description="", color=None, icon="",
     )
     status_set = StatusSet.objects.create(space=space, name="Standart")
     seed_default_statuses(status_set)
+    # §B.6 — yaratuvchi bo'limning menejeri (PM) bo'ladi.
+    if actor is not None:
+        ensure_space_member(
+            space,
+            actor,
+            access=SpaceAccess.MANAGER,
+            source=SpaceMemberSource.AUTO_CREATOR,
+            added_by=actor,
+        )
     return space
 
 
@@ -115,12 +169,20 @@ def bootstrap_workspace(user, *, name, description="", color=None, workspace_id=
         member_count=1,
     )
     WorkspaceMember.objects.create(workspace=workspace, user=user, role=WorkspaceRole.OWNER)
+    ensure_role_permissions(workspace)  # §B.6 — default matritsani materializatsiya
 
     space = Space.objects.create(
         workspace=workspace,
         name="Jamoa bo'limi",
         position="n",
         created_by=user,
+    )
+    ensure_space_member(
+        space,
+        user,
+        access=SpaceAccess.MANAGER,
+        source=SpaceMemberSource.AUTO_CREATOR,
+        added_by=user,
     )
     status_set = StatusSet.objects.create(space=space, name="Standart")
     statuses = seed_default_statuses(status_set)

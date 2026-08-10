@@ -16,6 +16,34 @@ ROLE_RANK = {
 }
 
 
+class AssignableRole(models.TextChoices):
+    """RolePermission jadvalida saqlanadigan rollar. owner YO'Q.
+
+    docs/DESIGN_PERMISSIONS.md AD-3: owner ruxsatlari hech qachon DB'da
+    saqlanmaydi — `has_perm()` short-circuit qiladi va DB'da
+    `CheckConstraint(role != 'owner')` turadi.
+    """
+
+    ADMIN = "admin", "Admin"
+    MEMBER = "member", "A'zo"
+    GUEST = "guest", "Mehmon"
+
+
+class SpaceAccess(models.TextChoices):
+    """Bo'lim ichidagi lokal daraja — docs/DESIGN_PERMISSIONS.md §B.5."""
+
+    VIEWER = "viewer", "Ko'ruvchi"  # faqat o'qish (eng past huquq g'olib)
+    CONTRIBUTOR = "contributor", "Ishtirokchi"  # workspace roli bo'yicha yozish
+    MANAGER = "manager", "Menejer (PM)"  # + lokal space.manage_members
+
+
+class SpaceMemberSource(models.TextChoices):
+    MANUAL = "manual", "Qo'lda"
+    AUTO_CREATOR = "auto_creator", "Avto (yaratuvchi)"
+    AUTO_ASSIGNEE = "auto_assignee", "Avto (biriktirilgan)"
+    BACKFILL = "backfill", "Migratsiya"
+
+
 class InvitationRole(models.TextChoices):  # owner is NOT invitable
     ADMIN = "admin", "Admin"
     MEMBER = "member", "Member"

@@ -8,6 +8,9 @@ export const keys = {
   invitations: (workspaceId: string) =>
     ["workspace", workspaceId, "invitations"] as const,
   tags: (workspaceId: string) => ["workspace", workspaceId, "tags"] as const,
+  /** Workspace-wide task reads (dashboard). `scope` keeps the filter sets apart. */
+  workspaceTasks: (workspaceId: string, scope: "all" | "mine") =>
+    ["workspace", workspaceId, "tasks", scope] as const,
   search: (workspaceId: string, q: string) =>
     ["workspace", workspaceId, "search", q] as const,
   list: (listId: string) => ["list", listId] as const,

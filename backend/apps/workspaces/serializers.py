@@ -1,11 +1,13 @@
 from rest_framework import serializers
 
 from apps.accounts.serializers import UserSummarySerializer
-from apps.core.enums import InvitationRole, InvitationStatus, StatusType
+from apps.core.enums import AssignableRole, InvitationRole, InvitationStatus, StatusType
 from apps.workspaces.models import (
     Folder,
     Invitation,
+    RolePermission,
     Space,
+    SpaceMember,
     Status,
     StatusSet,
     TaskList,
@@ -30,10 +32,20 @@ class WorkspaceSerializer(serializers.ModelSerializer):
             "owner_id",
             "member_count",
             "my_role",
+            "permissions_version",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "slug", "avatar", "owner_id", "member_count", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "slug",
+            "avatar",
+            "owner_id",
+            "member_count",
+            "permissions_version",
+            "created_at",
+            "updated_at",
+        ]
 
     def get_my_role(self, obj):
         roles = self.context.get("roles")
@@ -237,3 +249,60 @@ class StatusSetInputSerializer(serializers.Serializer):
         if len(set(ids)) != len(ids):
             raise serializers.ValidationError("Duplicate status ids in payload.")
         return statuses
+
+
+# ------------------------------------------------------------------ permissions
+# docs/DESIGN_PERMISSIONS.md §D.1–D.5
+
+
+class RolePermissionRowSerializer(serializers.ModelSerializer):
+    updated_by_id = serializers.UUIDField(read_only=True, allow_null=True)
+
+    class Meta:
+        model = RolePermission
+        fields = ["role", "permission", "allowed", "updated_by_id", "updated_at"]
+        read_only_fields = fields
+
+
+class RolePermissionUpdateSerializer(serializers.Serializer):
+    """`PUT workspaces/{id}/role-permissions/` payload (D.3).
+
+    `expected_version` majburiy (optimistic concurrency). `roles` F-8 bo'yicha
+    qat'iy whitelist — noma'lum kalit silent ignore EMAS, 400.
+    """
+
+    expected_version = serializers.IntegerField(min_value=0)
+    roles = serializers.DictField(required=True)
+
+    def validate_roles(self, roles):
+        if not isinstance(roles, dict) or not roles:
+            raise serializers.ValidationError("Kamida bitta rol berilishi shart.")
+        return roles
+
+
+class ResetRolePermissionsSerializer(serializers.Serializer):
+    """`POST .../role-permissions/reset/` — `null` = barcha rollar (D.4)."""
+
+    role = serializers.ChoiceField(
+        choices=AssignableRole.choices, required=False, allow_null=True, default=None
+    )
+
+
+class SpaceMemberSerializer(serializers.ModelSerializer):
+    space_id = serializers.UUIDField(read_only=True)
+    user = UserSummarySerializer(read_only=True)
+    added_by_id = serializers.UUIDField(read_only=True, allow_null=True)
+
+    class Meta:
+        model = SpaceMember
+        fields = [
+            "id",
+            "space_id",
+            "user",
+            "access",
+            "source",
+            "added_by_id",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields

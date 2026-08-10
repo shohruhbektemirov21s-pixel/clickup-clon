@@ -6,7 +6,6 @@ passed as a query param: ws://host/ws/list/<id>/?token=<access>
 
 from urllib.parse import parse_qs
 
-from channels.auth import AuthMiddlewareStack
 from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
@@ -28,6 +27,13 @@ def _user_from_token(raw_token):
 
 
 class JWTAuthMiddleware:
+    """The only way to authenticate a socket: a valid access token in the query.
+
+    Deliberately not stacked on channels' AuthMiddlewareStack — session cookies
+    must not be able to authenticate a WebSocket, otherwise a cross-site
+    handshake would ride the victim's cookie jar.
+    """
+
     def __init__(self, inner):
         self.inner = inner
 
@@ -37,7 +43,3 @@ class JWTAuthMiddleware:
         scope = dict(scope)
         scope["user"] = await _user_from_token(token) if token else AnonymousUser()
         return await self.inner(scope, receive, send)
-
-
-def JWTAuthMiddlewareStack(inner):
-    return JWTAuthMiddleware(AuthMiddlewareStack(inner))

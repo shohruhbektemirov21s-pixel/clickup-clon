@@ -1,0 +1,93 @@
+# Production override — layered on top of docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Differences from dev:
+#   * no source bind mount (the image is the artefact)
+#   * restart: unless-stopped everywhere
+#   * DEBUG=False, and static files are served from the image's build-time
+#     collectstatic (WhiteNoise), so the entrypoint skips collectstatic
+#   * db/redis publish no host ports at all; backend/frontend bind to loopback
+#     only, expecting a TLS reverse proxy (nginx/Caddy/Traefik) in front
+#   * CPU/memory limits and reservations
+#
+# `!reset` / `!override` need Docker Compose v2.24+.
+
+services:
+  db:
+    restart: unless-stopped
+    # Reachable only on the compose network.
+    ports: !reset []
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          memory: 512M
+
+  redis:
+    restart: unless-stopped
+    # Bound memory so a runaway channel layer cannot evict the host.
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - "512mb"
+      - --maxmemory-policy
+      - allkeys-lru
+    ports: !reset []
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+        reservations:
+          memory: 128M
+
+  backend:
+    restart: unless-stopped
+    environment:
+      # settings.py refuses to start with DEBUG=False unless SECRET_KEY is a
+      # real >=50-char value and ALLOWED_HOSTS is non-empty — set both in .env.
+      DEBUG: "False"
+      # Static was already collected into the image at build time.
+      RUN_COLLECTSTATIC: "0"
+      RUN_MIGRATIONS: "1"
+      RUN_SEED_DEMO: "0"
+      # One TLS-terminating reverse proxy hop in front of the container. Raise
+      # it if you chain more; a wrong value lets clients spoof X-Forwarded-For
+      # and slip past every throttle.
+      NUM_PROXIES: "1"
+      # Structured logs for the aggregator.
+      LOG_FORMAT: "json"
+      LOG_LEVEL: "INFO"
+    # Drops the ./backend:/app bind mount; keeps only the data volumes.
+    volumes: !override
+      - static:/app/staticfiles
+      - media:/app/media
+    # Loopback only — terminate TLS in the reverse proxy.
+    ports: !override
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+        reservations:
+          memory: 256M
+
+  frontend:
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+    ports: !override
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+        reservations:
+          memory: 256M

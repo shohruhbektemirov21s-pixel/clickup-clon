@@ -80,6 +80,23 @@ urlpatterns = [
         views.ListStatusSetView.as_view(),
         name="list-status-set",
     ),
+    # permissions (docs/DESIGN_PERMISSIONS.md D.1-D.5)
+    path("permissions/", views.PermissionCatalogView.as_view(), name="permission-catalog"),
+    path(
+        "workspaces/<uuid:workspace_id>/role-permissions/",
+        views.RolePermissionMatrixView.as_view(),
+        name="role-permissions",
+    ),
+    path(
+        "workspaces/<uuid:workspace_id>/role-permissions/reset/",
+        views.RolePermissionResetView.as_view(),
+        name="role-permissions-reset",
+    ),
+    path(
+        "workspaces/<uuid:workspace_id>/my-permissions/",
+        views.MyPermissionsView.as_view(),
+        name="my-permissions",
+    ),
     # search
     path(
         "workspaces/<uuid:workspace_id>/search/",

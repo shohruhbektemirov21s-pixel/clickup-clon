@@ -1,0 +1,126 @@
+name: Security
+
+# Xavfsizlik skanerlari. Hozircha HAMMASI non-blocking (continue-on-error),
+# chunki mavjud kod bazasi hali to'liq tozalanmagan. Natijalar Job Summary'da.
+on:
+  schedule:
+    # Har dushanba 04:00 UTC
+    - cron: "0 4 * * 1"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python — pip-audit / bandit / check --deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # CI-only dummy qiymatlar; hech qanday haqiqiy sir yo'q.
+    env:
+      DEBUG: "False"
+      SECRET_KEY: "ci-dummy-not-a-real-secret-3f8a1c9e4b7d2056"
+      ALLOWED_HOSTS: "localhost,127.0.0.1"
+      DATABASE_URL: "sqlite:///ci-check.sqlite3"
+      REDIS_URL: ""
+      CORS_ALLOWED_ORIGINS: "http://localhost:3000"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python 3.14 o'rnatish
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Bog'liqliklarni o'rnatish
+        continue-on-error: true
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pip-audit bandit
+
+      - name: pip-audit (Python bog'liqliklari)
+        continue-on-error: true
+        run: |
+          echo "## pip-audit (backend/requirements.txt)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          pip-audit -r backend/requirements.txt --progress-spinner off 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: bandit (statik xavfsizlik tahlili)
+        continue-on-error: true
+        run: |
+          echo "## bandit (backend/apps, backend/config)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          bandit -r backend/apps backend/config -ll 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Django check --deploy
+        continue-on-error: true
+        working-directory: backend
+        run: |
+          echo "## manage.py check --deploy" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          python manage.py check --deploy 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  frontend:
+    name: Frontend — npm audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 22 o'rnatish
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: npm audit (--audit-level=high)
+        continue-on-error: true
+        working-directory: frontend
+        run: |
+          echo "## npm audit (frontend, level=high)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          npm audit --audit-level=high 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  secrets:
+    name: Sirlar — gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout (to'liq tarix)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks
+        continue-on-error: true
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Faqat GitHub Organization repolari uchun kerak (public/shaxsiy repo — bepul).
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+      - name: Natijani Job Summary'ga yozish
+        if: always()
+        run: |
+          echo "## gitleaks" >> "$GITHUB_STEP_SUMMARY"
+          echo "Skaner holati: \`${{ job.status }}\`. Batafsil log yuqoridagi 'gitleaks' qadamida." >> "$GITHUB_STEP_SUMMARY"

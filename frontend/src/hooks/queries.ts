@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { keys } from "@/lib/keys";
 import { useAuthStore } from "@/stores/auth-store";
@@ -12,6 +12,7 @@ import type {
   Member,
   Paginated,
   SearchResponse,
+  Status,
   StatusSet,
   Tag,
   Task,
@@ -127,6 +128,68 @@ export function useGroupedTasks(listId: string) {
         group_by: "status",
       }),
     enabled: enabled && !!listId,
+  });
+}
+
+/**
+ * Tasks assigned to the caller across the whole workspace (contract §10.5:
+ * `assignee=me`). Due-date buckets are derived on the client from this single
+ * response — the server `due=` filters overlap (an overdue task is also inside
+ * `this_week`), which would duplicate rows across sections.
+ */
+export function useMyTasks(workspaceId: string) {
+  const enabled = useAuthed();
+  return useQuery({
+    queryKey: keys.workspaceTasks(workspaceId, "mine"),
+    queryFn: () =>
+      api.get<Paginated<Task>>(`workspaces/${workspaceId}/tasks/`, {
+        assignee: "me",
+        ordering: "due_date",
+        page_size: 200,
+      }),
+    enabled: enabled && !!workspaceId,
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * One workspace-wide task page, used only to derive per-member open-task
+ * counts on the dashboard (never one request per member).
+ */
+export function useWorkspaceTasks(workspaceId: string) {
+  const enabled = useAuthed();
+  return useQuery({
+    queryKey: keys.workspaceTasks(workspaceId, "all"),
+    queryFn: () =>
+      api.get<Paginated<Task>>(`workspaces/${workspaceId}/tasks/`, {
+        page_size: 200,
+      }),
+    enabled: enabled && !!workspaceId,
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * Status sets for several lists at once (dashboard rows carry only a
+ * `status_id`). Shares `keys.statusSet` with `useStatusSet`, so list pages and
+ * the dashboard reuse the same cache entries.
+ */
+export function useStatusesByListIds(listIds: string[]) {
+  const enabled = useAuthed();
+  return useQueries({
+    queries: listIds.map((listId) => ({
+      queryKey: keys.statusSet(listId),
+      queryFn: () => api.get<StatusSet>(`lists/${listId}/status-set/`),
+      enabled: enabled && !!listId,
+      staleTime: 60_000,
+    })),
+    combine: (results) => {
+      const byId = new Map<string, Status>();
+      for (const result of results) {
+        for (const status of result.data?.statuses ?? []) byId.set(status.id, status);
+      }
+      return { statusById: byId, isPending: results.some((r) => r.isPending) };
+    },
   });
 }
 

@@ -125,6 +125,37 @@ def emit_list_updated(task_list, *, actor=None, client_id=None):
     _send(workspace_group(workspace_id), "list.updated", payload)
 
 
+def emit_permissions_updated(workspace, *, actor=None, client_id=None):
+    """permission.updated on the workspace channel (DESIGN_PERMISSIONS.md D.10).
+
+    Clients invalidate `my-permissions/` and `role-permissions/` on receipt.
+    """
+    payload = _payload(
+        list_id=None,
+        workspace_id=workspace.id,
+        data={
+            "workspace_id": str(workspace.id),
+            "version": workspace.permissions_version,
+        },
+        actor=actor,
+        client_id=client_id,
+    )
+    _send(workspace_group(workspace.id), "permission.updated", payload)
+
+
+def emit_access_revoked(user_id, *, workspace_id, space_id=None):
+    """access.revoked on the private user channel (DESIGN_PERMISSIONS.md D.10)."""
+    payload = _payload(
+        list_id=None,
+        workspace_id=workspace_id,
+        data={
+            "workspace_id": str(workspace_id),
+            "space_id": str(space_id) if space_id else None,
+        },
+    )
+    _send(user_group(user_id), "access.revoked", payload)
+
+
 def emit_presence(list_id, event_type, data):
     payload = _payload(list_id=list_id, workspace_id=None, data=data)
     _send(list_group(list_id), event_type, payload)

@@ -1,6 +1,7 @@
 import uuid
 from datetime import timedelta
 
+from django.db import transaction
 from django.db.models import Case, IntegerField, Q, Value, When
 from django.utils import timezone
 from rest_framework import status as http
@@ -10,20 +11,32 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.access import (
+    bump_permissions_version,
     check_space_visible,
+    effective_permissions,
+    my_permissions,
     require_membership,
+    require_membership_perm,
     require_role,
     visible_spaces_q,
 )
 from apps.core.api import client_id_of, paginate, parse_bool
-from apps.core.enums import InvitationStatus, WorkspaceRole
+from apps.core.enums import AssignableRole, InvitationStatus, ROLE_RANK, WorkspaceRole
 from apps.core.exceptions import ApiError, Conflict
+from apps.core.permissions import (
+    ALL_CODES,
+    CATALOG_VERSION,
+    PERMISSION_BY_CODE,
+    grouped_catalog,
+)
 from apps.realtime import events
 from apps.workspaces import services
 from apps.workspaces.models import (
     Folder,
     Invitation,
+    RolePermission,
     Space,
+    SpaceMember,
     StatusSet,
     TaskList,
     Workspace,
@@ -35,6 +48,9 @@ from apps.workspaces.serializers import (
     InvitationSerializer,
     ListSerializer,
     MemberSerializer,
+    ResetRolePermissionsSerializer,
+    RolePermissionRowSerializer,
+    RolePermissionUpdateSerializer,
     SpaceSerializer,
     StatusSetInputSerializer,
     StatusSetSerializer,
@@ -232,6 +248,11 @@ def _remove_member(membership):
     ).delete()
     TaskWatcher.objects.filter(
         user=membership.user, task__list__space__workspace=workspace
+    ).delete()
+    # DESIGN_PERMISSIONS.md §B.4 invariant: SpaceMember never outlives the
+    # WorkspaceMember it depends on.
+    SpaceMember.objects.filter(
+        user=membership.user, space__workspace=workspace
     ).delete()
     membership.delete()
     services.refresh_member_count(workspace)
@@ -766,6 +787,227 @@ class ListStatusSetView(APIView):
             client_id=client_id_of(request),
         )
         return Response(StatusSetSerializer(status_set, context={"request": request}).data)
+
+
+# ---------------------------------------------------------------- permissions
+# docs/DESIGN_PERMISSIONS.md §D.1–D.5
+
+MANAGE_PERMISSIONS = "workspace.manage_permissions"
+
+#: Monotonlik zanjiri (AD-5): guest ⊆ member ⊆ admin ⊆ owner.
+MONOTONIC_CHAIN = ("guest", "member", "admin")
+
+
+def _validation_error_payload(details):
+    raise ApiError(
+        message="Request payload is invalid.",
+        details=details,
+        code="validation_error",
+        status_code=http.HTTP_400_BAD_REQUEST,
+    )
+
+
+def _matrix_payload(workspace):
+    """`GET`/`PUT`/`reset` uchun yagona javob shakli (D.2)."""
+    effective = effective_permissions(workspace)
+    roles = {
+        # owner qulflangan va DB'da saqlanmaydi (AD-3)
+        WorkspaceRole.OWNER.value: {"locked": True, "permissions": sorted(ALL_CODES)},
+    }
+    for role in AssignableRole.values:
+        roles[role] = {"locked": False, "permissions": sorted(effective.get(role, frozenset()))}
+
+    overrides = [
+        row
+        for row in RolePermission.objects.filter(workspace=workspace).order_by(
+            "role", "permission"
+        )
+        if row.permission in PERMISSION_BY_CODE
+        and row.allowed != (row.role in PERMISSION_BY_CODE[row.permission].defaults)
+    ]
+    return {
+        "workspace_id": str(workspace.id),
+        "version": workspace.permissions_version,
+        "catalog_version": CATALOG_VERSION,
+        "roles": roles,
+        "overrides": RolePermissionRowSerializer(overrides, many=True).data,
+    }
+
+
+def _validate_role_changes(roles_payload):
+    """F-8 whitelist: noma'lum kalit silent ignore EMAS, 400."""
+    errors = {}
+    changes = {}
+    for role, entries in roles_payload.items():
+        if role == WorkspaceRole.OWNER:
+            errors["roles.owner"] = ["Owner ruxsatlarini o'zgartirib bo'lmaydi."]
+            continue
+        if role not in AssignableRole.values:
+            errors[f"roles.{role}"] = ["Noma'lum rol."]
+            continue
+        if not isinstance(entries, dict):
+            errors[f"roles.{role}"] = ["Obyekt kutilgan edi."]
+            continue
+        for code, allowed in entries.items():
+            key = f"roles.{role}.{code}"
+            definition = PERMISSION_BY_CODE.get(code)
+            if definition is None or definition.deprecated:
+                errors[key] = ["Noma'lum ruxsat kodi."]
+                continue
+            if not isinstance(allowed, bool):
+                errors[key] = ["Qiymat true yoki false bo'lishi shart."]
+                continue
+            if definition.owner_only and allowed:
+                errors[key] = ["Bu ruxsat faqat owner uchun."]
+                continue
+            changes[(role, code)] = allowed
+    if errors:
+        _validation_error_payload(errors)
+    return changes
+
+
+def _rank_guard(membership, target_roles):
+    """F-1 (2-qavat): o'z roli yoki undan yuqorini o'zgartirib bo'lmaydi."""
+    caller_rank = ROLE_RANK[membership.role]
+    for role in sorted(target_roles, key=lambda r: -ROLE_RANK[r]):
+        if ROLE_RANK[role] >= caller_rank:
+            raise ApiError(
+                message="You cannot change permissions for your own role or above.",
+                details={"reason": "self_escalation", "role": role},
+                code="permission_denied",
+                status_code=http.HTTP_403_FORBIDDEN,
+            )
+
+
+def _check_monotonic(resulting):
+    messages = []
+    for lower, higher in zip(MONOTONIC_CHAIN, MONOTONIC_CHAIN[1:]):
+        for code in sorted(resulting[lower] - resulting[higher]):
+            messages.append(f"'{code}' {lower}'da yoqilgan, {higher}'da o'chirilgan.")
+    if messages:
+        _validation_error_payload({"monotonic": messages})
+
+
+def _resulting_matrix(workspace, changes):
+    effective = effective_permissions(workspace)
+    resulting = {role: set(effective.get(role, frozenset())) for role in AssignableRole.values}
+    for (role, code), allowed in changes.items():
+        (resulting[role].add if allowed else resulting[role].discard)(code)
+    return resulting
+
+
+@transaction.atomic
+def _write_matrix(workspace, changes, actor):
+    """bulk_* ishlatiladi — signal chiqmaydi, version aynan bir marta oshadi."""
+    existing = {
+        (row.role, row.permission): row
+        for row in RolePermission.objects.filter(workspace=workspace)
+    }
+    now = timezone.now()
+    to_create, to_update = [], []
+    for (role, code), allowed in changes.items():
+        row = existing.get((role, code))
+        if row is None:
+            to_create.append(
+                RolePermission(
+                    workspace=workspace,
+                    role=role,
+                    permission=code,
+                    allowed=allowed,
+                    updated_by=actor,
+                )
+            )
+        elif row.allowed != allowed:
+            row.allowed = allowed
+            row.updated_by = actor
+            row.updated_at = now
+            to_update.append(row)
+    if to_create:
+        RolePermission.objects.bulk_create(to_create, ignore_conflicts=True)
+    if to_update:
+        RolePermission.objects.bulk_update(to_update, ["allowed", "updated_by", "updated_at"])
+
+
+class PermissionCatalogView(APIView):
+    """`GET permissions/` — auth talab qilinadi, rol talab qilinmaydi, pagination yo'q."""
+
+    def get(self, request):
+        return Response({"catalog_version": CATALOG_VERSION, "groups": grouped_catalog()})
+
+
+class RolePermissionMatrixView(APIView):
+    def get(self, request, workspace_id):
+        membership = require_membership_perm(request.user, workspace_id, MANAGE_PERMISSIONS)
+        services.ensure_role_permissions(membership.workspace)  # §B.6 resolver fallback
+        return Response(_matrix_payload(membership.workspace))
+
+    def put(self, request, workspace_id):
+        membership = require_membership_perm(request.user, workspace_id, MANAGE_PERMISSIONS)
+        workspace = membership.workspace
+        serializer = RolePermissionUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        changes = _validate_role_changes(serializer.validated_data["roles"])
+        _rank_guard(membership, {role for role, _ in changes})
+
+        expected = serializer.validated_data["expected_version"]
+        if workspace.permissions_version != expected:
+            raise Conflict(
+                "The permission matrix changed since you loaded it.",
+                details={
+                    "expected_version": expected,
+                    "current_version": workspace.permissions_version,
+                },
+            )
+
+        services.ensure_role_permissions(workspace)
+        _check_monotonic(_resulting_matrix(workspace, changes))
+        _write_matrix(workspace, changes, request.user)
+        bump_permissions_version(workspace, actor=request.user)
+        return Response(_matrix_payload(workspace))
+
+
+class RolePermissionResetView(APIView):
+    def post(self, request, workspace_id):
+        membership = require_membership_perm(request.user, workspace_id, MANAGE_PERMISSIONS)
+        workspace = membership.workspace
+        serializer = ResetRolePermissionsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        role = serializer.validated_data.get("role")
+        roles = [role] if role else list(AssignableRole.values)
+        _rank_guard(membership, set(roles))
+
+        with transaction.atomic():
+            RolePermission.objects.filter(workspace=workspace, role__in=roles).delete()
+            services.ensure_role_permissions(workspace)
+        bump_permissions_version(workspace, actor=request.user)
+        return Response(_matrix_payload(workspace))
+
+
+class MyPermissionsView(APIView):
+    """`GET workspaces/{id}/my-permissions/` — har qanday a'zo (guest ham)."""
+
+    def get(self, request, workspace_id):
+        membership = require_membership(request.user, workspace_id)
+        spaces = (
+            SpaceMember.objects.filter(
+                space__workspace_id=workspace_id, user_id=request.user.id
+            )
+            .order_by("space_id")
+            .values_list("space_id", "access")
+        )
+        return Response(
+            {
+                "workspace_id": str(workspace_id),
+                "role": membership.role,
+                "version": membership.workspace.permissions_version,
+                "permissions": sorted(my_permissions(membership)),
+                "spaces": [
+                    {"space_id": str(space_id), "access": access}
+                    for space_id, access in spaces
+                ],
+            }
+        )
 
 
 # ---------------------------------------------------------------- search

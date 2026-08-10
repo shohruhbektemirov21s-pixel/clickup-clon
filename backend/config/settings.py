@@ -3,31 +3,89 @@
 Environment comes from backend/.env via django-environ; see .env.example.
 """
 
-from datetime import timedelta
+import json
+import logging
+import secrets
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import environ
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 env = environ.Env(
     DEBUG=(bool, False),
-    SECRET_KEY=(str, "dev-only-change-me"),
+    # No usable default on purpose: a shipped fallback key would let anyone
+    # mint valid JWTs against a production deployment that forgot to set it.
+    SECRET_KEY=(str, ""),
     ALLOWED_HOSTS=(list, ["localhost", "127.0.0.1"]),
     DATABASE_URL=(str, f"sqlite:///{BASE_DIR / 'db.sqlite3'}"),
     REDIS_URL=(str, ""),
     CORS_ALLOWED_ORIGINS=(list, ["http://localhost:3000"]),
+    CSRF_TRUSTED_ORIGINS=(list, []),
     ACCESS_TOKEN_LIFETIME_MINUTES=(int, 60),
     REFRESH_TOKEN_LIFETIME_DAYS=(int, 7),
     INVITATION_TTL_DAYS=(int, 7),
-    AUTH_THROTTLE_RATE=(str, "60/min"),
-    COMMENT_THROTTLE_RATE=(str, "120/min"),
+    # Throttle rates (DRF "<n>/<period>"). Tightened defaults; see .env.example.
+    AUTH_THROTTLE_RATE=(str, "10/min"),
+    AUTH_BURST_THROTTLE_RATE=(str, "5/min"),
+    REGISTER_THROTTLE_RATE=(str, "5/hour"),
+    PASSWORD_CHANGE_THROTTLE_RATE=(str, "5/hour"),
+    INVITE_THROTTLE_RATE=(str, "20/hour"),
+    INVITE_LOOKUP_THROTTLE_RATE=(str, "30/hour"),
+    AVATAR_THROTTLE_RATE=(str, "10/hour"),
+    COMMENT_THROTTLE_RATE=(str, "60/min"),
 )
 environ.Env.read_env(BASE_DIR / ".env")
 
 DEBUG = env("DEBUG")
-SECRET_KEY = env("SECRET_KEY")
+
+
+# --------------------------------------------------------------------------
+# Secrets
+# --------------------------------------------------------------------------
+
+# Values that must never sign tokens outside of local development.
+_WEAK_SECRETS = {
+    "",
+    "changeme",
+    "change-me",
+    "secret",
+    "dev-only-change-me",
+    "django-insecure",
+}
+_MIN_SECRET_LENGTH = 50
+
+SECRET_KEY = env("SECRET_KEY").strip()
+
+if not DEBUG:
+    _normalised = SECRET_KEY.lower()
+    if (
+        _normalised in _WEAK_SECRETS
+        or _normalised.startswith(("dev-", "django-insecure-", "test-"))
+        or len(SECRET_KEY) < _MIN_SECRET_LENGTH
+    ):
+        raise ImproperlyConfigured(
+            "SECRET_KEY is missing, weak or a development placeholder. Set a random "
+            f"value of at least {_MIN_SECRET_LENGTH} characters in the environment, e.g. "
+            "python -c \"import secrets; print(secrets.token_urlsafe(64))\""
+        )
+elif not SECRET_KEY:
+    # Dev convenience only: never reached when DEBUG is off (checked above).
+    # Ephemeral — every reload invalidates previously issued tokens, so set
+    # SECRET_KEY in backend/.env for a stable local session.
+    SECRET_KEY = secrets.token_urlsafe(64)
+
 ALLOWED_HOSTS = env("ALLOWED_HOSTS")
+
+if not DEBUG:
+    if not ALLOWED_HOSTS:
+        raise ImproperlyConfigured("ALLOWED_HOSTS must be set when DEBUG is off.")
+    if "*" in ALLOWED_HOSTS:
+        raise ImproperlyConfigured(
+            "ALLOWED_HOSTS must not contain '*' when DEBUG is off; list the real hosts."
+        )
 
 
 # Application definition
@@ -115,6 +173,26 @@ else:
     CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
 
 
+# Cache — throttling counters live here, so a shared backend is required as
+# soon as more than one worker process serves traffic.
+
+if REDIS_URL:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": REDIS_URL,
+            "KEY_PREFIX": "clickup",
+        }
+    }
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "clickup-dev",
+        }
+    }
+
+
 AUTH_USER_MODEL = "accounts.User"
 
 AUTH_PASSWORD_VALIDATORS = [
@@ -139,8 +217,18 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 50,
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "EXCEPTION_HANDLER": "config.exceptions.api_exception_handler",
+    # How many *trusted* proxies sit in front of the app. Without this DRF
+    # takes the left-most X-Forwarded-For entry, which the client controls,
+    # so every request can claim a fresh identity and dodge throttling.
+    "NUM_PROXIES": env.int("NUM_PROXIES", default=1),
     "DEFAULT_THROTTLE_RATES": {
         "auth": env("AUTH_THROTTLE_RATE"),
+        "auth_burst": env("AUTH_BURST_THROTTLE_RATE"),
+        "register": env("REGISTER_THROTTLE_RATE"),
+        "password_change": env("PASSWORD_CHANGE_THROTTLE_RATE"),
+        "invite": env("INVITE_THROTTLE_RATE"),
+        "invite_lookup": env("INVITE_LOOKUP_THROTTLE_RATE"),
+        "avatar": env("AVATAR_THROTTLE_RATE"),
         "comments": env("COMMENT_THROTTLE_RATE"),
     },
 }
@@ -156,6 +244,9 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
     "USER_ID_FIELD": "id",
     "USER_ID_CLAIM": "user_id",
+    # Defaults to SECRET_KEY, but can be rotated independently of session/CSRF
+    # signing (rotating SECRET_KEY alone would invalidate every issued token).
+    "SIGNING_KEY": env("JWT_SIGNING_KEY", default=SECRET_KEY),
 }
 
 SPECTACULAR_SETTINGS = {
@@ -164,16 +255,136 @@ SPECTACULAR_SETTINGS = {
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
     "SCHEMA_PATH_PREFIX": "/api/v1",
+    # The schema maps the whole attack surface; staff only.
+    "SERVE_PERMISSIONS": ["rest_framework.permissions.IsAdminUser"],
 }
+
+# Routes are only registered when this is on (see config/urls.py).
+EXPOSE_API_DOCS = env.bool("EXPOSE_API_DOCS", default=False)
+
+# Moving the admin off /admin/ stops the bulk of credential-stuffing noise.
+ADMIN_URL = env("ADMIN_URL", default="admin/")
 
 CORS_ALLOWED_ORIGINS = env("CORS_ALLOWED_ORIGINS")
 CORS_ALLOW_CREDENTIALS = True
+
+# Extra WebSocket origins beyond ALLOWED_HOSTS (the SPA is usually served from
+# a different host than the API). Empty -> ALLOWED_HOSTS only. See config/asgi.py.
+WS_ALLOWED_ORIGINS = env.list("WS_ALLOWED_ORIGINS", default=[])
 
 # The frontend sends X-Client-Id on mutations so realtime consumers can
 # suppress echoing the actor's own events back to it (API_CONTRACT §15).
 from corsheaders.defaults import default_headers  # noqa: E402
 
 CORS_ALLOW_HEADERS = [*default_headers, "x-client-id"]
+
+
+# --------------------------------------------------------------------------
+# Security headers / cookies
+# --------------------------------------------------------------------------
+
+X_FRAME_OPTIONS = "DENY"
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
+SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
+
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+CSRF_TRUSTED_ORIGINS = env("CSRF_TRUSTED_ORIGINS")
+
+if not DEBUG:
+    # Terminating TLS at a proxy: trust its scheme header (only safe because
+    # NUM_PROXIES above documents that a proxy really is in front of us).
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SECURE_SSL_REDIRECT = env.bool("SECURE_SSL_REDIRECT", default=True)
+    SECURE_HSTS_SECONDS = env.int("SECURE_HSTS_SECONDS", default=31536000)  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_AGE = env.int("SESSION_COOKIE_AGE", default=60 * 60 * 12)  # 12 h
+
+
+# --------------------------------------------------------------------------
+# Logging
+# --------------------------------------------------------------------------
+
+# Only allow-listed LogRecord extras are serialised: django.request attaches the
+# live HttpRequest to the record and that must never reach the log sink.
+_LOG_RECORD_EXTRAS = ("request_id", "status_code", "method", "path", "user_id")
+
+
+class _JsonFormatter(logging.Formatter):
+    """One JSON object per line, so log shippers do not have to guess."""
+
+    def format(self, record):
+        payload = {
+            "ts": datetime.fromtimestamp(record.created, tz=timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        for attr in _LOG_RECORD_EXTRAS:
+            value = getattr(record, attr, None)
+            if value is not None:
+                payload[attr] = value
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        if record.stack_info:
+            payload["stack"] = self.formatStack(record.stack_info)
+        return json.dumps(payload, default=str, ensure_ascii=False)
+
+
+LOG_LEVEL = env("LOG_LEVEL", default="DEBUG" if DEBUG else "INFO").upper()
+LOG_FORMAT = env("LOG_FORMAT", default="console" if DEBUG else "json").lower()
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "json": {"()": _JsonFormatter},
+        "console": {
+            "format": "{asctime} {levelname} {name} {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "json" if LOG_FORMAT == "json" else "console",
+        },
+    },
+    "root": {"handlers": ["console"], "level": LOG_LEVEL},
+    "loggers": {
+        "django": {"handlers": ["console"], "level": LOG_LEVEL, "propagate": False},
+        # 5xx and unhandled exceptions.
+        "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+        # Host-header attacks, suspicious operations, CSRF failures.
+        "django.security": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "django.security.DisallowedHost": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        # Very chatty at DEBUG; keep SQL and event-loop internals out.
+        "django.db.backends": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "asyncio": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        "daphne": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "config": {"handlers": ["console"], "level": LOG_LEVEL, "propagate": False},
+        "apps": {"handlers": ["console"], "level": LOG_LEVEL, "propagate": False},
+    },
+}
 
 
 # Internationalization

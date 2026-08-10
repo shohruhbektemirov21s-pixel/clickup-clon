@@ -1,0 +1,42 @@
+# Build context = ./frontend (see docker-compose.yml)
+
+# Node / Next.js — node_modules comes from the `deps` stage, never from the host
+node_modules/
+.next/
+out/
+build/
+.vercel/
+*.tsbuildinfo
+.npm/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Secrets / local env
+.env
+.env.*
+!.env.example
+
+# Playwright — E2E specs are not part of the production build. Keeping them out
+# of the context also stops a type error in a test from failing `next build`
+# (tsconfig includes **/*.ts).
+e2e/
+playwright.config.ts
+test-results/
+playwright-report/
+blob-report/
+.cache/
+
+# VCS / editors / OS
+.git/
+.gitignore
+.github/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Docs and container files
+*.md
+Dockerfile
+.dockerignore

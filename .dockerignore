@@ -1,0 +1,53 @@
+# Repo-root ignore file. The real build contexts are ./backend and ./frontend
+# (each has its own .dockerignore); this file protects any build that is run
+# with the repo root as context.
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Django local state
+*.sqlite3
+*.sqlite3-journal
+backend/media/
+backend/staticfiles/
+
+# Node / Next.js
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+*.tsbuildinfo
+
+# Playwright artefacts
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/.cache/
+
+# Secrets
+.env
+.env.*
+!.env.docker.example
+
+# VCS / CI / editors / OS
+.git/
+.gitignore
+.gitattributes
+.github/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Docs & compose files
+docs/
+*.md
+docker-compose*.yml
+.dockerignore
