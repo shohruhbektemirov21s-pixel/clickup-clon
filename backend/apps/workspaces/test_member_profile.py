@@ -12,7 +12,7 @@ import pytest
 from django.utils import timezone
 
 from apps.core.access import bump_permissions_version
-from apps.core.enums import SpaceAccess, StatusType
+from apps.core.enums import SpaceAccess, TaskStatus
 from apps.tasks.models import Task
 from apps.workspaces import services
 from apps.workspaces.models import RolePermission, SpaceMember, TaskList
@@ -104,7 +104,10 @@ def test_owner_sees_own_profile(env):
     # `profession` — profil yorlig'i, UserSummary orqali keladi.
     assert "profession" in body["user"]
     assert body["role"] == "owner"
-    assert body["joined_at"].endswith("Z")
+    # `TIME_ZONE = "Asia/Tashkent"` (§6.3): DRF vaqt tamg'asini joriy zonada
+    # beradi, ya'ni sirtqi shakl `...+05:00`. Saqlash baribir UTC
+    # (`USE_TZ = True`), faqat ko'rsatish ofseti o'zgardi.
+    assert datetime.fromisoformat(body["joined_at"]).utcoffset() is not None
     assert set(body["stats"].keys()) == {
         "open_tasks",
         "overdue_tasks",
@@ -163,7 +166,6 @@ def test_due_today_window_ends_at_the_callers_midnight(env, frozen_now):
 
 def test_completed_and_comment_counters(env):
     task = _make_task(env, env.list, "Yopiladigan", assignees=[env.member])
-    closed = env.status_set.statuses.get(type=StatusType.CLOSED)
     comment = env.member_client.post(
         f"/api/v1/tasks/{task.id}/comments/",
         {"body_html": "<p>Bajarildi</p>", "body_json": {"type": "doc"}},
@@ -171,7 +173,7 @@ def test_completed_and_comment_counters(env):
     )
     assert comment.status_code == 201, comment.content
     patched = env.member_client.patch(
-        f"/api/v1/tasks/{task.id}/", {"status_id": str(closed.id)}, format="json"
+        f"/api/v1/tasks/{task.id}/", {"status": TaskStatus.DONE.value}, format="json"
     )
     assert patched.status_code == 200, patched.content
 

@@ -97,7 +97,7 @@ def test_member_cannot_edit_or_delete_someone_elses_task(env, foreign_task):
 
     move = env.member_client.patch(
         task_url(foreign_task["id"], "move/"),
-        {"list_id": str(env.list.id), "status_id": foreign_task["status_id"]},
+        {"list_id": str(env.list.id), "status": foreign_task["status"]},
         format="json",
     )
     assert_error(move, 403, "permission_denied")

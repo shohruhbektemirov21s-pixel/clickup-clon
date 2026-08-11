@@ -280,7 +280,8 @@ def test_reset_all_roles(env):
     assert body["overrides"] == []
     for role in ("admin", "member", "guest"):
         assert body["roles"][role]["permissions"] == sorted(DEFAULT_MATRIX[role])
-    # 3 rol × butun katalog — sanoq katalog bilan birga o'sadi (v5: 147).
+    # 3 rol × FAOL katalog — sanoq katalog bilan birga o'zgaradi (v6: 141;
+    # eskirgan kodlar materializatsiya qilinmaydi).
     assert RolePermission.objects.filter(workspace=env.workspace).count() == len(ALL_CODES) * 3
 
 

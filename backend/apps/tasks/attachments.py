@@ -418,7 +418,7 @@ class TaskAttachmentsView(APIView):
     def post(self, request, task_id):
         task, membership = get_task(request.user, task_id)
         require_space_perm(membership, task.list.space, "attachment.create")
-        # ATAYLAB: `task.completed_at` / `status.type == "closed"` tekshirilmaydi.
+        # ATAYLAB: `task.completed_at` / `status == "done"` tekshirilmaydi.
         # Bajarilgan vazifaga hujjat biriktirish mahsulot talabi (§10.7).
         upload, original_name, content_type, extension = validate_upload(request)
         attachment = services.create_attachment(

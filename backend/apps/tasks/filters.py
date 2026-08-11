@@ -3,12 +3,12 @@
 import zoneinfo
 from datetime import timedelta
 
-from django.db.models import Q
+from django.db.models import Case, IntegerField, Q, Value, When
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from apps.core.api import parse_bool
-from apps.core.enums import Priority, StatusType
+from apps.core.enums import CLOSED_STATUSES, STATUS_ORDER, Priority, TaskStatus
 
 ALLOWED_ORDERING_FIELDS = {
     "position",
@@ -18,6 +18,28 @@ ALLOWED_ORDERING_FIELDS = {
     "updated_at",
     "title",
 }
+
+
+#: Doska ustunlarining tartibini tekis ro'yxatga ham olib kiruvchi annotatsiya.
+#: `status` endi kod bo'lgani uchun alifbo bo'yicha saralash noto'g'ri
+#: bo'lardi ("done" < "in_progress" < "review" < "todo" — doskaning aynan
+#: teskarisi). Ilgari bu tartib `statuses.order` ustunidan kelardi.
+STATUS_RANK_FIELD = "_status_rank"
+
+
+def annotate_status_rank(qs):
+    return qs.annotate(
+        **{
+            STATUS_RANK_FIELD: Case(
+                *[
+                    When(status=code, then=Value(index))
+                    for index, code in enumerate(STATUS_ORDER)
+                ],
+                default=Value(len(STATUS_ORDER)),
+                output_field=IntegerField(),
+            )
+        }
+    )
 
 
 def caller_tz(user):
@@ -33,13 +55,10 @@ def apply_task_filters(qs, request, membership):
 
     statuses = params.getlist("status")
     if statuses:
-        qs = qs.filter(status_id__in=statuses)
-
-    status_type = params.get("status_type")
-    if status_type:
-        if status_type not in StatusType.values:
-            raise ValidationError({"status_type": ["Must be open, active or closed."]})
-        qs = qs.filter(status__type=status_type)
+        bad = [s for s in statuses if s not in TaskStatus.values]
+        if bad:
+            raise ValidationError({"status": [f"Invalid status: {', '.join(bad)}."]})
+        qs = qs.filter(status__in=statuses)
 
     assignees = params.getlist("assignee")
     if assignees:
@@ -74,7 +93,7 @@ def apply_task_filters(qs, request, membership):
         local_now = now.astimezone(tz)
         start_of_day = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
         if due == "overdue":
-            qs = qs.filter(due_date__lt=now).exclude(status__type=StatusType.CLOSED)
+            qs = qs.filter(due_date__lt=now).exclude(status__in=CLOSED_STATUSES)
         elif due == "today":
             qs = qs.filter(
                 due_date__gte=start_of_day, due_date__lt=start_of_day + timedelta(days=1)

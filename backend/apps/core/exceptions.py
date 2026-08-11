@@ -1,5 +1,7 @@
 """API exceptions carrying the contract's closed error-code vocabulary."""
 
+from typing import Any
+
 from rest_framework import status
 from rest_framework.exceptions import APIException
 
@@ -7,10 +9,18 @@ from rest_framework.exceptions import APIException
 class ApiError(APIException):
     """An exception whose ``api_code`` flows straight into the error envelope."""
 
-    status_code = status.HTTP_400_BAD_REQUEST
+    # `int` ATAYLAB: quyidagi sinflar (Conflict va h.k.) buni boshqa kodga
+    # almashtiradi, `Literal[400]` esa ularni tip xatosiga aylantirardi.
+    status_code: int = status.HTTP_400_BAD_REQUEST
     api_code = "bad_request"
 
-    def __init__(self, message=None, details=None, code=None, status_code=None):
+    def __init__(
+        self,
+        message: str | None = None,
+        details: dict[str, Any] | None = None,
+        code: str | None = None,
+        status_code: int | None = None,
+    ) -> None:
         if code is not None:
             self.api_code = code
         if status_code is not None:
@@ -31,7 +41,7 @@ class PositionConflict(Conflict):
     default_detail = "Neighbours are stale; refetch the column and retry."
 
 
-class InvalidStatusForList(ApiError):
-    status_code = status.HTTP_400_BAD_REQUEST
-    api_code = "invalid_status_for_list"
-    default_detail = "Status does not belong to this list's effective status set."
+# `InvalidStatusForList` (`invalid_status_for_list`) OLIB TASHLANDI: status
+# endi ro'yxatga bog'liq emas (`apps.core.enums.TaskStatus` — yopiq kod
+# to'plami), ya'ni "bu status shu ro'yxatga tegishli emas" holati mavjud
+# emas. Noma'lum kod oddiy `validation_error` (400) beradi.

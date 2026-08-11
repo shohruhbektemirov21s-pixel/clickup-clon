@@ -19,15 +19,13 @@ from apps.workspaces.models import (
     RolePermission,
     Space,
     SpaceMember,
-    Status,
-    StatusSet,
     TaskList,
     Workspace,
     WorkspaceMember,
 )
 
-admin.site.site_header = "Clickish boshqaruvi"
-admin.site.site_title = "Clickish admin"
+admin.site.site_header = "UzWork boshqaruvi"
+admin.site.site_title = "UzWork admin"
 admin.site.index_title = "Boshqaruv paneli"
 
 
@@ -349,13 +347,3 @@ class FolderAdmin(admin.ModelAdmin):
 class TaskListAdmin(admin.ModelAdmin):
     list_display = ("name", "space", "folder", "archived", "task_count", "position")
 
-
-@admin.register(StatusSet)
-class StatusSetAdmin(admin.ModelAdmin):
-    list_display = ("name", "space", "list")
-
-
-@admin.register(Status)
-class StatusAdmin(admin.ModelAdmin):
-    list_display = ("name", "status_set", "type", "order", "is_default")
-    list_filter = ("type",)

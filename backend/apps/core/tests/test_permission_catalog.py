@@ -21,11 +21,18 @@ from apps.core.permissions import (
     grouped_catalog,
 )
 
-# §A — "Jami: 49 kod, 9 guruh."
+# §A — katalogdagi kodlar soni. Kodlar HECH QACHON o'chirilmaydi, faqat
+# `deprecated=True` bo'ladi — shuning uchun `PERMISSIONS` uzunligi (va
+# frontend union'i) 49 bo'lib qoladi, FAOL kodlar soni esa kamayadi.
 # v2: `attachment` guruhi + 4 kod → 48.
 # v5: `space.change_visibility` (AppSec) → 49.
+# v6: `space.manage_statuses` + `list.manage_statuses` eskirdi → faol 47.
 EXPECTED_CODE_COUNT = 49
+EXPECTED_ACTIVE_CODE_COUNT = 47
 EXPECTED_GROUP_COUNT = 9
+
+#: Eskirgan (lekin katalogda qolgan) kodlar — §7 status migratsiyasi.
+DEPRECATED_CODES = {"space.manage_statuses", "list.manage_statuses"}
 
 #: AD-9 — kutilgan defaultlar (§A jadvali + `API_CONTRACT.md` §1.7).
 #:
@@ -33,7 +40,7 @@ EXPECTED_GROUP_COUNT = 9
 #: emas, **yangi siyosatni** kodifikatsiya qiladi: `member` — "ko'radi va
 #: o'ziga biriktirilganini bajaradi". Struktura (bo'lim/jild/ro'yxat), begona
 #: vazifani tahrirlash/o'chirish/ko'chirish va teg tahriri admin+ ga o'tdi.
-POLICY_EXPECTATIONS = {
+POLICY_EXPECTATIONS: dict[str, dict[str, set[str]]] = {
     # (kod → kutilgan default rollar)
     "owner-only (defaults bo'sh)": {
         "workspace.update": set(),
@@ -53,7 +60,6 @@ POLICY_EXPECTATIONS = {
         "space.change_visibility": {"admin"},
         "space.delete": {"admin"},
         "space.manage_members": {"admin"},
-        "space.manage_statuses": {"admin"},
         # ↓ 2026-08 da member'dan olib tashlandi
         "folder.create": {"admin"},
         "folder.update": {"admin"},
@@ -63,7 +69,6 @@ POLICY_EXPECTATIONS = {
         "list.update": {"admin"},
         "list.delete": {"admin"},
         "list.move": {"admin"},
-        "list.manage_statuses": {"admin"},
         "task.update": {"admin"},
         "task.delete": {"admin"},
         "task.move": {"admin"},
@@ -141,8 +146,26 @@ MEMBER_REVOKED = {
 def test_catalog_size_and_groups():
     assert len(PERMISSIONS) == EXPECTED_CODE_COUNT
     assert len(PERMISSION_BY_CODE) == EXPECTED_CODE_COUNT  # kodlar takrorlanmaydi
+    assert len(ALL_CODES) == EXPECTED_ACTIVE_CODE_COUNT
     assert len(PERMISSION_GROUPS) == EXPECTED_GROUP_COUNT
     assert {p.group for p in PERMISSIONS} == set(PERMISSION_GROUPS)
+
+
+def test_deprecated_codes_stay_in_the_catalog_but_leave_every_grant_set():
+    """Kod o'chirilmaydi, lekin faol to'plamlardan chiqadi (§7).
+
+    `PERMISSION_BY_CODE` da qoladi — eski `RolePermission` qatorlari
+    `clean()` da "Noma'lum ruxsat kodi" bo'lib qolmasin.
+    """
+    from apps.core.access import SPACE_MANAGER_GRANTS, SPACE_VIEWER_GRANTS
+
+    for code in sorted(DEPRECATED_CODES):
+        assert PERMISSION_BY_CODE[code].deprecated is True, code
+        assert code not in ALL_CODES, code
+        assert code not in SPACE_MANAGER_GRANTS, code
+        assert code not in SPACE_VIEWER_GRANTS, code
+        for role in ASSIGNABLE_ROLES:
+            assert code not in DEFAULT_MATRIX[role], (code, role)
 
 
 def test_permission_code_format():

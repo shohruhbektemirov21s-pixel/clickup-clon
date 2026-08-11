@@ -18,7 +18,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import override_settings
 
-from apps.core.enums import ActivityVerb, StatusType
+from apps.core.enums import ActivityVerb, TaskStatus
 from apps.tasks.attachments import (
     content_disposition,
     sanitize_original_name,
@@ -65,16 +65,15 @@ def task(env):
 @pytest.fixture
 def closed_task(env):
     """Yopiq (`closed`) statusdagi vazifa — `completed_at` to'ldirilgan."""
-    closed = next(s for s in env.statuses if s.type == StatusType.CLOSED)
     response = env.member_client.post(
         f"/api/v1/lists/{env.list.id}/tasks/",
-        {"title": "Bajarilgan vazifa", "status_id": str(closed.id)},
+        {"title": "Bajarilgan vazifa", "status": TaskStatus.DONE.value},
         format="json",
     )
     assert response.status_code == 201, response.content
     task = Task.objects.get(pk=response.json()["id"])
     assert task.completed_at is not None
-    assert task.status.type == StatusType.CLOSED
+    assert task.status == TaskStatus.DONE
     return task
 
 

@@ -22,6 +22,11 @@ urlpatterns = [
         name="member-list",
     ),
     path(
+        "workspaces/<uuid:workspace_id>/user-search/",
+        views.WorkspaceUserSearchView.as_view(),
+        name="workspace-user-search",
+    ),
+    path(
         "workspaces/<uuid:workspace_id>/members/leave/",
         views.MemberLeaveView.as_view(),
         name="member-leave",
@@ -64,11 +69,6 @@ urlpatterns = [
         name="space-list",
     ),
     path("spaces/<uuid:space_id>/", views.SpaceDetailView.as_view(), name="space-detail"),
-    path(
-        "spaces/<uuid:space_id>/status-set/",
-        views.SpaceStatusSetView.as_view(),
-        name="space-status-set",
-    ),
     # space members (docs/DESIGN_PERMISSIONS.md D.6) — `bulk/` `<uuid:user_id>/`
     # dan OLDIN kelishi shart, aks holda u hech qachon mos kelmaydi.
     path(
@@ -97,11 +97,6 @@ urlpatterns = [
     path("spaces/<uuid:space_id>/lists/", views.ListListCreateView.as_view(), name="list-list"),
     path("lists/<uuid:list_id>/", views.ListDetailView.as_view(), name="list-detail"),
     path("lists/<uuid:list_id>/move/", views.ListMoveView.as_view(), name="list-move"),
-    path(
-        "lists/<uuid:list_id>/status-set/",
-        views.ListStatusSetView.as_view(),
-        name="list-status-set",
-    ),
     # permissions (docs/DESIGN_PERMISSIONS.md D.1-D.5)
     path("permissions/", views.PermissionCatalogView.as_view(), name="permission-catalog"),
     path(

@@ -231,7 +231,7 @@ def test_role_permission_admin_is_superuser_only():
 
 
 def test_admin_site_is_branded_in_uzbek():
-    assert django_admin.site.site_header == "Clickish boshqaruvi"
+    assert django_admin.site.site_header == "UzWork boshqaruvi"
     assert django_admin.site.site_title
     assert django_admin.site.index_title
 

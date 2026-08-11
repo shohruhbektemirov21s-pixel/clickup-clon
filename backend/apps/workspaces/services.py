@@ -11,11 +11,11 @@ from django.utils.text import slugify
 from rest_framework.exceptions import ValidationError
 
 from apps.core.enums import (
+    CLOSED_STATUSES,
     AssignableRole,
     InvitationStatus,
     SpaceAccess,
     SpaceMemberSource,
-    StatusType,
     WorkspaceRole,
 )
 from apps.core.exceptions import Conflict, PositionConflict
@@ -27,18 +27,10 @@ from apps.workspaces.models import (
     RolePermission,
     Space,
     SpaceMember,
-    Status,
-    StatusSet,
     TaskList,
     Workspace,
     WorkspaceMember,
 )
-
-DEFAULT_STATUSES = [
-    {"name": "BAJARILADI", "type": StatusType.OPEN, "color": "#87909E", "is_default": True},
-    {"name": "JARAYONDA", "type": StatusType.ACTIVE, "color": "#4194F6", "is_default": False},
-    {"name": "BAJARILDI", "type": StatusType.CLOSED, "color": "#6BC950", "is_default": False},
-]
 
 
 def check_client_id(model, supplied_id, *, scope=None):
@@ -89,20 +81,6 @@ def generate_slug(name: str) -> str:
     while Workspace.objects.filter(slug=slug).exists():
         slug = f"{base[:120]}-{secrets.token_hex(3)}"
     return slug
-
-
-def seed_default_statuses(status_set: StatusSet) -> list[Status]:
-    return [
-        Status.objects.create(
-            status_set=status_set,
-            name=s["name"],
-            type=s["type"],
-            color=s["color"],
-            order=i,
-            is_default=s["is_default"],
-        )
-        for i, s in enumerate(DEFAULT_STATUSES)
-    ]
 
 
 def ensure_role_permissions(workspace) -> int:
@@ -331,8 +309,6 @@ def create_space(workspace, actor, *, name, description="", color=None, icon="",
         position=next_position(Space.objects.filter(workspace=workspace)),
         created_by=actor,
     )
-    status_set = StatusSet.objects.create(space=space, name="Standart")
-    seed_default_statuses(status_set)
     # §B.6 — yaratuvchi bo'limning menejeri (PM) bo'ladi.
     if actor is not None:
         ensure_space_member(
@@ -415,7 +391,7 @@ def set_space_visibility(space, *, is_private, actor=None) -> Space:
 @transaction.atomic
 def bootstrap_workspace(user, *, name, description="", color=None, workspace_id=None) -> Workspace:
     """DATA_MODEL.md section 11: workspace + owner membership + "Jamoa bo'limi"
-    space + default status set + an empty "Boshlash" list.
+    space + an empty "Boshlash" list.
 
     The list ships empty on purpose: a brand-new account should start from zero
     rather than from placeholder tasks it has to clean up first.
@@ -451,9 +427,6 @@ def bootstrap_workspace(user, *, name, description="", color=None, workspace_id=
         source=SpaceMemberSource.AUTO_CREATOR,
         added_by=user,
     )
-    status_set = StatusSet.objects.create(space=space, name="Standart")
-    seed_default_statuses(status_set)
-
     TaskList.objects.create(
         space=space, folder=None, name="Boshlash", position="n", created_by=user
     )
@@ -466,7 +439,7 @@ def refresh_member_count(workspace):
 
 
 @transaction.atomic
-def remove_workspace_member(membership) -> None:
+def remove_workspace_member(membership, *, actor=None) -> None:
     """A'zolikni + shu ish maydonidagi biriktirilgan/kuzatuvchi qatorlarini o'chiradi.
 
     HAMMASI BITTA TRANZAKSIYADA. Bu yerda beshta yozish bor (assignee, watcher,
@@ -493,8 +466,22 @@ def remove_workspace_member(membership) -> None:
     SpaceMember.objects.filter(user=membership.user, space__workspace=workspace).delete()
     user_id = membership.user_id
     workspace_id = workspace.id
+    removed_user = membership.user
     membership.delete()
     refresh_member_count(workspace)
+    # O'zi chiqib ketgan odamga xabar yozilmaydi — `notify()` `actor is user`
+    # holatini o'zi tashlab yuboradi (`MemberLeaveView` shu yo'ldan keladi).
+    from apps.notifications.services import NotificationKind, notify
+
+    notify(
+        user=removed_user,
+        actor=actor,
+        workspace=workspace,
+        kind=NotificationKind.MEMBER_REMOVED,
+        title=f"«{workspace.name}» ish maydonidan chiqarildingiz",
+        body="Bu ish maydoni endi sizga ko'rinmaydi.",
+        url="/",
+    )
     # REST endi 404 qaytaradi, lekin ochiq WebSocket soketi a'zolikni faqat
     # `connect()` da bir marta tekshirgan — xabarsiz u chiqarilgan odamga
     # `task.*`/`comment.*` freymlarini oqizishda davom etardi. `space_id=None`
@@ -519,7 +506,7 @@ def refresh_list_counts(task_list, *, actor=None, client_id=None, emit=False):
     task_list.task_count = Task.objects.filter(list=task_list, archived=False).count()
     task_list.open_task_count = (
         Task.objects.filter(list=task_list, archived=False)
-        .exclude(status__type=StatusType.CLOSED)
+        .exclude(status__in=CLOSED_STATUSES)
         .count()
     )
     task_list.save(update_fields=["task_count", "open_task_count", "updated_at"])
@@ -528,9 +515,12 @@ def refresh_list_counts(task_list, *, actor=None, client_id=None, emit=False):
 
 
 # --- hard deletes ------------------------------------------------------------
-# Django's deletion collector raises ProtectedError for Task.status even when
-# the tasks are part of the same cascade, so container deletes hard-delete the
-# tasks first (docs/DATA_MODEL.md section 10 deletion matrix).
+# Idish (workspace/space/folder/list) o'chirilganda vazifalar AVVAL qattiq
+# o'chiriladi (docs/DATA_MODEL.md §10 o'chirish matritsasi). Ilgari buning
+# sababi `Task.status` FK dagi `PROTECT` edi; endi status kod bo'lgani uchun
+# `ProtectedError` yo'q, lekin qadam ataylab qoldirilgan: u yumshoq
+# o'chirilgan (soft-deleted) qatorlarni ham `all_objects` orqali qamrab oladi
+# va biriktirma/faoliyat cascade'ini bashorat qilinadigan tartibda ushlaydi.
 
 
 def _hard_delete_tasks(task_filter):
@@ -564,6 +554,81 @@ def hard_delete_list(task_list):
 
 
 # --- invitations ------------------------------------------------------------
+
+
+def _notify_member_added(workspace, member, actor) -> None:
+    """Yangi a'zoga «qo'shildingiz», adminlarga «jamoaga qo'shildi».
+
+    Ikkinchisi ataylab **faqat** `member.invite` huquqiga ega rollarga emas,
+    balki owner/admin larga boradi: bu jamoa tarkibi haqidagi xabar, ya'ni
+    uni ko'rish huquqi rol darajasida hal bo'ladi va matritsa o'zgarganda
+    xabar oqimi jimgina o'chib qolmaydi.
+    """
+    from apps.notifications.services import NotificationKind, notify, notify_many
+
+    actor_name = getattr(actor, "full_name", "") or getattr(actor, "email", "") or "Administrator"
+    notify(
+        user=member.user,
+        actor=actor,
+        workspace=workspace,
+        kind=NotificationKind.MEMBER_ADDED,
+        title=f"«{workspace.name}» ish maydoniga qo'shildingiz",
+        body=f"{actor_name} sizni jamoaga qo'shdi.",
+        url=f"/w/{workspace.id}",
+    )
+    admins = [
+        m.user
+        for m in WorkspaceMember.objects.select_related("user")
+        .filter(workspace=workspace, role__in=[WorkspaceRole.OWNER, WorkspaceRole.ADMIN])
+        .exclude(user_id=member.user_id)
+    ]
+    member_name = member.user.full_name or member.user.email
+    notify_many(
+        admins,
+        actor=actor,
+        workspace=workspace,
+        kind=NotificationKind.MEMBER_JOINED,
+        title="Jamoaga yangi a'zo qo'shildi",
+        body=f"{member_name} «{workspace.name}» jamoasiga qo'shildi.",
+        url=f"/w/{workspace.id}/settings/members",
+    )
+
+
+@transaction.atomic
+def add_workspace_member(workspace, actor, *, user, role) -> WorkspaceMember:
+    """Ro'yxatdan o'tgan foydalanuvchini TAKLIFSIZ, to'g'ridan-to'g'ri qo'shish.
+
+    Taklif oqimidan farqi: hech qanday token, email yoki qabul qilish qadami
+    yo'q — a'zolik shu yerda tug'iladi. Shuning uchun:
+
+    * `role` `InvitationRole` bilan bir xil to'plamdan (owner YO'Q) —
+      egalik faqat `PATCH members/{id}/` orqali o'tadi va u alohida
+      `member.role_change` + rank guard bilan himoyalangan;
+    * a'zo allaqachon bo'lsa `409` (idempotent «yana qo'shish» emas: rolni
+      jimgina o'zgartirib yuborish xavfli bo'lardi);
+    * shu emailga ochiq taklif qolgan bo'lsa u `accepted` qilinadi, aks holda
+      «pending» taklif abadiy osilib qolardi va `uniq_pending_invite…`
+      cheklovi keyingi taklifni bloklardi.
+
+    Bildirishnoma commit'dan keyin chiqadi (`notify()` → `on_commit`).
+    """
+    if WorkspaceMember.objects.filter(workspace=workspace, user=user).exists():
+        raise Conflict("Bu foydalanuvchi allaqachon ish maydoni a'zosi.")
+
+    member = WorkspaceMember.objects.create(
+        workspace=workspace, user=user, role=role, invited_by=actor
+    )
+    Invitation.objects.filter(
+        workspace=workspace, email__iexact=user.email, status=InvitationStatus.PENDING
+    ).update(
+        status=InvitationStatus.ACCEPTED,
+        accepted_at=timezone.now(),
+        accepted_by=user,
+        updated_at=timezone.now(),
+    )
+    refresh_member_count(workspace)
+    _notify_member_added(workspace, member, actor)
+    return member
 
 
 def create_invitation(workspace, actor, *, email, role) -> Invitation:
@@ -610,7 +675,31 @@ def accept_invitation(invitation, user):
     invitation.accepted_by = user
     invitation.save(update_fields=["status", "accepted_at", "accepted_by", "updated_at"])
     refresh_member_count(invitation.workspace)
+    _notify_invitation_accepted(invitation, user)
     return member
+
+
+def _notify_invitation_accepted(invitation, user) -> None:
+    """Taklifni yuborgan odam «qabul qilindi» xabarini oladi.
+
+    Taklif oqimida `create_invitation()` da bildirishnoma YO'Q — o'sha
+    paytda qabul qiluvchining hisobi hali mavjud emas (email bo'yicha
+    taklif), ya'ni yozib qo'yadigan `user` ham yo'q. Xabar shu yerda,
+    a'zolik haqiqatan tug'ilganda chiqadi.
+    """
+    from apps.notifications.services import NotificationKind, notify
+
+    workspace = invitation.workspace
+    name = user.full_name or user.email
+    notify(
+        user=invitation.invited_by,
+        actor=user,
+        workspace=workspace,
+        kind=NotificationKind.INVITATION_ACCEPTED,
+        title="Taklif qabul qilindi",
+        body=f"{name} «{workspace.name}» jamoasiga qo'shildi.",
+        url=f"/w/{workspace.id}/settings/members",
+    )
 
 
 # --- list move (fractional position) ----------------------------------------
@@ -704,198 +793,3 @@ def detach_folder_lists(folder):
         task_list.folder = None
         task_list.position = last
         task_list.save(update_fields=["folder", "position", "updated_at"])
-
-
-# --- status sets -------------------------------------------------------------
-
-
-def _repoint_tasks(tasks_by_old_status, mapping, new_statuses_by_id, *, actor, client_id):
-    """Re-point tasks whose status disappeared. One task.updated per task.
-    Positions are kept; only a directly-colliding key is nudged (never a renumber)."""
-    from apps.tasks.models import Task
-
-    touched_lists = set()
-    for old_status_id, tasks in tasks_by_old_status.items():
-        target = new_statuses_by_id[str(mapping[str(old_status_id)])]
-        for task in tasks:
-            desired = task.position
-            while (
-                Task.objects.filter(
-                    list_id=task.list_id, status=target, position=desired
-                )
-                .exclude(pk=task.pk)
-                .exists()
-            ):
-                nxt = (
-                    Task.objects.filter(
-                        list_id=task.list_id, status=target, position__gt=desired
-                    )
-                    .exclude(pk=task.pk)
-                    .order_by("position")
-                    .values_list("position", flat=True)
-                    .first()
-                )
-                desired = midstring(desired, nxt)
-            task.status = target
-            task.position = desired
-            if target.type == StatusType.CLOSED:
-                if task.completed_at is None:
-                    task.completed_at = timezone.now()
-            else:
-                task.completed_at = None
-            task.save(update_fields=["status", "position", "completed_at", "updated_at"])
-            touched_lists.add(task.list_id)
-            if not task.is_deleted:
-                events.emit_task_event("task.updated", task, actor=actor, client_id=client_id)
-    for list_id in touched_lists:
-        refresh_list_counts(TaskList.objects.get(pk=list_id))
-
-
-def _validate_mapping(referenced_old, new_ids, mapping):
-    missing = [str(s.id) for s in referenced_old if str(s.id) not in mapping]
-    bad_targets = [
-        str(old_id) for old_id, new_id in mapping.items() if str(new_id) not in new_ids
-    ]
-    if missing or bad_targets:
-        raise Conflict(
-            "status_mapping must cover every status still referenced by tasks.",
-            details={
-                "status_mapping": {
-                    "missing": missing,
-                    "invalid_targets": bad_targets,
-                }
-            },
-        )
-
-
-@transaction.atomic
-def replace_status_set(*, space=None, task_list=None, data, actor, client_id=None) -> StatusSet:
-    """PUT spaces/{id}/status-set/ or PUT lists/{id}/status-set/ (contract section 9)."""
-    from apps.tasks.models import Task
-
-    statuses_data = data["statuses"]
-    mapping = {str(k): str(v) for k, v in (data.get("status_mapping") or {}).items()}
-
-    creating_override = False
-    if task_list is not None:
-        status_set = StatusSet.objects.filter(list=task_list).first()
-        if status_set is None:
-            creating_override = True
-            status_set = StatusSet.objects.create(
-                list=task_list, name=data.get("name") or "Standart"
-            )
-        affected_tasks = Task.all_objects.filter(list=task_list)
-        old_reference_statuses = (
-            list(task_list.space.status_set.statuses.all())
-            if creating_override
-            else list(status_set.statuses.all())
-        )
-    else:
-        status_set = space.status_set
-        affected_tasks = Task.all_objects.filter(
-            list__space=space, list__status_set__isnull=True
-        )
-        old_reference_statuses = list(status_set.statuses.all())
-
-    if data.get("name"):
-        status_set.name = data["name"]
-        status_set.save(update_fields=["name", "updated_at"])
-
-    existing = {str(s.id): s for s in status_set.statuses.all()}
-    sent_ids = {str(s["id"]) for s in statuses_data if s.get("id")}
-    kept = [existing[i] for i in sent_ids if i in existing]
-    removed = [s for i, s in existing.items() if i not in sent_ids]
-
-    # Which old statuses are still referenced by tasks but absent from the new set?
-    referenced = [
-        s
-        for s in old_reference_statuses
-        if (str(s.id) not in sent_ids or creating_override)
-        and affected_tasks.filter(status=s).exists()
-    ]
-    # Pass 1: park kept rows out of the way (order offset, temp names, clear default).
-    for i, status in enumerate(kept):
-        status.order = 1000 + i
-        status.is_default = False
-        status.name = f"__tmp_{i}_{uuid.uuid4().hex[:8]}"
-        status.save(update_fields=["order", "is_default", "name", "updated_at"])
-
-    # Create brand-new statuses (final order assigned from array index).
-    new_statuses_by_id = {}
-    final_rows = []
-    for index, sdata in enumerate(statuses_data):
-        sid = str(sdata["id"]) if sdata.get("id") else None
-        if sid and sid in existing:
-            row = existing[sid]
-        else:
-            if sid:
-                sid = check_client_id(
-                    Status, sid, scope=Status.objects.filter(status_set=status_set)
-                )
-            row = Status(id=sid or uuid.uuid4(), status_set=status_set)
-        row.name = sdata["name"].strip()
-        row.color = sdata.get("color") or "#87909E"
-        row.type = sdata["type"]
-        row.order = index
-        row.is_default = bool(sdata.get("is_default"))
-        final_rows.append(row)
-        new_statuses_by_id[str(row.id)] = row
-
-    _validate_mapping(referenced, set(new_statuses_by_id), mapping)
-
-    # Re-point tasks off removed/foreign statuses BEFORE deleting (Task.status is PROTECT).
-    # Targets must exist in the DB first, so save created rows with parked order.
-    for i, row in enumerate(final_rows):
-        if row._state.adding:
-            row.order = 2000 + i
-            row.is_default = False
-            row.save()
-
-    tasks_by_old = {
-        str(s.id): list(affected_tasks.filter(status=s)) for s in referenced
-    }
-    if tasks_by_old:
-        _repoint_tasks(tasks_by_old, mapping, new_statuses_by_id, actor=actor, client_id=client_id)
-
-    for status in removed:
-        status.delete()
-
-    # Pass 2: final order / names / flags.
-    for index, sdata in enumerate(statuses_data):
-        row = final_rows[index]
-        row.name = sdata["name"].strip()
-        row.color = sdata.get("color") or "#87909E"
-        row.type = sdata["type"]
-        row.order = index
-        row.is_default = bool(sdata.get("is_default"))
-        row.save(update_fields=["name", "color", "type", "order", "is_default", "updated_at"])
-
-    status_set.refresh_from_db()
-    return status_set
-
-
-@transaction.atomic
-def remove_list_status_set(task_list, *, status_mapping, actor, client_id=None) -> StatusSet:
-    """DELETE lists/{id}/status-set/ — map override statuses back to the space's."""
-    from apps.tasks.models import Task
-
-    override = StatusSet.objects.filter(list=task_list).first()
-    if override is None:
-        raise Conflict("This list has no status-set override.")
-    space_set = task_list.space.status_set
-    mapping = {str(k): str(v) for k, v in (status_mapping or {}).items()}
-    space_statuses = {str(s.id): s for s in space_set.statuses.all()}
-
-    affected_tasks = Task.all_objects.filter(list=task_list)
-    referenced = [
-        s for s in override.statuses.all() if affected_tasks.filter(status=s).exists()
-    ]
-    _validate_mapping(referenced, set(space_statuses), mapping)
-
-    tasks_by_old = {str(s.id): list(affected_tasks.filter(status=s)) for s in referenced}
-    if tasks_by_old:
-        _repoint_tasks(tasks_by_old, mapping, space_statuses, actor=actor, client_id=client_id)
-
-    override.delete()
-    task_list.refresh_from_db()
-    return space_set

@@ -24,6 +24,7 @@ Eski `require_role(...)` / `min_role=` chaqiruvlari **o'zgarishsiz** qoladi
 from __future__ import annotations
 
 import contextvars
+from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
 from django.core.cache import cache
@@ -34,6 +35,11 @@ from django.utils import timezone
 from rest_framework.exceptions import NotFound, PermissionDenied
 
 from apps.core.enums import AssignableRole, ROLE_RANK, SpaceAccess, WorkspaceRole
+
+if TYPE_CHECKING:
+    # Faqat tip uchun: ish vaqtida import qilinsa `apps.workspaces` <-> `apps.core`
+    # halqasi paydo bo'lardi (shuning uchun funksiyalar ichida lokal import).
+    from apps.workspaces.models import Space, Workspace, WorkspaceMember
 
 MIN_RANK = {
     "owner": ROLE_RANK[WorkspaceRole.OWNER],
@@ -48,8 +54,10 @@ PERMISSION_CACHE_TTL = 300
 
 #: Bitta HTTP request davomida ko'p membership obyekti uchun umumiy qavat.
 #: Kalit `_cache_key(workspace)` bo'lgani uchun stale bo'lishi mumkin emas.
-_REQUEST_LOCAL: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
-    "wsperm_request_local", default=None
+_REQUEST_LOCAL: contextvars.ContextVar[dict[str, dict[str, frozenset[str]]] | None] = (
+    contextvars.ContextVar(
+        "wsperm_request_local", default=None
+    )
 )
 
 #: `access == viewer` bo'lgan bo'lim a'zosiga qoladigan **yagona** kodlar.
@@ -70,6 +78,9 @@ SPACE_VIEWER_GRANTS = frozenset(
 )
 
 #: `access == manager` (PM) shu bo'lim ichida lokal oladigan kodlar (F-5).
+#: `space.manage_statuses` / `list.manage_statuses` bu yerdan OLIB TASHLANDI:
+#: ular katalogda `deprecated=True` (v6) va endi hech qanday endpointni
+#: qo'riqlamaydi.
 #: `space.delete`, `space.change_visibility`, `member.*`, `workspace.*`,
 #: `tag.*` HECH QACHON kirmaydi.
 SPACE_MANAGER_GRANTS = frozenset(
@@ -77,7 +88,6 @@ SPACE_MANAGER_GRANTS = frozenset(
         "space.read",
         "space.update",
         "space.manage_members",
-        "space.manage_statuses",
         "folder.create",
         "folder.update",
         "folder.delete",
@@ -86,7 +96,6 @@ SPACE_MANAGER_GRANTS = frozenset(
         "list.update",
         "list.delete",
         "list.move",
-        "list.manage_statuses",
         "task.read",
         "task.create",
         "task.update",
@@ -117,7 +126,7 @@ SPACE_MANAGER_GRANTS = frozenset(
 # ---------------------------------------------------------------- membership
 
 
-def get_membership(user, workspace_id):
+def get_membership(user: Any, workspace_id: Any) -> "WorkspaceMember | None":
     from apps.workspaces.models import WorkspaceMember
 
     return (
@@ -127,7 +136,7 @@ def get_membership(user, workspace_id):
     )
 
 
-def remember_membership(user, membership):
+def remember_membership(user: Any, membership: "WorkspaceMember") -> "WorkspaceMember":
     """Chaqiruvchining shu request'dagi a'zoligini `request.user` da saqlaydi.
 
     Nega atribut, nega serializer `context` emas: `UserSummarySerializer`
@@ -142,18 +151,22 @@ def remember_membership(user, membership):
     ataylab `require_membership()` ga uzatilgan `user` obyektiga qo'yiladi.
     """
     try:
+        # So'rov davomidagi memo — modelda maydon emas, shuning uchun
+        # statik tekshiruvchi uni ko'rmaydi (docstring'da sababi bor).
         user._current_membership = membership
     except AttributeError:  # AnonymousUser va sinovdagi soxta obyektlar
         pass
     return membership
 
 
-def current_membership_of(user):
+def current_membership_of(user: Any) -> "WorkspaceMember | None":
     """`remember_membership()` saqlagan a'zolik yoki None."""
     return getattr(user, "_current_membership", None)
 
 
-def require_membership(user, workspace_id, min_role="guest"):
+def require_membership(
+    user: Any, workspace_id: Any, min_role: str = "guest"
+) -> "WorkspaceMember":
     """Return the caller's membership or raise 404 (outside) / 403 (role)."""
     membership = get_membership(user, workspace_id)
     if membership is None:
@@ -164,7 +177,7 @@ def require_membership(user, workspace_id, min_role="guest"):
     return membership
 
 
-def require_role(membership, min_role):
+def require_role(membership: "WorkspaceMember", min_role: str) -> "WorkspaceMember":
     """Legacy rol tekshiruvi — §B.7 shim.
 
     View qatlami to'liq `require_perm` ga ko'chirildi; bu funksiya faqat
@@ -186,12 +199,12 @@ def require_role(membership, min_role):
 # ------------------------------------------------------------ matrix / cache
 
 
-def _cache_key(workspace) -> str:
+def _cache_key(workspace: "Workspace") -> str:
     """AD-4: version kalit ichida → invalidatsiya bir zumda, cross-process."""
     return f"wsperm:{workspace.id}:{workspace.permissions_version}"
 
 
-def _build_matrix(workspace) -> dict[str, frozenset[str]]:
+def _build_matrix(workspace: "Workspace") -> dict[str, frozenset[str]]:
     from apps.core.permissions import DEFAULT_MATRIX, PERMISSION_BY_CODE
     from apps.workspaces.models import RolePermission
 
@@ -206,7 +219,7 @@ def _build_matrix(workspace) -> dict[str, frozenset[str]]:
     return {r: frozenset(v) for r, v in matrix.items()}
 
 
-def effective_permissions(workspace) -> dict[str, frozenset[str]]:
+def effective_permissions(workspace: "Workspace") -> dict[str, frozenset[str]]:
     """Rol → yakuniy ruxsat to'plami (owner bu yerda YO'Q, AD-3).
 
     Uch qavatli kesh: request-local dict → Django cache → DB.
@@ -221,7 +234,7 @@ def effective_permissions(workspace) -> dict[str, frozenset[str]]:
     if key in local:
         return local[key]
 
-    cached = cache.get(key)
+    cached: dict[str, frozenset[str]] | None = cache.get(key)
     if cached is None:
         cached = _build_matrix(workspace)
         cache.set(key, cached, PERMISSION_CACHE_TTL)
@@ -233,7 +246,7 @@ def effective_permissions(workspace) -> dict[str, frozenset[str]]:
 
 
 @transaction.atomic
-def bump_permissions_version(workspace, *, actor=None):
+def bump_permissions_version(workspace: "Workspace", *, actor: Any = None) -> int:
     """Matritsa har o'zgarganda chaqiriladi — R3: yozishning YAGONA yo'li."""
     from apps.realtime import events
     from apps.workspaces.models import Workspace
@@ -244,10 +257,11 @@ def bump_permissions_version(workspace, *, actor=None):
     workspace.refresh_from_db(fields=["permissions_version"])
     _REQUEST_LOCAL.set({})
     transaction.on_commit(lambda: events.emit_permissions_updated(workspace, actor=actor))
-    return workspace.permissions_version
+    version: int = workspace.permissions_version
+    return version
 
 
-def clear_permission_cache():
+def clear_permission_cache() -> None:
     """Testlar / management buyruqlari uchun: request-local qavatni tozalaydi."""
     _REQUEST_LOCAL.set({})
 
@@ -272,7 +286,7 @@ READONLY_ALLOWED_CODES = frozenset(
 )
 
 
-def has_perm(membership, code: str) -> bool:
+def has_perm(membership: "WorkspaceMember", code: str) -> bool:
     from apps.core.permissions import PERMISSION_BY_CODE
 
     if settings.DEBUG and code not in PERMISSION_BY_CODE:
@@ -287,23 +301,25 @@ def has_perm(membership, code: str) -> bool:
     cached = getattr(membership, "_perm_set", None)
     if cached is None:
         cached = effective_permissions(membership.workspace).get(membership.role, frozenset())
-        membership._perm_set = cached
+        # Instans darajasidagi memo (modelda maydon emas) — bitta so'rovda
+        # o'nlab `has_perm` chaqiruvi bitta matritsani qayta hisoblamasin.
+        membership._perm_set = cached  # type: ignore[attr-defined]
     return code in cached
 
 
-def require_perm(membership, code: str):
+def require_perm(membership: "WorkspaceMember", code: str) -> "WorkspaceMember":
     if not has_perm(membership, code):
         raise PermissionDenied()
     return membership
 
 
-def require_membership_perm(user, workspace_id, code: str):
+def require_membership_perm(user: Any, workspace_id: Any, code: str) -> "WorkspaceMember":
     """C.4: avval 404 (a'zo emas), keyin 403 (ruxsat yo'q)."""
     membership = require_membership(user, workspace_id)
     return require_perm(membership, code)
 
 
-def my_permissions(membership) -> frozenset[str]:
+def my_permissions(membership: "WorkspaceMember") -> frozenset[str]:
     from apps.core.permissions import ALL_CODES
 
     granted = (
@@ -321,14 +337,16 @@ def my_permissions(membership) -> frozenset[str]:
 # ------------------------------------------------------------- space scoping
 
 
-def space_access_of(membership, space):
+def space_access_of(membership: "WorkspaceMember", space: "Space") -> str | None:
     """Bu bo'limdagi lokal daraja yoki None."""
     from apps.workspaces.models import SpaceMember
 
     cache_attr = f"_space_access_{space.pk}"
     if hasattr(membership, cache_attr):
-        return getattr(membership, cache_attr)
-    value = (
+        # Nomi dinamik bo'lgani uchun `getattr` `Any` beradi — turini ochiq aytamiz.
+        memoized: str | None = getattr(membership, cache_attr)
+        return memoized
+    value: str | None = (
         SpaceMember.objects.filter(space_id=space.pk, user_id=membership.user_id)
         .values_list("access", flat=True)
         .first()
@@ -337,7 +355,7 @@ def space_access_of(membership, space):
     return value
 
 
-def has_space_perm(membership, space, code: str) -> bool:
+def has_space_perm(membership: "WorkspaceMember", space: "Space", code: str) -> bool:
     """Workspace ruxsati + bo'lim ichidagi lokal daraja (B.5).
 
     - `viewer`   → faqat `SPACE_VIEWER_GRANTS` (eng past huquq g'olib)
@@ -358,7 +376,9 @@ def has_space_perm(membership, space, code: str) -> bool:
     return has_perm(membership, code)
 
 
-def require_space_perm(membership, space, code: str):
+def require_space_perm(
+    membership: "WorkspaceMember", space: "Space", code: str
+) -> "WorkspaceMember":
     if not has_space_perm(membership, space, code):
         raise PermissionDenied()
     return membership
@@ -378,7 +398,7 @@ def _acl_enabled() -> bool:
     return bool(getattr(settings, "SPACE_ACL_ENABLED", False))
 
 
-def space_is_visible(membership, space) -> bool:
+def space_is_visible(membership: "WorkspaceMember", space: "Space") -> bool:
     """B.5 visibility predikati (bayroq yoqilganda)."""
     if membership.role == WorkspaceRole.OWNER:
         return True
@@ -394,13 +414,13 @@ def space_is_visible(membership, space) -> bool:
     return True
 
 
-def check_space_visible(membership, space):
+def check_space_visible(membership: "WorkspaceMember", space: "Space") -> None:
     """Ko'rinmasa 404 — mavjudlik oshkor qilinmaydi."""
     if not space_is_visible(membership, space):
         raise NotFound()
 
 
-def visible_spaces_q(membership):
+def visible_spaces_q(membership: "WorkspaceMember") -> Q:
     """C.5 — bo'lim ro'yxatlari uchun yagona filtr."""
     if membership.role == WorkspaceRole.OWNER:
         return Q()

@@ -8,7 +8,10 @@ class WorkspaceRole(models.TextChoices):
     GUEST = "guest", "Guest"
 
 
-ROLE_RANK = {
+#: Kalitlar `TextChoices` a'zolari (ular `str` ning o'zi), qiymat — daraja.
+#: Tip ATAYLAB `dict[str, int]`: chaqiruvchilar `membership.role` ni
+#: (oddiy `CharField` qiymati) kalit sifatida beradi.
+ROLE_RANK: dict[str, int] = {
     WorkspaceRole.OWNER: 4,
     WorkspaceRole.ADMIN: 3,
     WorkspaceRole.MEMBER: 2,
@@ -77,16 +80,39 @@ class InvitationStatus(models.TextChoices):
     EXPIRED = "expired", "Expired"
 
 
-class StatusType(models.TextChoices):
-    OPEN = "open", "Not started"
-    ACTIVE = "active", "Active"
-    CLOSED = "closed", "Closed"
+class TaskStatus(models.TextChoices):
+    """Vazifa holati — YOPIQ to'plam, kodda yashaydi (DB'da sozlanmaydi).
+
+    Ikkinchi element (o'zbekcha yorliq) faqat Django admin uchun: API HECH
+    QACHON `label` ni saqlamaydi va faqat kodni qaytaradi. Doska ustunlari
+    ham shu ro'yxatdan quriladi, ya'ni ustun to'plami har bir ro'yxat uchun
+    bir xil va serverdan keladi.
+    """
+
+    TODO = "todo", "Boshlanmagan"
+    IN_PROGRESS = "in_progress", "Jarayonda"
+    REVIEW = "review", "Tekshirilmoqda"
+    DONE = "done", "Bajarildi"
+
+
+#: Yopiq (bajarilgan) deb hisoblanadigan kodlar. `completed_at` shu to'plamga
+#: kirganda o'rnatiladi, chiqqanda tozalanadi.
+CLOSED_STATUSES = frozenset({TaskStatus.DONE})
+
+#: Doskadagi ustunlar tartibi — `?group_by=status` javobi AYNAN shu tartibda,
+#: doim to'rtta guruh qaytaradi (bo'sh bo'lsa ham).
+STATUS_ORDER = [TaskStatus.TODO, TaskStatus.IN_PROGRESS, TaskStatus.REVIEW, TaskStatus.DONE]
+
+#: Kod → ro'yxatdagi o'rni. Tekis ro'yxat javobining sukut tartibi ham shu
+#: bo'yicha (alifbo bo'yicha emas: "done" < "in_progress" < "review" < "todo"
+#: doskaning teskarisi bo'lardi).
+STATUS_RANK = {code: index for index, code in enumerate(STATUS_ORDER)}
 
 
 class Priority(models.TextChoices):
     URGENT = "urgent", "Urgent"
     HIGH = "high", "High"
-    NORMAL = "normal", "Normal"
+    MEDIUM = "medium", "Medium"
     LOW = "low", "Low"
     NONE = "none", "No priority"
 
@@ -94,7 +120,7 @@ class Priority(models.TextChoices):
 PRIORITY_ORDER = {
     Priority.URGENT: 1,
     Priority.HIGH: 2,
-    Priority.NORMAL: 3,
+    Priority.MEDIUM: 3,
     Priority.LOW: 4,
     Priority.NONE: 5,
 }

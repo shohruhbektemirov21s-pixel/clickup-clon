@@ -216,7 +216,7 @@ def test_task_moved_event_frame_carries_the_rebalanced_flag(env):
         task_url(second["id"], "move/"),
         {
             "list_id": str(env.list.id),
-            "status_id": second["status_id"],
+            "status": second["status"],
             "before_id": first["id"],
         },
         format="json",

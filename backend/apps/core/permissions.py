@@ -35,6 +35,7 @@ Kodlar **hech qachon o'chirilmaydi**, faqat ``deprecated=True`` qilinadi.
 
 from __future__ import annotations
 
+from typing import Any
 import re
 from dataclasses import dataclass
 
@@ -48,7 +49,12 @@ from dataclasses import dataclass
 #      `is_private` bayrog'i endi `space.update` dan alohida, admin-only kod
 #      bilan himoyalangan — bo'lim menejeri (PM) yopiq bo'limni butun jamoaga
 #      ocha olmaydi (AppSec, `space.delete` bilan bir xil mantiq).
-CATALOG_VERSION = 5
+# v6 — `space.manage_statuses` va `list.manage_statuses` `deprecated=True`.
+#      Status to'plami DB'dan olib tashlandi (`apps.core.enums.TaskStatus`),
+#      ya'ni bu kodlar endi HECH QANDAY endpointni qo'riqlamaydi. Kodlar
+#      O'CHIRILMAYDI (yuqoridagi qoida), faqat katalogdan/matritsadan
+#      chiqariladi: faol kodlar 49 → 47.
+CATALOG_VERSION = 6
 
 CODE_RE = re.compile(r"^[a-z_]+\.[a-z_]+$")
 MAX_CODE_LENGTH = 64
@@ -276,8 +282,11 @@ PERMISSIONS: tuple[PermissionDef, ...] = (
         code="space.manage_statuses",
         group="space",
         label="Bo'lim statuslarini boshqarish",
-        description="Bo'limning status to'plamini almashtirish.",
+        description="ESKIRGAN — status to'plami endi sozlanmaydi. Vazifa holati "
+        "kodda qat'iy belgilangan (`todo`/`in_progress`/`review`/`done`), "
+        "shuning uchun bu kod hech qanday endpointni qo'riqlamaydi.",
         defaults=A,
+        deprecated=True,
     ),
     # ---------------------------------------------------------------- folder
     PermissionDef(
@@ -345,8 +354,11 @@ PERMISSIONS: tuple[PermissionDef, ...] = (
         code="list.manage_statuses",
         group="list",
         label="Ro'yxat statuslarini boshqarish",
-        description="Ro'yxat uchun alohida status to'plami o'rnatish yoki olib tashlash.",
+        description="ESKIRGAN — ro'yxat darajasidagi status to'plami (override) "
+        "olib tashlandi. Barcha ro'yxatlar bir xil, kodda belgilangan "
+        "holatlardan foydalanadi.",
         defaults=A,
+        deprecated=True,
     ),
     # ------------------------------------------------------------------ task
     PermissionDef(
@@ -530,7 +542,7 @@ STAGED_CODES: frozenset[str] = frozenset(
 )
 
 
-def grouped_catalog() -> list[dict]:
+def grouped_catalog() -> list[dict[str, Any]]:
     """`GET permissions/` uchun guruhlangan katalog (D.1)."""
     groups = []
     for key, label in PERMISSION_GROUPS.items():

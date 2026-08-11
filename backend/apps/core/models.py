@@ -1,6 +1,7 @@
 """Abstract base models shared by every app. No concrete models live here."""
 
 import uuid
+from typing import Any, Self, cast
 
 from django.core.validators import RegexValidator
 from django.db import models
@@ -24,23 +25,33 @@ class TimeStampedModel(models.Model):
         abstract = True
 
 
-class SoftDeleteQuerySet(models.QuerySet):
-    def alive(self):
+class SoftDeleteQuerySet(models.QuerySet[Any]):
+    def alive(self) -> Self:
         return self.filter(deleted_at__isnull=True)
 
-    def dead(self):
+    def dead(self) -> Self:
         return self.filter(deleted_at__isnull=False)
 
-    def delete(self):  # bulk soft delete
+    # Qaytish turi ATAYLAB `QuerySet.delete()` dan farq qiladi (u
+    # `(soni, {model: soni})` beradi, bu esa `UPDATE` qatorlari sonini) —
+    # shuning uchun `Any`: bu override tipni torroq qilmaydi, boshqa
+    # ma'nodagi qiymat qaytaradi.
+    def delete(self) -> Any:  # bulk soft delete
         return self.update(deleted_at=timezone.now())
 
-    def hard_delete(self):
+    def hard_delete(self) -> tuple[int, dict[str, int]]:
         return super().delete()
 
 
-class AliveManager(models.Manager.from_queryset(SoftDeleteQuerySet)):
-    def get_queryset(self):
-        return super().get_queryset().filter(deleted_at__isnull=True)
+# `from_queryset` sinfni ISH VAQTIDA quradi, mypy esa dinamik asos sinfni
+# tahlil qila olmaydi. Runtime xatti-harakati o'zgarmaydi; muqobili —
+# menejerni qo'lda takrorlash, ya'ni bir xil kodni ikki joyda saqlash.
+class AliveManager(models.Manager.from_queryset(SoftDeleteQuerySet)):  # type: ignore[misc]
+    def get_queryset(self) -> SoftDeleteQuerySet:
+        # `super()` dinamik asosdan keladi (yuqoridagi izoh), ya'ni mypy uchun
+        # `Any`. `cast` faqat tipni aytadi — kod bir xil ishlaydi.
+        queryset = cast(SoftDeleteQuerySet, super().get_queryset())
+        return queryset.filter(deleted_at__isnull=True)
 
 
 class SoftDeleteModel(models.Model):
@@ -56,11 +67,16 @@ class SoftDeleteModel(models.Model):
     def is_deleted(self) -> bool:
         return self.deleted_at is not None
 
-    def delete(self, using=None, keep_parents=False):
+    # `Model.delete()` `(soni, {model: soni})` qaytaradi; soft delete esa
+    # hech nima qaytarmaydi — bu qasddan qilingan farq, tip xatosi emas.
+    def delete(self, using: Any = None, keep_parents: bool = False) -> None:  # type: ignore[override]
         self.deleted_at = timezone.now()
-        self.save(update_fields=["deleted_at", "updated_at"])
+        # `updated_at` shu sinfda emas, `TimeStampedModel` da — konkret model
+        # ikkalasidan ham meros oladi (`Task`, `Comment`, `Message`), lekin
+        # mypy buni faqat shu abstrakt sinf doirasida ko'radi.
+        self.save(update_fields=["deleted_at", "updated_at"])  # type: ignore[misc]
 
-    def hard_delete(self, using=None, keep_parents=False):
+    def hard_delete(self, using: Any = None, keep_parents: bool = False) -> None:
         super().delete(using=using, keep_parents=keep_parents)
 
 

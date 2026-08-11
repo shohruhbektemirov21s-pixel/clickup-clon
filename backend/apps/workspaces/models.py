@@ -1,8 +1,12 @@
 """Workspace hierarchy models.
 
 Per API_CONTRACT.md ruling R1, ALL hierarchy models (Workspace, WorkspaceMember,
-Invitation, Space, Folder, TaskList, StatusSet, Status) live in apps.workspaces.
-The Django model is TaskList (table "lists"); every API path/field says "list".
+Invitation, Space, Folder, TaskList) live in apps.workspaces. The Django model
+is TaskList (table "lists"); every API path/field says "list".
+
+`StatusSet`/`Status` USED to live here. They are gone: task status is now a
+fixed code set in `apps.core.enums.TaskStatus`, so there is nothing per-space
+or per-list to configure (see docs/DATA_MODEL.md §7).
 """
 
 from django.core.exceptions import ValidationError
@@ -15,7 +19,6 @@ from apps.core.enums import (
     InvitationStatus,
     SpaceAccess,
     SpaceMemberSource,
-    StatusType,
     WorkspaceRole,
 )
 from apps.core.models import HEX_COLOR, PositionedModel, TimeStampedModel, UUIDModel
@@ -377,68 +380,3 @@ class TaskList(UUIDModel, TimeStampedModel, PositionedModel):
             raise ValidationError(
                 {"folder_id": "Folder must belong to the same space as the list."}
             )
-
-    @property
-    def effective_status_set(self):
-        return getattr(self, "status_set", None) or self.space.status_set
-
-
-class StatusSet(UUIDModel, TimeStampedModel):
-    name = models.CharField(max_length=80, default="Default")
-
-    space = models.OneToOneField(
-        Space, on_delete=models.CASCADE, null=True, blank=True, related_name="status_set"
-    )
-    list = models.OneToOneField(
-        TaskList, on_delete=models.CASCADE, null=True, blank=True, related_name="status_set"
-    )
-
-    class Meta:
-        db_table = "status_sets"
-        ordering = ["created_at"]
-        constraints = [
-            models.CheckConstraint(
-                condition=models.Q(space__isnull=False, list__isnull=True)
-                | models.Q(space__isnull=True, list__isnull=False),
-                name="statusset_exactly_one_owner",
-            ),
-        ]
-
-    def __str__(self):
-        return self.name
-
-
-class Status(UUIDModel, TimeStampedModel):
-    status_set = models.ForeignKey(StatusSet, on_delete=models.CASCADE, related_name="statuses")
-    name = models.CharField(max_length=60)
-    color = models.CharField(max_length=7, default="#87909E", validators=[HEX_COLOR])
-    type = models.CharField(
-        max_length=8, choices=StatusType.choices, default=StatusType.OPEN, db_index=True
-    )
-    order = models.PositiveSmallIntegerField(default=0, db_index=True)
-    is_default = models.BooleanField(default=False)
-
-    class Meta:
-        db_table = "statuses"
-        ordering = ["order", "name"]
-        constraints = [
-            models.UniqueConstraint("status_set", Lower("name"), name="uniq_status_name_per_set"),
-            # NOTE: DATA_MODEL.md specifies deferrable=DEFERRED here, which is
-            # PostgreSQL-only and raises system-check warnings on SQLite. The
-            # status-set rewrite service instead uses a two-pass write through
-            # a high temporary offset, which is correct on both backends.
-            models.UniqueConstraint(
-                fields=["status_set", "order"], name="uniq_status_order_per_set"
-            ),
-            models.UniqueConstraint(
-                fields=["status_set"],
-                condition=models.Q(is_default=True),
-                name="uniq_default_status_per_set",
-            ),
-        ]
-        indexes = [
-            models.Index(fields=["status_set", "order"], name="idx_status_set_order"),
-        ]
-
-    def __str__(self):
-        return self.name

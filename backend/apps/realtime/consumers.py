@@ -101,8 +101,9 @@ def _workspace_scope(user, workspace_id):
 
 class BaseConsumer(AsyncJsonWebsocketConsumer):
     #: Shu soket qaysi doiraga tegishli - `access.revoked` ni baholash uchun.
-    workspace_id = None
-    space_id = None
+    #: Handshake'dan keyin qiymat oladi, shuning uchun `str | None`.
+    workspace_id: str | None = None
+    space_id: str | None = None
 
     # ----------------------------------------------------------------- error
 

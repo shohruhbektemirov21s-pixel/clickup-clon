@@ -6,7 +6,7 @@ Bu fayl uch narsani qulflaydi:
   legacy `min_role=` / `require_role(` qolmaganini tekshiradi. Qolsa, admin
   matritsani o'zgartirganda REST xatti-harakati o'zgarmaydi ("yolg'on nazorat").
 * **"Yolg'on nazorat" guard'i** — katalogdagi HAR BIR faol kod kamida bitta
-  enforcement joyiga ulanganini tekshiradi. Katalog 49 kod e'lon qiladi;
+  enforcement joyiga ulanganini tekshiradi. Katalog 47 faol kod e'lon qiladi;
   agar kod hech qayerda o'qilmasa, uni matritsada yoqib/o'chirish faqat UI'ni
   o'zgartiradi va foydalanuvchi o'zini himoyalangan deb o'ylab yuradi.
 * **R3 / AD-2** — matritsadan kod olib tashlanishi **darhol** REST javobini
@@ -226,7 +226,7 @@ LIVE_CODES = sorted(ALL_CODES - STAGED_CODES)
 def test_every_live_permission_code_has_an_enforcement_site(code):
     """Katalogdagi har bir kod haqiqatan biror qarorga ta'sir qiladi.
 
-    Bu — butun bir sinf xatoning oldini oladigan yagona test. Katalog 49 kod
+    Bu — butun bir sinf xatoning oldini oladigan yagona test. Katalog 47 faol kod
     e'lon qiladi va ularning hammasi ruxsat matritsasi UI'sida toggle bo'lib
     turadi. Agar kod hech qayerda o'qilmasa, admin uni o'chirib qo'yadi,
     interfeys "o'chirildi" deydi, REST esa avvalgidek javob berishda davom

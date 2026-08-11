@@ -35,9 +35,13 @@ def membership(env, user):
 
 
 def test_bootstrap_seeds_the_full_matrix(env):
-    """§B.6 — 3 rol × 49 kod = 147 qator (katalog v5)."""
+    """§B.6 — 3 rol × 47 FAOL kod = 141 qator (katalog v6).
+
+    Eskirgan kodlar (`*.manage_statuses`) materializatsiya qilinmaydi —
+    `ensure_role_permissions()` `deprecated` ni tashlab ketadi.
+    """
     rows = RolePermission.objects.filter(workspace=env.workspace)
-    assert rows.count() == len(ALL_CODES) * len(AssignableRole.values) == 147
+    assert rows.count() == len(ALL_CODES) * len(AssignableRole.values) == 141
     assert not rows.filter(role="owner").exists()
 
 

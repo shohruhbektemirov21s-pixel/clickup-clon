@@ -6,7 +6,6 @@ from apps.core.enums import (
     InvitationRole,
     InvitationStatus,
     SpaceAccess,
-    StatusType,
 )
 from apps.workspaces.models import (
     Folder,
@@ -14,8 +13,6 @@ from apps.workspaces.models import (
     RolePermission,
     Space,
     SpaceMember,
-    Status,
-    StatusSet,
     TaskList,
     Workspace,
     WorkspaceMember,
@@ -153,6 +150,33 @@ class InvitationCreateSerializer(serializers.Serializer):
     role = serializers.ChoiceField(choices=InvitationRole.choices)
 
 
+class AddMemberSerializer(serializers.Serializer):
+    """`POST workspaces/{id}/members/` — ro'yxatdan o'tgan odamni to'g'ridan-to'g'ri qo'shish.
+
+    `role` `InvitationRole` dan olinadi, ya'ni `owner` bu yo'l bilan hech
+    qachon berilmaydi (egalik `PATCH members/{user_id}/` + rank guard orqali).
+    """
+
+    user_id = serializers.UUIDField()
+    role = serializers.ChoiceField(
+        choices=InvitationRole.choices, required=False, default=InvitationRole.MEMBER
+    )
+
+
+class UserSearchResultSerializer(serializers.Serializer):
+    """`GET workspaces/{id}/user-search/?q=` bitta qatori.
+
+    `is_member` / `has_pending_invitation` — UI tugmasi uchun: qo'shilgan
+    odamni qayta qo'shishga urinish 409 beradi, shuning uchun holat
+    ro'yxatning o'zida ko'rinadi.
+    """
+
+    user = UserSummarySerializer(read_only=True)
+    is_member = serializers.BooleanField(read_only=True)
+    role = serializers.CharField(read_only=True, allow_null=True)
+    has_pending_invitation = serializers.BooleanField(read_only=True)
+
+
 class SpaceSerializer(serializers.ModelSerializer):
     workspace_id = serializers.UUIDField(read_only=True)
     created_by_id = serializers.UUIDField(read_only=True)
@@ -237,58 +261,6 @@ class ListSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-
-
-class StatusSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Status
-        fields = ["id", "name", "color", "type", "order", "is_default"]
-        read_only_fields = fields
-
-
-class StatusSetSerializer(serializers.ModelSerializer):
-    space_id = serializers.UUIDField(read_only=True, allow_null=True)
-    list_id = serializers.UUIDField(read_only=True, allow_null=True)
-    statuses = StatusSerializer(many=True, read_only=True)
-
-    class Meta:
-        model = StatusSet
-        fields = ["id", "name", "space_id", "list_id", "statuses", "created_at", "updated_at"]
-        read_only_fields = fields
-
-
-class StatusInputSerializer(serializers.Serializer):
-    id = serializers.UUIDField(required=False)
-    name = serializers.CharField(max_length=60)
-    color = serializers.RegexField(r"^#[0-9A-F]{6}$", required=False, default="#87909E")
-    type = serializers.ChoiceField(choices=StatusType.choices)
-    is_default = serializers.BooleanField(required=False, default=False)
-
-
-class StatusSetInputSerializer(serializers.Serializer):
-    name = serializers.CharField(max_length=80, required=False)
-    statuses = StatusInputSerializer(many=True)
-    status_mapping = serializers.DictField(
-        child=serializers.UUIDField(), required=False, default=dict
-    )
-
-    def validate_statuses(self, statuses):
-        if not 1 <= len(statuses) <= 30:
-            raise serializers.ValidationError("A status set must have between 1 and 30 statuses.")
-        defaults = [s for s in statuses if s.get("is_default")]
-        if len(defaults) != 1:
-            raise serializers.ValidationError("Exactly one status must be is_default.")
-        if defaults[0]["type"] == StatusType.CLOSED:
-            raise serializers.ValidationError("The default status must not be closed-type.")
-        if not any(s["type"] == StatusType.CLOSED for s in statuses):
-            raise serializers.ValidationError("At least one status must be closed-type.")
-        names = [s["name"].strip().lower() for s in statuses]
-        if len(set(names)) != len(names):
-            raise serializers.ValidationError("Status names must be unique (case-insensitive).")
-        ids = [str(s["id"]) for s in statuses if s.get("id")]
-        if len(set(ids)) != len(ids):
-            raise serializers.ValidationError("Duplicate status ids in payload.")
-        return statuses
 
 
 # ------------------------------------------------------------------ permissions

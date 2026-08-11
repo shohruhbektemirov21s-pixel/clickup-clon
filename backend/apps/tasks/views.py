@@ -16,10 +16,12 @@ from apps.core.access import (
     visible_spaces_q,
 )
 from apps.core.api import client_id_of, paginate
-from apps.core.enums import ActivityVerb
+from apps.core.enums import STATUS_ORDER, ActivityVerb
 from apps.core.exceptions import Conflict
 from apps.tasks import services
 from apps.tasks.filters import (
+    STATUS_RANK_FIELD,
+    annotate_status_rank,
     apply_ordering,
     apply_task_filters,
     include_deleted_requested,
@@ -37,13 +39,13 @@ from apps.workspaces.models import Space
 from apps.workspaces.views import get_list
 from config.pagination import StandardPagination
 
-TASK_SELECT = ("status", "list", "list__space", "created_by", "updated_by")
+TASK_SELECT = ("list", "list__space", "created_by", "updated_by")
 TASK_PREFETCH = ("task_assignees__user", "task_tags__tag", "task_watchers__user")
 
 #: `?group_by=status` ustunidagi vazifalar soni uchun QAT'IY shift — `page_size`
-#: dan MUSTAQIL. Doska javobi sahifalanmaydi (§1.5 istisnosi), shuning uchun
-#: `page_size=200` × 30 status = bitta so'rovda 6000 vazifa degani edi.
-#: Ustunni to'liq ko'rish yo'li o'zgarmagan: `?status=<id>&page=2` (tekis
+#: dan MUSTAQIL. Doska javobi sahifalanmaydi (§1.5 istisnosi). Ustunlar soni
+#: endi qat'iy to'rtta, lekin bitta ustunda minglab vazifa bo'lishi mumkin.
+#: Ustunni to'liq ko'rish yo'li o'zgarmagan: `?status=<kod>&page=2` (tekis
 #: konvert), §10.4 da hujjatlashtirilgan.
 MAX_TASKS_PER_GROUP = 50
 
@@ -145,18 +147,24 @@ class ListTasksView(APIView):
         if request.query_params.get("group_by") == "status":
             return self._grouped(request, task_list, qs, manager)
 
-        qs = apply_ordering(qs, request, default=("status__order", "position", "created_at"))
+        qs = annotate_status_rank(qs)
+        qs = apply_ordering(
+            qs, request, default=(STATUS_RANK_FIELD, "position", "created_at")
+        )
         return paginate(request, qs, TaskSerializer)
 
     def _grouped(self, request, task_list, qs, manager):
-        """Doska payload'i — §10.4, ustunlar soniga BOG'LIQ BO'LMAGAN so'rovlar.
+        """Doska payload'i — §10.4.
 
-        Ilgari har bir status uchun alohida `COUNT(*)` + alohida `SELECT`
-        ketardi (30 ta statusli doskada ~60-90 so'rov, ustiga har bir
-        ustunning `prefetch` lari). Endi:
+        **Guruhlar DOIM to'rtta va DOIM `STATUS_ORDER` tartibida** qaytadi,
+        bo'sh bo'lsa ham: doska ustunlari serverdan keladi, klient ularni
+        javobda uchragan status kodlaridan yig'maydi (aks holda bo'sh ustun
+        umuman chizilmasdi).
 
-        * bitta `GROUP BY status_id` — barcha `count` lar;
-        * bitta `ROW_NUMBER() OVER (PARTITION BY status_id)` oynali so'rov —
+        So'rovlar soni ustunlar soniga BOG'LIQ EMAS:
+
+        * bitta `GROUP BY status` — barcha `count` lar;
+        * bitta `ROW_NUMBER() OVER (PARTITION BY status)` oynali so'rov —
           har ustunning birinchi `limit` qatori (SQLite 3.25+ va PostgreSQL
           ikkalasida ham bor);
         * `prefetch_related` ning o'zgarmas 3 ta so'rovi.
@@ -170,12 +178,10 @@ class ListTasksView(APIView):
         order = ordering_fields(request, default=("position", "created_at"))
         base = manager.filter(list=task_list, pk__in=qs.order_by().values("pk"))
 
-        counts = dict(
-            base.order_by().values_list("status_id").annotate(n=Count("id"))
-        )
+        counts = dict(base.order_by().values_list("status").annotate(n=Count("id")))
         ranked = (
             base.annotate(
-                _rank=Window(RowNumber(), partition_by=F("status_id"), order_by=order)
+                _rank=Window(RowNumber(), partition_by=F("status"), order_by=order)
             )
             .filter(_rank__lte=limit)
             .select_related(*TASK_SELECT)
@@ -184,17 +190,20 @@ class ListTasksView(APIView):
         )
         by_status = {}
         for task in ranked:
-            by_status.setdefault(task.status_id, []).append(task)
+            by_status.setdefault(task.status, []).append(task)
 
         groups = [
             {
-                "status_id": str(status.id),
-                "count": counts.get(status.id, 0),
-                "results": TaskSerializer(
-                    by_status.get(status.id, []), many=True, context={"request": request}
+                "status": code.value,
+                # Yorliq DB'da SAQLANMAYDI — u `TaskStatus` dan keladi va
+                # javobga qulaylik uchun qo'shiladi (bitta manba).
+                "label": code.label,
+                "count": counts.get(code.value, 0),
+                "tasks": TaskSerializer(
+                    by_status.get(code.value, []), many=True, context={"request": request}
                 ).data,
             }
-            for status in task_list.effective_status_set.statuses.order_by("order")
+            for code in STATUS_ORDER
         ]
         return Response({"group_by": "status", "groups": groups})
 
@@ -328,7 +337,7 @@ class TaskMoveView(APIView):
         task, rebalanced = services.move_task(
             task,
             list_id=list_id,
-            status_id=request.data.get("status_id"),
+            status=request.data.get("status"),
             before_id=request.data.get("before_id"),
             after_id=request.data.get("after_id"),
             actor=request.user,

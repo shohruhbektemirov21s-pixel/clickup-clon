@@ -3,7 +3,7 @@ import json
 from rest_framework import serializers
 
 from apps.accounts.serializers import UserSummarySerializer
-from apps.core.enums import Priority
+from apps.core.enums import Priority, TaskStatus
 from apps.core.sanitize import clean_html
 from apps.tasks.models import Tag, Task, TaskActivity, TaskAttachment
 
@@ -27,7 +27,6 @@ class TagSummarySerializer(serializers.ModelSerializer):
 
 class TaskSerializer(serializers.ModelSerializer):
     list_id = serializers.UUIDField(read_only=True)
-    status_id = serializers.UUIDField(read_only=True)
     is_deleted = serializers.ReadOnlyField()
     assignees = serializers.SerializerMethodField()
     watchers = serializers.SerializerMethodField()
@@ -43,7 +42,7 @@ class TaskSerializer(serializers.ModelSerializer):
             "title",
             "description_html",
             "description_json",
-            "status_id",
+            "status",
             "priority",
             "position",
             "due_date",
@@ -167,7 +166,10 @@ class TaskInputSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=500)
     description_html = serializers.CharField(required=False, allow_blank=True)
     description_json = serializers.JSONField(required=False, allow_null=True)
-    status_id = serializers.UUIDField(required=False, allow_null=True)
+    #: Noma'lum kod → 400 `validation_error` (§10.2). `status_id` YO'Q.
+    status = serializers.ChoiceField(
+        choices=TaskStatus.choices, required=False, allow_null=True
+    )
     priority = serializers.ChoiceField(choices=Priority.choices, required=False)
     due_date = serializers.DateTimeField(required=False, allow_null=True)
     start_date = serializers.DateTimeField(required=False, allow_null=True)

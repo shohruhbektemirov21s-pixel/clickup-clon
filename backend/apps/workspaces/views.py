@@ -4,6 +4,7 @@ from datetime import timedelta
 from django.db import transaction
 from django.db.models import Case, Count, IntegerField, Q, Value, When
 from django.utils import timezone
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status as http
 from rest_framework.exceptions import NotFound, PermissionDenied, Throttled, ValidationError
 from rest_framework.permissions import AllowAny
@@ -11,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
+from apps.accounts.models import User
 from apps.core.access import (
     bump_permissions_version,
     check_space_visible,
@@ -23,10 +25,10 @@ from apps.core.access import (
 )
 from apps.core.api import client_id_of, paginate, parse_bool
 from apps.core.enums import (
+    CLOSED_STATUSES,
     AssignableRole,
     InvitationStatus,
     ROLE_RANK,
-    StatusType,
     WorkspaceRole,
 )
 from apps.core.exceptions import ApiError, Conflict
@@ -48,6 +50,7 @@ from apps.workspaces.models import (
     WorkspaceMember,
 )
 from apps.workspaces.serializers import (
+    AddMemberSerializer,
     FolderSerializer,
     InvitationCreateSerializer,
     InvitationSerializer,
@@ -58,8 +61,7 @@ from apps.workspaces.serializers import (
     RolePermissionRowSerializer,
     RolePermissionUpdateSerializer,
     SpaceSerializer,
-    StatusSetInputSerializer,
-    StatusSetSerializer,
+    UserSearchResultSerializer,
     WorkspaceSerializer,
 )
 from config.pagination import StandardPagination
@@ -270,6 +272,15 @@ ROSTER_RANK = Case(
 
 
 class MemberListView(APIView):
+    def get_throttles(self):
+        # F-6 bilan bir xil mantiq: to'g'ridan-to'g'ri qo'shish ham a'zolik
+        # yaratadi, ya'ni taklif bilan bir xil narxda turadi. Ro'yxatni
+        # o'qish throttle ostida emas.
+        if self.request.method == "POST":
+            self.throttle_scope = "invite"
+            return [ScopedRateThrottle()]
+        return []
+
     def get(self, request, workspace_id):
         require_membership_perm(request.user, workspace_id, "member.read")
         members = (
@@ -279,6 +290,107 @@ class MemberListView(APIView):
             .order_by("rank", "user__email")
         )
         return paginate(request, members, MemberSerializer)
+
+    def post(self, request, workspace_id):
+        """Ro'yxatdan o'tgan foydalanuvchini email taklifisiz qo'shish.
+
+        Ruxsat `member.invite` — bu aynan «jamoaga odam qo'shish» huquqi;
+        alohida kod kiritilmadi, chunki ikkala yo'l ham bir xil natijaga
+        (yangi a'zolik) olib keladi va ularni ajratish matritsada "taklif
+        yubora oladi, lekin qo'sha olmaydi" degan ma'nosiz holat yaratardi.
+        """
+        membership = require_membership_perm(request.user, workspace_id, "member.invite")
+        serializer = AddMemberSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = User.objects.filter(pk=serializer.validated_data["user_id"]).first()
+        if user is None or not user.is_active:
+            # `404` EMAS: chaqiruvchi ish maydonini ko'rmoqda, xato esa
+            # yuborilgan `user_id` da. Mavjudlik orakuli ham ochilmaydi —
+            # javob ikkala holatda bir xil.
+            _validation_error("user_id", "Bunday foydalanuvchi topilmadi.")
+
+        member = services.add_workspace_member(
+            membership.workspace,
+            request.user,
+            user=user,
+            role=serializer.validated_data["role"],
+        )
+        return Response(
+            MemberSerializer(member, context={"request": request}).data,
+            status=http.HTTP_201_CREATED,
+        )
+
+
+#: Qidiruv natijasining yuqori chegarasi. Ro'yxat "kimni qo'shaman" savoliga
+#: javob beradi, katalogni ko'chirib olish uchun emas — shuning uchun
+#: sahifalash ham yo'q.
+USER_SEARCH_LIMIT = 10
+
+
+@extend_schema(
+    summary="Ro'yxatdan o'tgan foydalanuvchilarni qidirish",
+    parameters=[OpenApiParameter("q", str, description="Kamida 2 belgi.")],
+    responses=UserSearchResultSerializer(many=True),
+)
+class WorkspaceUserSearchView(APIView):
+    """`GET workspaces/{id}/user-search/?q=` — ro'yxatdan o'tgan foydalanuvchilar.
+
+    XAVFSIZLIK. Bu yagona endpoint bo'lib, ish maydoni tashqarisidagi
+    hisoblarni ko'rsatadi, shuning uchun uchta chegara qo'yilgan:
+
+    1. **Ruxsat** — `member.invite` (standartda faqat admin/owner). Oddiy
+       a'zo yoki mehmon butun foydalanuvchilar bazasini varaqlay olmaydi.
+    2. **Minimal so'rov** — kamida 2 belgi va bo'sh `q` bilan hech narsa
+       qaytmaydi, ya'ni "hammasini ber" so'rovi yo'q.
+    3. **Chegara va throttle** — 10 ta natija, `invite` scope'idagi rate
+       limit (yaratish bilan bir xil byudjet).
+
+    Nomsiz hisoblar ham topilishi uchun email bo'yicha qidiriladi; natijadagi
+    `email` `UserSummarySerializer` qoidalari bo'yicha maskalanadi.
+    """
+
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "invite"
+
+    def get(self, request, workspace_id):
+        require_membership_perm(request.user, workspace_id, "member.invite")
+        query = (request.query_params.get("q") or "").strip()
+        if len(query) < 2:
+            return Response({"results": []})
+
+        users = list(
+            User.objects.filter(is_active=True)
+            .filter(Q(email__icontains=query) | Q(full_name__icontains=query))
+            .order_by("full_name", "email")[:USER_SEARCH_LIMIT]
+        )
+        roles = dict(
+            WorkspaceMember.objects.filter(
+                workspace_id=workspace_id, user__in=users
+            ).values_list("user_id", "role")
+        )
+        pending = {
+            email.lower()
+            for email in Invitation.objects.filter(
+                workspace_id=workspace_id, status=InvitationStatus.PENDING
+            ).values_list("email", flat=True)
+        }
+        rows = [
+            {
+                "user": user,
+                "is_member": user.id in roles,
+                "role": roles.get(user.id),
+                "has_pending_invitation": user.email.lower() in pending,
+            }
+            for user in users
+        ]
+        return Response(
+            {
+                "results": UserSearchResultSerializer(
+                    rows, many=True, context={"request": request}
+                ).data
+            }
+        )
 
 
 class MemberProfileView(APIView):
@@ -314,7 +426,7 @@ class MemberProfileView(APIView):
             lists__tasks__deleted_at__isnull=True,
             lists__tasks__archived=False,
             lists__tasks__task_assignees__user_id=user_id,
-        ) & ~Q(lists__tasks__status__type=StatusType.CLOSED)
+        ) & ~Q(lists__tasks__status__in=CLOSED_STATUSES)
         spaces = list(
             Space.objects.filter(workspace_id=workspace_id)
             .filter(visible_spaces_q(membership))
@@ -359,7 +471,7 @@ def _member_stats(space_ids, user_id, *, caller):
     )
 
     base = Task.objects.filter(list__space_id__in=space_ids)
-    open_q = ~Q(status__type=StatusType.CLOSED) & Q(archived=False)
+    open_q = ~Q(status__in=CLOSED_STATUSES) & Q(archived=False)
     agg = base.filter(task_assignees__user_id=user_id).aggregate(
         open_tasks=Count("id", filter=open_q, distinct=True),
         overdue_tasks=Count("id", filter=open_q & Q(due_date__lt=now), distinct=True),
@@ -409,9 +521,23 @@ class MemberDetailView(APIView):
         ):
             raise Conflict("Cannot demote the last owner.")
 
+        previous_role = target.role
         target.role = new_role
         target.save(update_fields=["role", "updated_at"])
         workspace = target.workspace
+        if previous_role != new_role:
+            from apps.core.enums import WorkspaceRole as _Role
+            from apps.notifications.services import NotificationKind, notify
+
+            notify(
+                user=target.user,
+                actor=request.user,
+                workspace=workspace,
+                kind=NotificationKind.ROLE_CHANGED,
+                title=f"«{workspace.name}»dagi rolingiz o'zgardi",
+                body=f"Yangi rol: {_Role(new_role).label}.",
+                url=f"/w/{workspace.id}",
+            )
         if new_role == WorkspaceRole.OWNER:
             workspace.owner = target.user
             workspace.save(update_fields=["owner", "updated_at"])
@@ -440,7 +566,7 @@ class MemberDetailView(APIView):
         # F-2 oxirgi owner invarianti — permission matritsasidan ustun.
         if target.role == WorkspaceRole.OWNER and _owner_count(workspace_id) == 1:
             raise Conflict("Cannot remove the last owner.")
-        services.remove_workspace_member(target)
+        services.remove_workspace_member(target, actor=request.user)
         return Response(status=http.HTTP_204_NO_CONTENT)
 
 
@@ -449,7 +575,9 @@ class MemberLeaveView(APIView):
         membership = require_membership(request.user, workspace_id)
         if membership.role == WorkspaceRole.OWNER and _owner_count(workspace_id) == 1:
             raise Conflict("The last owner cannot leave; transfer ownership first.")
-        services.remove_workspace_member(membership)
+        # `actor` = chiquvchining o'zi → `notify()` xabarni tashlab yuboradi.
+        # Aks holda odam o'zi bosgan tugma haqida bildirishnoma olardi.
+        services.remove_workspace_member(membership, actor=request.user)
         return Response(status=http.HTTP_204_NO_CONTENT)
 
 
@@ -871,61 +999,6 @@ class ListMoveView(APIView):
             client_id=client_id_of(request),
         )
         return Response(ListSerializer(task_list, context={"request": request}).data)
-
-
-# ---------------------------------------------------------------- status sets
-
-
-class SpaceStatusSetView(APIView):
-    def get(self, request, space_id):
-        space, _ = _get_space(request.user, space_id)
-        return Response(
-            StatusSetSerializer(space.status_set, context={"request": request}).data
-        )
-
-    def put(self, request, space_id):
-        space, _ = _get_space(request.user, space_id, perm="space.manage_statuses")
-        serializer = StatusSetInputSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        status_set = services.replace_status_set(
-            space=space,
-            data=serializer.validated_data,
-            actor=request.user,
-            client_id=client_id_of(request),
-        )
-        return Response(StatusSetSerializer(status_set, context={"request": request}).data)
-
-
-class ListStatusSetView(APIView):
-    def get(self, request, list_id):
-        task_list, _ = get_list(request.user, list_id)
-        return Response(
-            StatusSetSerializer(
-                task_list.effective_status_set, context={"request": request}
-            ).data
-        )
-
-    def put(self, request, list_id):
-        task_list, _ = get_list(request.user, list_id, perm="list.manage_statuses")
-        serializer = StatusSetInputSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        status_set = services.replace_status_set(
-            task_list=task_list,
-            data=serializer.validated_data,
-            actor=request.user,
-            client_id=client_id_of(request),
-        )
-        return Response(StatusSetSerializer(status_set, context={"request": request}).data)
-
-    def delete(self, request, list_id):
-        task_list, _ = get_list(request.user, list_id, perm="list.manage_statuses")
-        status_set = services.remove_list_status_set(
-            task_list,
-            status_mapping=request.data.get("status_mapping") or {},
-            actor=request.user,
-            client_id=client_id_of(request),
-        )
-        return Response(StatusSetSerializer(status_set, context={"request": request}).data)
 
 
 # ---------------------------------------------------------------- permissions

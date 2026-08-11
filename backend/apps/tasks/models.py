@@ -3,7 +3,13 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models.functions import Lower
 
-from apps.core.enums import PRIORITY_ORDER, ActivityVerb, Priority, WatcherSource
+from apps.core.enums import (
+    PRIORITY_ORDER,
+    ActivityVerb,
+    Priority,
+    TaskStatus,
+    WatcherSource,
+)
 from apps.core.models import (
     HEX_COLOR,
     PositionedModel,
@@ -44,8 +50,14 @@ class Task(UUIDModel, TimeStampedModel, SoftDeleteModel, PositionedModel):
     list = models.ForeignKey(
         "workspaces.TaskList", on_delete=models.CASCADE, related_name="tasks"
     )
-    status = models.ForeignKey(
-        "workspaces.Status", on_delete=models.PROTECT, related_name="tasks"
+    #: Yopiq to'plamdan bitta kod (`apps.core.enums.TaskStatus`). FK EMAS:
+    #: status endi sozlanmaydi, shuning uchun JOIN ham, `PROTECT` cascade
+    #: qiyinchiligi ham qolmadi.
+    status = models.CharField(
+        max_length=16,
+        choices=TaskStatus.choices,
+        default=TaskStatus.TODO,
+        db_index=True,
     )
 
     title = models.CharField(max_length=500)
@@ -139,11 +151,6 @@ class Task(UUIDModel, TimeStampedModel, SoftDeleteModel, PositionedModel):
         super().save(*args, **kwargs)
 
     def clean(self):
-        effective = self.list.effective_status_set
-        if self.status.status_set_id != effective.id:
-            raise ValidationError(
-                {"status_id": "Status does not belong to this list's status set."}
-            )
         if self.start_date and self.due_date and self.start_date > self.due_date:
             raise ValidationError({"start_date": "start_date must be on or before due_date."})
 

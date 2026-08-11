@@ -13,7 +13,13 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.comments.models import Comment
 from apps.comments.services import create_comment
-from apps.core.enums import ActivityVerb, Priority, WatcherSource, WorkspaceRole
+from apps.core.enums import (
+    ActivityVerb,
+    Priority,
+    TaskStatus,
+    WatcherSource,
+    WorkspaceRole,
+)
 from apps.core.ordering import evenly_spaced, midstring
 from apps.tasks.models import Tag, Task, TaskAssignee, TaskWatcher, TaskTag
 from apps.workspaces.models import Folder, TaskList, WorkspaceMember
@@ -92,9 +98,6 @@ class Command(BaseCommand):
         space = create_space(
             workspace, user, name="Mahsulot", color="#2ECD6F", icon="rocket"
         )
-        statuses = list(space.status_set.statuses.order_by("order"))
-        by_type = {s.type: s for s in statuses}
-
         folder = Folder.objects.create(
             space=space,
             name="3-chorak yo'l xaritasi",
@@ -125,15 +128,34 @@ class Command(BaseCommand):
         }
 
         sprint_tasks = [
-            ("Kirishdagi yo'naltirishni tuzatish", "open", Priority.URGENT, ["xatolik", "backend"]),
-            ("Doskada sudrab ko'chirishni sayqallash", "active", Priority.HIGH, ["frontend"]),
-            ("Real vaqtdagi ishtirok avatarlari", "active", Priority.NORMAL, ["frontend"]),
-            ("Status to'plami muharririni chiqarish", "closed", Priority.HIGH, ["backend"]),
+            (
+                "Kirishdagi yo'naltirishni tuzatish",
+                TaskStatus.TODO,
+                Priority.URGENT,
+                ["xatolik", "backend"],
+            ),
+            (
+                "Doskada sudrab ko'chirishni sayqallash",
+                TaskStatus.IN_PROGRESS,
+                Priority.HIGH,
+                ["frontend"],
+            ),
+            (
+                "Real vaqtdagi ishtirok avatarlari",
+                TaskStatus.REVIEW,
+                Priority.MEDIUM,
+                ["frontend"],
+            ),
+            (
+                "Statuslarni kodga o'tkazish",
+                TaskStatus.DONE,
+                Priority.HIGH,
+                ["backend"],
+            ),
         ]
         positions = evenly_spaced(len(sprint_tasks))
         created_tasks = []
-        for (title, stype, priority, tag_names), pos in zip(sprint_tasks, positions):
-            status = by_type[stype]
+        for (title, status, priority, tag_names), pos in zip(sprint_tasks, positions):
             task = Task.objects.create(
                 list=sprint,
                 status=status,
@@ -153,7 +175,7 @@ class Command(BaseCommand):
                 due_date=timezone.now() + timedelta(days=3),
                 created_by=user,
                 updated_by=user,
-                completed_at=timezone.now() if stype == "closed" else None,
+                completed_at=timezone.now() if status == TaskStatus.DONE else None,
             )
             TaskWatcher.objects.create(task=task, user=user, source=WatcherSource.AUTO_CREATOR)
             TaskAssignee.objects.create(task=task, user=user, assigned_by=user)
@@ -161,14 +183,16 @@ class Command(BaseCommand):
                 TaskTag.objects.create(task=task, tag=tags[tag_name])
             created_tasks.append(task)
 
-        pos = None
+        # Yuqoridagi sikl `pos` nomini `str` sifatida band qilgan; bu yerdagi
+        # kursor esa `None` dan boshlanadi, shuning uchun alohida nom.
+        backlog_pos: str | None = None
         for title in ["Tungi rejim", "Ochiq API", "Mobil ko'rinish tahlili"]:
-            pos = midstring(pos, None)
+            backlog_pos = midstring(backlog_pos, None)
             Task.objects.create(
                 list=backlog,
-                status=by_type["open"],
+                status=TaskStatus.TODO,
                 title=title,
-                position=pos,
+                position=backlog_pos,
                 created_by=user,
                 updated_by=user,
             )
@@ -217,19 +241,18 @@ class Command(BaseCommand):
         """
         space = workspace.spaces.get(name="Jamoa bo'limi")
         task_list = space.lists.get(name="Boshlash")
-        by_type = {s.type: s for s in space.status_set.statuses.all()}
 
         starter = [
-            ("Haftalik rejani tasdiqlash", "active", Priority.HIGH),
-            ("Mijoz uchun taqdimot tayyorlash", "open", Priority.NORMAL),
-            ("Yangi a'zolarni ish maydoniga qo'shish", "open", Priority.LOW),
-            ("O'tgan sprint yakunini yozish", "closed", Priority.NORMAL),
+            ("Haftalik rejani tasdiqlash", TaskStatus.IN_PROGRESS, Priority.HIGH),
+            ("Mijoz uchun taqdimot tayyorlash", TaskStatus.TODO, Priority.MEDIUM),
+            ("Yangi a'zolarni ish maydoniga qo'shish", TaskStatus.TODO, Priority.LOW),
+            ("O'tgan sprint yakunini yozish", TaskStatus.DONE, Priority.MEDIUM),
         ]
         positions = evenly_spaced(len(starter))
-        for (title, stype, priority), pos in zip(starter, positions):
+        for (title, status, priority), pos in zip(starter, positions):
             task = Task.objects.create(
                 list=task_list,
-                status=by_type[stype],
+                status=status,
                 title=title,
                 description_html=f"<p>{title}.</p>",
                 priority=priority,
@@ -237,7 +260,7 @@ class Command(BaseCommand):
                 due_date=timezone.now() + timedelta(days=2),
                 created_by=owner,
                 updated_by=owner,
-                completed_at=timezone.now() if stype == "closed" else None,
+                completed_at=timezone.now() if status == TaskStatus.DONE else None,
             )
             TaskWatcher.objects.create(task=task, user=owner, source=WatcherSource.AUTO_CREATOR)
             TaskAssignee.objects.create(task=task, user=owner, assigned_by=owner)
@@ -290,8 +313,8 @@ class Command(BaseCommand):
                 actor,
                 ActivityVerb.STATUS_CHANGED,
                 base - timedelta(minutes=2),
-                from_value="Ochiq",
-                to_value=task.status.name,
+                from_value=TaskStatus.TODO.value,
+                to_value=task.status,
             )
             if task.completed_at:
                 add(task, actor, ActivityVerb.COMPLETED, base)

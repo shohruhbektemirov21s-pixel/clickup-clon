@@ -54,9 +54,6 @@ def test_register_with_workspace_name_bootstraps(api):
     workspace = Workspace.objects.get(name="Acme")
     space = workspace.spaces.get()
     assert space.name == "Jamoa bo'limi"
-    statuses = list(space.status_set.statuses.order_by("order"))
-    assert [s.name for s in statuses] == ["BAJARILADI", "JARAYONDA", "BAJARILDI"]
-    assert [s.type for s in statuses] == ["open", "active", "closed"]
     task_list = space.lists.get()
     assert task_list.name == "Boshlash"
     # Scaffolding only: a new account starts from zero, with no sample tasks.

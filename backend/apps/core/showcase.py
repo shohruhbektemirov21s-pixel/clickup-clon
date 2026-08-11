@@ -26,11 +26,15 @@ header'i yo'q holda o'qiladigan yagona ma'lumot manbaiga muhtoj.
 
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Any
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny
+from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.throttling import SimpleRateThrottle
 
@@ -50,10 +54,11 @@ class ShowcaseThrottle(SimpleRateThrottle):
     scope = "showcase"
     DEFAULT_RATE = "60/min"
 
-    def get_rate(self):
-        return self.THROTTLE_RATES.get(self.scope) or self.DEFAULT_RATE
+    def get_rate(self) -> str:
+        rate: str | None = self.THROTTLE_RATES.get(self.scope)
+        return rate or self.DEFAULT_RATE
 
-    def get_cache_key(self, request, view):
+    def get_cache_key(self, request: Request, view: Any) -> str:
         return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}
 
 
@@ -67,7 +72,7 @@ SHOWCASE_CODES = (
 )
 
 #: Faoliyat tasmasidagi fe'l → o'zbekcha ibora. `{title}` vazifa sarlavhasi.
-VERB_PHRASE = {
+VERB_PHRASE: dict[str, str] = {
     ActivityVerb.CREATED: "«{title}» vazifasini yaratdi",
     ActivityVerb.STATUS_CHANGED: "«{title}» statusini {to} ga o'tkazdi",
     ActivityVerb.ASSIGNEE_ADDED: "«{title}» vazifasiga odam biriktirdi",
@@ -83,11 +88,12 @@ VERB_PHRASE = {
     ActivityVerb.ATTACHMENT_REMOVED: "«{title}» vazifasidan faylni oldi",
 }
 
-#: Faoliyat nuqtasining rangi — status turi bilan bir xil palitra.
-VERB_TONE = {
-    ActivityVerb.CREATED: "open",
-    ActivityVerb.STATUS_CHANGED: "active",
-    ActivityVerb.COMPLETED: "closed",
+#: Faoliyat nuqtasining rangi — status palitrasi bilan bir xil kalitlar
+#: (`TaskStatus` kodlari), landing shu nomlar bo'yicha rang tanlaydi.
+VERB_TONE: dict[str, str] = {
+    ActivityVerb.CREATED: "todo",
+    ActivityVerb.STATUS_CHANGED: "in_progress",
+    ActivityVerb.COMPLETED: "done",
     ActivityVerb.ATTACHMENT_ADDED: "accent",
 }
 
@@ -97,7 +103,7 @@ MAX_FEED_ITEMS = 4
 MAX_ORDER_ROWS = 3
 
 
-def _initials(user) -> str:
+def _initials(user: Any) -> str:
     """`Aziz Karimov` → `AK`. Email HECH QACHON manba sifatida ishlatilmaydi."""
     parts = [p for p in (user.full_name or "").split() if p]
     if not parts:
@@ -107,11 +113,11 @@ def _initials(user) -> str:
     return (parts[0][0] + parts[1][0]).upper()
 
 
-def _person(user) -> dict:
+def _person(user: Any) -> dict[str, Any]:
     return {"initials": _initials(user), "color": user.avatar_color}
 
 
-def _relative(moment) -> str:
+def _relative(moment: datetime) -> str:
     """`2026-08-11T09:12Z` → `12 daq`. Faqat qo'pol aniqlik — vizual uchun."""
     seconds = int((timezone.now() - moment).total_seconds())
     if seconds < 10:
@@ -125,7 +131,7 @@ def _relative(moment) -> str:
     return f"{seconds // 86400} kun"
 
 
-def _stats() -> dict:
+def _stats() -> dict[str, int]:
     from apps.accounts.models import User
     from apps.tasks.models import Task
     from apps.workspaces.models import Space, Workspace
@@ -140,7 +146,7 @@ def _stats() -> dict:
     }
 
 
-def _matrix() -> dict:
+def _matrix() -> dict[str, Any]:
     """Ruxsat katalogining standart matritsasi — owner ustuni har doim to'liq."""
     rows = []
     for code in SHOWCASE_CODES:
@@ -162,7 +168,7 @@ def _matrix() -> dict:
     }
 
 
-def _workspace_block(workspace_id: str) -> dict | None:
+def _workspace_block(workspace_id: str) -> dict[str, Any] | None:
     from apps.tasks.models import Task, TaskActivity
     from apps.workspaces.models import Space, TaskList, Workspace
 
@@ -210,7 +216,6 @@ def _workspace_block(workspace_id: str) -> dict | None:
     if task_list is not None:
         queryset = (
             Task.objects.filter(list=task_list, archived=False)
-            .select_related("status")
             .prefetch_related("assignees")
             .order_by("position")[:MAX_PREVIEW_TASKS]
         )
@@ -218,7 +223,7 @@ def _workspace_block(workspace_id: str) -> dict | None:
             tasks.append(
                 {
                     "title": task.title,
-                    "status": task.status.type if task.status_id else "open",
+                    "status": task.status,
                     "priority": task.priority,
                     "due": task.due_date.strftime("%d-%m") if task.due_date else None,
                     "done": task.completed_at is not None,
@@ -269,7 +274,7 @@ def _workspace_block(workspace_id: str) -> dict | None:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 @throttle_classes([ShowcaseThrottle])
-def showcase(request):
+def showcase(request: Request) -> Response:
     workspace_id = getattr(settings, "SHOWCASE_WORKSPACE_ID", "")
     block = None
     if workspace_id:

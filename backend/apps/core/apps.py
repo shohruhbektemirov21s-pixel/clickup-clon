@@ -1,8 +1,10 @@
+from typing import Any
+
 from django.apps import AppConfig
 from django.db.backends.signals import connection_created
 
 
-def _register_sqlite_c_collation(sender, connection, **kwargs):
+def _register_sqlite_c_collation(sender: Any, connection: Any, **kwargs: Any) -> None:
     """position columns are declared db_collation="C" (byte order) for PostgreSQL.
 
     SQLite has no built-in "C" collation, so register one that compares by
@@ -16,7 +18,7 @@ class CoreConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.core"
 
-    def ready(self):
+    def ready(self) -> None:
         connection_created.connect(_register_sqlite_c_collation)
         # Cover connections opened before this signal was connected.
         from django.db import connections

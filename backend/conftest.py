@@ -21,6 +21,23 @@ def client_for(user):
     return client
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _celery_always_eager():
+    """Testlar HECH QACHON broker'ga murojaat qilmaydi.
+
+    `CELERY_TASK_ALWAYS_EAGER` standarti `REDIS_URL` bo'shligiga bog'liq
+    (`config/settings.py`), ya'ni Redis o'rnatilgan mashinada u o'chiq
+    bo'lardi va test to'plami mavjud bo'lmagan worker'ni kutib qotib
+    qolardi. Bu yerda ilova obyektining o'zida majburlaymiz — Django
+    sozlamasini keyin o'zgartirish Celery konfiguratsiyasiga o'tmaydi.
+    """
+    from config.celery import app as celery_app
+
+    celery_app.conf.task_always_eager = True
+    celery_app.conf.task_eager_propagates = True
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _reset_permission_cache():
     """docs/DESIGN_PERMISSIONS.md R3 — permission cache never leaks across tests."""
@@ -59,8 +76,6 @@ class Env:
             WorkspaceMember.objects.create(workspace=self.workspace, user=user, role=role)
 
         self.space = self.workspace.spaces.get(name="Jamoa bo'limi")
-        self.status_set = self.space.status_set
-        self.statuses = list(self.status_set.statuses.order_by("order"))
         self.list = self.space.lists.get(name="Boshlash")
 
         self.owner_client = client_for(self.owner)

@@ -8,13 +8,14 @@ from rest_framework.exceptions import ValidationError
 
 from apps.accounts.models import User
 from apps.core.enums import (
+    CLOSED_STATUSES,
     ActivityVerb,
     SpaceAccess,
     SpaceMemberSource,
-    StatusType,
+    TaskStatus,
     WatcherSource,
 )
-from apps.core.exceptions import Conflict, InvalidStatusForList, PositionConflict
+from apps.core.exceptions import Conflict, PositionConflict
 from apps.core.ordering import MAX_LEN_BEFORE_REBALANCE, evenly_spaced, midstring
 from apps.realtime import events
 from apps.tasks.models import (
@@ -26,13 +27,8 @@ from apps.tasks.models import (
     TaskTag,
     TaskWatcher,
 )
-from apps.workspaces.models import Status, TaskList, WorkspaceMember
+from apps.workspaces.models import TaskList, WorkspaceMember
 from apps.workspaces.services import check_client_id, ensure_space_member, refresh_list_counts
-
-
-def _effective_set(task_list):
-    return task_list.effective_status_set
-
 
 # ------------------------------------------------------------------ activity log
 
@@ -67,17 +63,23 @@ def log_activities(rows):
     return rows
 
 
-def resolve_status(task_list, status_id):
-    effective = _effective_set(task_list)
-    if status_id is None:
-        status = effective.statuses.filter(is_default=True).first()
-        if status is None:
-            status = effective.statuses.order_by("order").first()
-        return status
-    status = Status.objects.filter(pk=status_id).first()
-    if status is None or status.status_set_id != effective.id:
-        raise InvalidStatusForList()
-    return status
+def resolve_status(value) -> str:
+    """Status kodini tekshiradi; `None` → sukut (`todo`).
+
+    Status endi ro'yxatga bog'liq emas, shuning uchun "bu status shu
+    ro'yxatga tegishli emas" holati YO'Q. Noma'lum kod — oddiy 400
+    (`validation_error`), aynan serializer bergan shakl bilan bir xil, ya'ni
+    `PATCH tasks/{id}/` va `PATCH tasks/{id}/move/` bir xil javob beradi.
+    """
+    if value is None:
+        return TaskStatus.TODO.value
+    value = str(value)
+    if value not in TaskStatus.values:
+        allowed = ", ".join(TaskStatus.values)
+        raise ValidationError(
+            {"status": [f"Noma'lum status kodi: {value}. Ruxsat etilganlari: {allowed}."]}
+        )
+    return value
 
 
 def _validate_assignees(task_list, assignee_ids):
@@ -192,7 +194,31 @@ def _set_assignees(task, assignee_ids, actor):
     _grant_assignee_space_access(task.list.space, [users[u] for u in to_add if u in users], actor)
     added = [users[u] for u in to_add if u in users]
     removed = [users[u] for u in to_remove if u in users]
+    _notify_assigned(task, added, actor)
     return added, removed
+
+
+def _notify_assigned(task, added, actor):
+    """Yangi biriktirilganlarga bildirishnoma (o'zini biriktirgan odam bundan mustasno).
+
+    Faqat QO'SHILGANLAR uchun: biriktirishni olib tashlash "endi sizga
+    tegishli emas" degan xabarni talab qilmaydi va ro'yxatni shovqinga
+    to'ldirardi.
+    """
+    if not added:
+        return
+    from apps.notifications.services import NotificationKind, notify_many
+
+    workspace = task.list.space.workspace
+    notify_many(
+        added,
+        actor=actor,
+        workspace=workspace,
+        kind=NotificationKind.TASK_ASSIGNED,
+        title="Sizga yangi vazifa biriktirildi",
+        body=task.title,
+        url=f"/w/{workspace.id}/l/{task.list_id}?task={task.id}",
+    )
 
 
 def _assignee_activities(task, actor, added, removed):
@@ -238,16 +264,16 @@ def _set_tags(task, tag_ids):
     refresh_tag_usage(list(set(wanted) | current))
 
 
-def _column_qs(list_id, status_id, exclude_pk=None):
-    qs = Task.objects.filter(list_id=list_id, status_id=status_id)
+def _column_qs(list_id, status, exclude_pk=None):
+    qs = Task.objects.filter(list_id=list_id, status=status)
     if exclude_pk:
         qs = qs.exclude(pk=exclude_pk)
     return qs
 
 
-def _end_of_column_position(list_id, status_id, exclude_pk=None) -> str:
+def _end_of_column_position(list_id, status, exclude_pk=None) -> str:
     last = (
-        _column_qs(list_id, status_id, exclude_pk)
+        _column_qs(list_id, status, exclude_pk)
         .order_by("-position")
         .values_list("position", flat=True)
         .first()
@@ -256,7 +282,8 @@ def _end_of_column_position(list_id, status_id, exclude_pk=None) -> str:
 
 
 def _apply_completed_at(task, status):
-    if status.type == StatusType.CLOSED:
+    """`completed_at` YAGONA yozuvchisi — status yopiq to'plamga kirdi/chiqdi."""
+    if status in CLOSED_STATUSES:
         if task.completed_at is None:
             task.completed_at = timezone.now()
     else:
@@ -264,34 +291,39 @@ def _apply_completed_at(task, status):
 
 
 def _status_activities(task, actor, previous, status):
-    """status_changed, plus a completed row when the task lands in a closed status."""
+    """status_changed, plus a completed row when the task lands in a closed status.
+
+    `from_value`/`to_value` endi KODNI saqlaydi (`todo`, `done`, ...), o'zbekcha
+    nomni emas: yorliq display qatlamida (`STATUS_LABEL`) yashaydi, tarix esa
+    tarjima o'zgarganda ham o'qilishi kerak.
+    """
     rows = [
         activity(
             task,
             actor,
             ActivityVerb.STATUS_CHANGED,
-            from_value=previous.name if previous else None,
-            to_value=status.name,
-            from_status_id=str(previous.id) if previous else None,
-            to_status_id=str(status.id),
+            from_value=previous or None,
+            to_value=status,
+            from_status=previous or None,
+            to_status=status,
         )
     ]
-    closed_before = previous is not None and previous.type == StatusType.CLOSED
-    if status.type == StatusType.CLOSED and not closed_before:
-        rows.append(activity(task, actor, ActivityVerb.COMPLETED, to_value=status.name))
+    closed_before = previous in CLOSED_STATUSES
+    if status in CLOSED_STATUSES and not closed_before:
+        rows.append(activity(task, actor, ActivityVerb.COMPLETED, to_value=status))
     return rows
 
 
-def _nudged_position(list_id, status_id, exclude_pk, desired):
+def _nudged_position(list_id, status, exclude_pk, desired):
     """Keep `desired` unless it collides in the destination column; nudge one row.
 
     Ustun/status ATAYLAB alohida argument: ko'chirishda `task.list` xotirada
     allaqachon manzilga o'zgartirilgan bo'lishi mumkin, DB'dagi holat esa hali
     manba ustuni bo'lib turadi.
     """
-    while _column_qs(list_id, status_id, exclude_pk=exclude_pk).filter(position=desired).exists():
+    while _column_qs(list_id, status, exclude_pk=exclude_pk).filter(position=desired).exists():
         nxt = (
-            _column_qs(list_id, status_id, exclude_pk=exclude_pk)
+            _column_qs(list_id, status, exclude_pk=exclude_pk)
             .filter(position__gt=desired)
             .order_by("position")
             .values_list("position", flat=True)
@@ -304,7 +336,7 @@ def _nudged_position(list_id, status_id, exclude_pk, desired):
 @transaction.atomic
 def create_task(task_list, data, actor, client_id=None) -> Task:
     check_client_id(Task, data.get("id"))
-    status = resolve_status(task_list, data.get("status_id"))
+    status = resolve_status(data.get("status"))
     assignee_ids = data.get("assignee_ids") or []
     tag_ids = data.get("tag_ids") or []
     if assignee_ids:
@@ -337,7 +369,7 @@ def create_task(task_list, data, actor, client_id=None) -> Task:
     # ko'radi — ya'ni qayta urinish determinlashgan holda yangi kalit beradi,
     # backoff talab qiladigan tasodifiy raqobat emas.
     for attempt in range(3):
-        task.position = _end_of_column_position(task_list.id, status.id)
+        task.position = _end_of_column_position(task_list.id, status)
         try:
             with transaction.atomic():
                 task.save()
@@ -353,7 +385,7 @@ def create_task(task_list, data, actor, client_id=None) -> Task:
             actor,
             ActivityVerb.CREATED,
             to_value=task.title,
-            status=status.name,
+            status=status,
             list_name=task_list.name,
         )
     ]
@@ -362,8 +394,8 @@ def create_task(task_list, data, actor, client_id=None) -> Task:
         rows += _assignee_activities(task, actor, added, removed)
     if tag_ids:
         _set_tags(task, tag_ids)
-    if status.type == StatusType.CLOSED:
-        rows.append(activity(task, actor, ActivityVerb.COMPLETED, to_value=status.name))
+    if status in CLOSED_STATUSES:
+        rows.append(activity(task, actor, ActivityVerb.COMPLETED, to_value=status))
     log_activities(rows)
 
     refresh_list_counts(task_list, actor=actor, client_id=client_id, emit=True)
@@ -378,13 +410,13 @@ def update_task(task, data, actor, client_id=None) -> Task:
     status_changed = False
     rows = []
 
-    if "status_id" in data and data["status_id"] is not None:
-        status = resolve_status(task_list, data["status_id"])
-        if status.id != task.status_id:
+    if "status" in data and data["status"] is not None:
+        status = resolve_status(data["status"])
+        if status != task.status:
             previous = task.status
             task.status = status
             task.position = _nudged_position(
-                task.list_id, status.id, task.pk, task.position
+                task.list_id, status, task.pk, task.position
             )
             _apply_completed_at(task, status)
             update_fields |= {"status", "position", "completed_at"}
@@ -452,7 +484,7 @@ def restore_task(task, actor, client_id=None) -> Task:
     task.deleted_at = None
     task.updated_by = actor
     # restore may collide with a live task's position
-    task.position = _nudged_position(task.list_id, task.status_id, task.pk, task.position)
+    task.position = _nudged_position(task.list_id, task.status, task.pk, task.position)
     task.save(update_fields=["deleted_at", "updated_by", "position", "updated_at"])
     log_activities([activity(task, actor, ActivityVerb.RESTORED, to_value=task.title)])
     refresh_list_counts(task.list, actor=actor, client_id=client_id, emit=True)
@@ -460,11 +492,11 @@ def restore_task(task, actor, client_id=None) -> Task:
     return task
 
 
-def _neighbour_position(list_id, status_id, neighbour_id, moving_pk):
+def _neighbour_position(list_id, status, neighbour_id, moving_pk):
     if neighbour_id is None:
         return None
     row = (
-        _column_qs(list_id, status_id, exclude_pk=moving_pk)
+        _column_qs(list_id, status, exclude_pk=moving_pk)
         .filter(pk=neighbour_id)
         .values_list("position", flat=True)
         .first()
@@ -493,7 +525,7 @@ def rebalance_column(task_list, status):
 
 
 @transaction.atomic
-def move_task(task, *, list_id, status_id, before_id, after_id, actor, client_id=None):
+def move_task(task, *, list_id, status, before_id, after_id, actor, client_id=None):
     """docs/DATA_MODEL.md section 8.5 — exactly one row is written, never a renumber
     (except an explicit rebalance, flagged in the response)."""
     target_list = (
@@ -501,17 +533,17 @@ def move_task(task, *, list_id, status_id, before_id, after_id, actor, client_id
     )
     if target_list is None or target_list.space.workspace_id != task.list.space.workspace_id:
         raise ValidationError({"list_id": ["Destination list is not in this workspace."]})
-    if status_id is None:
-        raise ValidationError({"status_id": ["status_id is required."]})
-    status = resolve_status(target_list, status_id)
+    if status is None:
+        raise ValidationError({"status": ["status is required."]})
+    status = resolve_status(status)
 
     source_list = task.list
     previous_status = task.status
     rebalanced = False
     collided = False
     for attempt in range(3):
-        prev_pos = _neighbour_position(target_list.id, status.id, before_id, task.pk)
-        next_pos = _neighbour_position(target_list.id, status.id, after_id, task.pk)
+        prev_pos = _neighbour_position(target_list.id, status, before_id, task.pk)
+        next_pos = _neighbour_position(target_list.id, status, after_id, task.pk)
 
         if prev_pos is not None and next_pos is not None and prev_pos >= next_pos:
             raise PositionConflict()
@@ -519,7 +551,7 @@ def move_task(task, *, list_id, status_id, before_id, after_id, actor, client_id
         if prev_pos is None and next_pos is None:
             # empty column (or "only item"); fall back to end-of-column when the
             # client's view was stale, instead of a spurious conflict
-            new_pos = _end_of_column_position(target_list.id, status.id, exclude_pk=task.pk)
+            new_pos = _end_of_column_position(target_list.id, status, exclude_pk=task.pk)
         else:
             new_pos = midstring(prev_pos, next_pos)
 
@@ -531,7 +563,7 @@ def move_task(task, *, list_id, status_id, before_id, after_id, actor, client_id
             # urinish → 409, garchi bo'sh joy bor bo'lsa ham). G'olibning
             # ustidan bir qadam bosib o'tamiz — natija baribir `prev` bilan
             # `next` orasida qoladi.
-            new_pos = _nudged_position(target_list.id, status.id, task.pk, new_pos)
+            new_pos = _nudged_position(target_list.id, status, task.pk, new_pos)
 
         if len(new_pos) > MAX_LEN_BEFORE_REBALANCE:
             rebalance_column(target_list, status)
@@ -578,7 +610,7 @@ def move_task(task, *, list_id, status_id, before_id, after_id, actor, client_id
                 to_list_id=str(target_list.id),
             )
         )
-    if previous_status.id != status.id:
+    if previous_status != status:
         rows += _status_activities(task, actor, previous_status, status)
     log_activities(rows)
 

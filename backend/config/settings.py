@@ -1,4 +1,4 @@
-"""Django settings for the ClickUp clone backend.
+"""Django settings for the UzWork backend.
 
 Environment comes from backend/.env via django-environ; see .env.example.
 """
@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import environ
+from celery.schedules import crontab
 from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -142,6 +143,7 @@ LOCAL_APPS = [
     "apps.realtime",
     "apps.emailcheck",
     "apps.chat",
+    "apps.notifications",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -245,7 +247,8 @@ REST_FRAMEWORK = {
         "rest_framework.filters.OrderingFilter",
     ),
     "DEFAULT_PAGINATION_CLASS": "config.pagination.StandardPagination",
-    "PAGE_SIZE": 50,
+    # §1.5 — `config.pagination.StandardPagination.page_size` bilan bir xil.
+    "PAGE_SIZE": 25,
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "EXCEPTION_HANDLER": "config.exceptions.api_exception_handler",
     # How many *trusted* proxies sit in front of the app.
@@ -307,8 +310,8 @@ SIMPLE_JWT = {
 }
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "ClickUp Clone API",
-    "DESCRIPTION": "REST API for the ClickUp clone. See docs/API_CONTRACT.md.",
+    "TITLE": "UzWork API",
+    "DESCRIPTION": "UzWork REST API. See docs/API_CONTRACT.md.",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
     "SCHEMA_PATH_PREFIX": "/api/v1",
@@ -437,6 +440,13 @@ LOGGING = {
             "propagate": False,
         },
         "asyncio": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        # Celery DEBUG'da har bir ichki vazifa uchun generatsiya qilingan
+        # funksiya manbasini chop etadi (`celery.utils.functional`) — dev
+        # konsolini butunlay ko'mib yuboradi. INFO'da vazifa boshlandi/tugadi
+        # satrlari qoladi, ya'ni kerakli ma'lumot yo'qolmaydi.
+        "celery": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "kombu": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        "amqp": {"handlers": ["console"], "level": "WARNING", "propagate": False},
         "daphne": {"handlers": ["console"], "level": "INFO", "propagate": False},
         "config": {"handlers": ["console"], "level": LOG_LEVEL, "propagate": False},
         "apps": {"handlers": ["console"], "level": LOG_LEVEL, "propagate": False},
@@ -494,7 +504,10 @@ if SENTRY_DSN:
 # Internationalization
 
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = "UTC"
+# UI o'zbekcha va foydalanuvchilar Toshkentda — admin/log vaqtlari mahalliy
+# bo'lsin. `USE_TZ = True` o'zgarmaydi: DB'da hamma narsa UTC saqlanadi va
+# API ham UTC (ISO-8601, `Z`) qaytaradi, faqat render vaqti o'zgaradi.
+TIME_ZONE = "Asia/Tashkent"
 USE_I18N = True
 USE_TZ = True
 
@@ -552,5 +565,77 @@ EMAILCHECK_MAIL_FROM = env("EMAILCHECK_MAIL_FROM", default="")
 #: qo'shimcha sozlamasiz server hech kimga SMTP so'rov yubormaydi.
 EMAILCHECK_VERIFIER = env("EMAILCHECK_VERIFIER", default="")
 EMAILCHECK_API_KEY = env("EMAILCHECK_API_KEY", default="")
+
+# --------------------------------------------------------------------------
+# Celery — fon vazifalar (config/celery.py, apps/core/tasks.py)
+# --------------------------------------------------------------------------
+#
+# Broker manzili BO'SH bo'lishi to'liq qo'llab-quvvatlanadigan holat: loyihaning
+# asosiy dev yo'lida Redis yo'q (CLAUDE.md — "Redis ixtiyoriy"), shuning uchun
+# standart qiymat `REDIS_URL` bilan bir xil va u ham bo'sh bo'lsa Celery EAGER
+# rejimga o'tadi: `.delay()` chaqirilgan joyda, o'sha jarayonda, sinxron
+# bajariladi. Ya'ni worker'siz ham ilova to'liq ishlaydi va hech qanday
+# funksionallik "jimgina" yo'qolmaydi.
+
+CELERY_BROKER_URL = env("CELERY_BROKER_URL", default=REDIS_URL)
+CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default=REDIS_URL)
+
+#: Broker yo'q -> eager. Aniq qiymat berib bekor qilish mumkin (masalan
+#: broker bor, lekin lokal debug uchun sinxron ishlatmoqchisiz).
+CELERY_TASK_ALWAYS_EAGER = env.bool(
+    "CELERY_TASK_ALWAYS_EAGER", default=not CELERY_BROKER_URL
+)
+#: Eager rejimda vazifa ichidagi xato YUTILMAYDI — chaqiruvchiga ko'tariladi.
+#: Aks holda dev'da buzuq vazifa jimgina "muvaffaqiyatli" ko'rinardi.
+CELERY_TASK_EAGER_PROPAGATES = True
+
+#: pickle EMAS: broker'ga yozish huquqiga ega bo'lgan har qanday tomon
+#: pickle payload orqali worker'da kod bajara oladi.
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_ACCEPT_CONTENT = ["json"]
+
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_ENABLE_UTC = True
+
+#: `acks_late` + `prefetch_multiplier=1`: worker o'lganda vazifa yo'qolmaydi va
+#: bitta worker navbatni "zaxiraga" olib qo'ymaydi. Bizdagi vazifalar uzoq va
+#: kam sonli — ularga aynan shu profil mos.
+CELERY_TASK_ACKS_LATE = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+#: Qotib qolgan vazifa worker'ni abadiy band qilmasin (soft -> tozalash
+#: imkoniyati bilan `SoftTimeLimitExceeded`, hard -> jarayonni o'ldirish).
+CELERY_TASK_SOFT_TIME_LIMIT = env.int("CELERY_TASK_SOFT_TIME_LIMIT", default=600)
+CELERY_TASK_TIME_LIMIT = env.int("CELERY_TASK_TIME_LIMIT", default=660)
+#: Natijalar Redis'da abadiy yotmasin (bizga natija deyarli kerak emas).
+CELERY_RESULT_EXPIRES = 3600
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+
+#: Soft-delete qilingan qatorlar shu muddatdan keyin BUTUNLAY o'chadi
+#: (ADR 0003 — `docs/adr/0003-soft-delete.md`). 0 yoki manfiy qiymat
+#: tozalashni o'chiradi (vazifa hech nima o'chirmasdan qaytadi).
+SOFT_DELETE_RETENTION_DAYS = env.int("SOFT_DELETE_RETENTION_DAYS", default=30)
+
+#: Bir marta o'chiriladigan qatorlar soni. Katta jadvalda bitta ulkan
+#: `DELETE` uzoq qulf ushlab turadi — partiyalarga bo'lamiz.
+PURGE_BATCH_SIZE = env.int("PURGE_BATCH_SIZE", default=500)
+
+#: Davriy jadval. `celery -A config beat` ishlab turgandagina bajariladi;
+#: beat yo'q bo'lsa vazifalarni qo'lda ham chaqirish mumkin
+#: (`manage.py purge_soft_deleted`).
+CELERY_BEAT_SCHEDULE = {
+    # Kechasi 03:30 (Asia/Tashkent) — kunlik trafik eng past paytda.
+    "purge-soft-deleted": {
+        "task": "core.purge_soft_deleted",
+        "schedule": crontab(hour=3, minute=30),
+    },
+    # 04:00 — muddati o'tgan JWT refresh yozuvlari. `ROTATE_REFRESH_TOKENS` +
+    # `BLACKLIST_AFTER_ROTATION` yoqilgani uchun HAR BIR refresh ikkita qator
+    # yozadi va ular hech qachon o'z-o'zidan o'chmaydi.
+    "flush-expired-tokens": {
+        "task": "core.flush_expired_tokens",
+        "schedule": crontab(hour=4, minute=0),
+    },
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

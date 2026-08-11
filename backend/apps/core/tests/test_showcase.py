@@ -15,11 +15,12 @@ URL = "/api/v1/public/showcase/"
 
 def make_task(env, title, position="n"):
     """`bootstrap_workspace` ro'yxatni bo'sh qoldiradi — vazifani o'zimiz qo'yamiz."""
+    from apps.core.enums import TaskStatus
     from apps.tasks.models import Task
 
     return Task.objects.create(
         list=env.list,
-        status=env.statuses[0],
+        status=TaskStatus.TODO,
         title=title,
         position=position,
         created_by=env.owner,

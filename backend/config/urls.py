@@ -22,6 +22,7 @@ api_v1 = [
     path("", include("apps.comments.urls")),
     path("", include("apps.emailcheck.urls")),
     path("", include("apps.chat.urls")),
+    path("", include("apps.notifications.urls")),
 ]
 
 urlpatterns = [

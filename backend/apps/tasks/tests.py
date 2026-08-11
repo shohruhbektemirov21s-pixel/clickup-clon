@@ -7,13 +7,13 @@ from django.db import OperationalError, connection, connections
 from django.test.utils import CaptureQueriesContext
 
 from apps.core.access import bump_permissions_version
-from apps.core.enums import SpaceAccess, WatcherSource
+from apps.core.enums import STATUS_ORDER, SpaceAccess, TaskStatus, WatcherSource
 from apps.core.ordering import MAX_LEN_BEFORE_REBALANCE, _guard, evenly_spaced, midstring
 from apps.tasks import services
 from apps.tasks.filters import ALLOWED_ORDERING_FIELDS
 from apps.tasks.models import Task, TaskActivity
 from apps.tasks.views import MAX_TASKS_PER_GROUP
-from apps.workspaces.models import RolePermission, SpaceMember, Status, TaskList
+from apps.workspaces.models import RolePermission, SpaceMember, TaskList
 from conftest import assert_error
 
 pytestmark = pytest.mark.django_db
@@ -88,7 +88,12 @@ def captured_events(monkeypatch):
 
 
 def make_space(env, name, *, is_private=False):
-    """Admin nomidan yangi bo'lim + undagi ro'yxat + birinchi status."""
+    """Admin nomidan yangi bo'lim + undagi ro'yxat.
+
+    Ilgari uchinchi qaytim qiymati shu bo'limning status to'plami edi;
+    statuslar endi global kodlar (`TaskStatus`), ya'ni qaytariladigan narsa
+    qolmadi.
+    """
     space = env.admin_client.post(
         f"/api/v1/workspaces/{env.workspace.id}/spaces/",
         {"name": name, "is_private": is_private},
@@ -100,10 +105,7 @@ def make_space(env, name, *, is_private=False):
         f"/api/v1/spaces/{space['id']}/lists/", {"name": f"{name} ro'yxati"}, format="json"
     )
     assert task_list.status_code == 201, task_list.content
-    statuses = env.admin_client.get(f"/api/v1/spaces/{space['id']}/status-set/").json()[
-        "statuses"
-    ]
-    return space, task_list.json(), statuses
+    return space, task_list.json()
 
 
 # ------------------------------------------------------------- ordering unit tests
@@ -168,8 +170,7 @@ def test_create_task_defaults(env, empty_list):
     assert body["title"] == "First"
     assert body["position"] == "n"
     assert body["priority"] == "none"
-    default_status = env.statuses[0]
-    assert body["status_id"] == str(default_status.id)
+    assert body["status"] == TaskStatus.TODO.value
     assert body["is_deleted"] is False
     # creator is auto-watcher
     assert [w["id"] for w in body["watchers"]] == [str(env.member.id)]
@@ -177,19 +178,56 @@ def test_create_task_defaults(env, empty_list):
     assert empty_list.task_count == 1
 
 
-def test_create_task_invalid_status_for_list(env, empty_list):
-    other_space = env.admin_client.post(
-        f"/api/v1/workspaces/{env.workspace.id}/spaces/", {"name": "Second"}, format="json"
-    ).json()
-    foreign_status = env.admin_client.get(
-        f"/api/v1/spaces/{other_space['id']}/status-set/"
-    ).json()["statuses"][0]
+def test_create_task_rejects_an_unknown_status_code(env, empty_list):
+    """(b) Status yopiq kod to'plami — undan tashqari qiymat 400.
+
+    Ilgari bu test "begona ro'yxatning statusi" ni tekshirardi
+    (`invalid_status_for_list`). Bunday holat endi MAVJUD EMAS: status
+    ro'yxatga bog'liq emas, shuning uchun yagona xato — noma'lum kod.
+    """
+    for bad in ["complete", "", "todo "]:
+        response = env.member_client.post(
+            tasks_url(empty_list.id), {"title": "X", "status": bad}, format="json"
+        )
+        error = assert_error(response, 400, "validation_error")
+        assert "status" in error["details"], (bad, error)
+
+
+def test_create_task_with_an_explicit_status_sets_completed_at(env, empty_list):
+    """(c) `done` ga tushgan vazifada `completed_at` darhol to'ladi."""
     response = env.member_client.post(
         tasks_url(empty_list.id),
-        {"title": "X", "status_id": foreign_status["id"]},
+        {"title": "Allaqachon bajarilgan", "status": TaskStatus.DONE.value},
         format="json",
     )
-    assert_error(response, 400, "invalid_status_for_list")
+    assert response.status_code == 201, response.content
+    body = response.json()
+    assert body["status"] == "done"
+    assert body["completed_at"] is not None
+
+
+def test_patch_status_round_trip_sets_and_clears_completed_at(env, empty_list):
+    """(c) `done` ga o'tganda to'ladi, qaytganda TOZALANADI."""
+    (task,) = make_tasks(env, empty_list, ["Aylanma"])
+    assert task["completed_at"] is None
+
+    done = env.admin_client.patch(
+        task_url(task["id"]), {"status": "done"}, format="json"
+    )
+    assert done.status_code == 200, done.content
+    assert done.json()["completed_at"] is not None
+
+    back = env.admin_client.patch(
+        task_url(task["id"]), {"status": "review"}, format="json"
+    )
+    assert back.status_code == 200, back.content
+    assert back.json()["completed_at"] is None
+    assert back.json()["status"] == "review"
+
+    bad = env.admin_client.patch(
+        task_url(task["id"]), {"status": "archived"}, format="json"
+    )
+    assert_error(bad, 400, "validation_error")
 
 
 def test_description_fields_must_come_together(env, empty_list):
@@ -278,7 +316,7 @@ def test_move_reorder_within_column(env, empty_list):
         task_url(c["id"], "move/"),
         {
             "list_id": str(empty_list.id),
-            "status_id": a["status_id"],
+            "status": a["status"],
             "before_id": a["id"],
             "after_id": b["id"],
         },
@@ -295,18 +333,17 @@ def test_move_reorder_within_column(env, empty_list):
 
 def test_move_cross_list_and_status(env, empty_list):
     (task,) = make_tasks(env, empty_list, ["Ship it"])
-    closed = env.statuses[2]
     target = env.list  # Getting Started
     moved = env.admin_client.patch(
         task_url(task["id"], "move/"),
-        {"list_id": str(target.id), "status_id": str(closed.id)},
+        {"list_id": str(target.id), "status": TaskStatus.DONE.value},
         format="json",
     )
     assert moved.status_code == 200, moved.content
     body = moved.json()
     assert body["list_id"] == str(target.id)
-    assert body["status_id"] == str(closed.id)
-    assert body["completed_at"] is not None  # closed-type sets completed_at
+    assert body["status"] == "done"
+    assert body["completed_at"] is not None  # `done` yopiq status
 
     empty_list.refresh_from_db()
     assert empty_list.task_count == 0
@@ -323,29 +360,47 @@ def test_move_missing_status_and_stale_neighbours(env, empty_list):
     assert_error(no_status, 400, "validation_error")
 
     # neighbour from a different column -> 409 position_conflict
-    other_status = env.statuses[1]
     stale = env.admin_client.patch(
         task_url(a["id"], "move/"),
         {
             "list_id": str(empty_list.id),
-            "status_id": str(other_status.id),
-            "before_id": b["id"],  # b is in the open column, not in-progress
+            "status": TaskStatus.IN_PROGRESS.value,
+            "before_id": b["id"],  # b `todo` ustunida, `in_progress` da emas
         },
         format="json",
     )
     assert_error(stale, 409, "position_conflict")
 
+    bad_code = env.admin_client.patch(
+        task_url(a["id"], "move/"),
+        {"list_id": str(empty_list.id), "status": "shipped"},
+        format="json",
+    )
+    assert_error(bad_code, 400, "validation_error")
+
 
 def test_group_by_status_shape(env, empty_list):
+    """(d) Doska javobi DOIM to'rtta guruh, DOIM `STATUS_ORDER` tartibida."""
     make_tasks(env, empty_list, ["A", "B"])
     response = env.member_client.get(tasks_url(empty_list.id) + "?group_by=status")
     assert response.status_code == 200
     body = response.json()
     assert body["group_by"] == "status"
-    assert [g["status_id"] for g in body["groups"]] == [str(s.id) for s in env.statuses]
-    counts = {g["status_id"]: g["count"] for g in body["groups"]}
-    assert counts[str(env.statuses[0].id)] == 2
-    assert counts[str(env.statuses[1].id)] == 0  # empty groups included
+    assert [g["status"] for g in body["groups"]] == [c.value for c in STATUS_ORDER]
+    assert [g["label"] for g in body["groups"]] == [c.label for c in STATUS_ORDER]
+    for group in body["groups"]:
+        assert set(group) == {"status", "label", "tasks", "count"}
+    counts = {g["status"]: g["count"] for g in body["groups"]}
+    assert counts == {"todo": 2, "in_progress": 0, "review": 0, "done": 0}
+    assert [t["title"] for t in body["groups"][0]["tasks"]] == ["A", "B"]
+    # Bo'sh ustunlar ham chiziladi — doska ustunlari serverdan keladi.
+    assert body["groups"][2]["tasks"] == []
+
+
+def test_group_by_status_always_returns_four_groups_even_when_empty(env, empty_list):
+    body = env.member_client.get(tasks_url(empty_list.id) + "?group_by=status").json()
+    assert len(body["groups"]) == 4
+    assert all(g["count"] == 0 and g["tasks"] == [] for g in body["groups"])
 
 
 # ------------------------------------------------------------- delete / restore
@@ -492,7 +547,7 @@ def test_pagination_envelope_and_limits(env, empty_list):
     assert len(page["results"]) == 2
     assert page["previous"] is not None and page["next"] is not None
 
-    too_big = env.member_client.get(url + "?page_size=201")
+    too_big = env.member_client.get(url + "?page_size=101")
     assert_error(too_big, 400, "validation_error")
 
     past_end = env.member_client.get(url + "?page=99")
@@ -516,7 +571,7 @@ def test_db_position_order_matches_python_sort(env, empty_list):
     (masalan PostgreSQL `en_US.UTF-8`: "a" < "B") boshqa javob berardi.
     """
     make_tasks(env, empty_list, [f"T{i}" for i in range(12)])
-    status_id = str(env.statuses[0].id)
+    status = TaskStatus.TODO.value
     rng = random.Random(7)
 
     def column_ids():
@@ -531,7 +586,7 @@ def test_db_position_order_matches_python_sort(env, empty_list):
         ids = column_ids()
         moving = ids.pop(rng.randrange(len(ids)))
         slot = rng.randrange(len(ids) + 1)
-        payload = {"list_id": str(empty_list.id), "status_id": status_id}
+        payload = {"list_id": str(empty_list.id), "status": status}
         if slot > 0:
             payload["before_id"] = ids[slot - 1]
         if slot < len(ids):
@@ -576,14 +631,13 @@ def test_activity_logged_on_create(env, empty_list):
     assert row["verb"] == "created"
     assert row["to_value"] == "Historic"
     assert row["actor"]["id"] == str(env.admin.id)
-    assert row["metadata"]["status"] == env.statuses[0].name
+    assert row["metadata"]["status"] == "todo"
 
 
 def test_activity_status_change_also_records_completed(env, empty_list):
     (task,) = make_tasks(env, empty_list, ["Ship it"])
-    closed = env.statuses[2]
     patched = env.admin_client.patch(
-        task_url(task["id"]), {"status_id": str(closed.id)}, format="json"
+        task_url(task["id"]), {"status": TaskStatus.DONE.value}, format="json"
     )
     assert patched.status_code == 200, patched.content
 
@@ -592,11 +646,14 @@ def test_activity_status_change_also_records_completed(env, empty_list):
     assert set(by_verb) == {"created", "status_changed", "completed"}
 
     changed = by_verb["status_changed"]
-    assert changed["from_value"] == env.statuses[0].name
-    assert changed["to_value"] == closed.name
+    # Tarix KODNI saqlaydi, o'zbekcha yorliqni emas: tarjima o'zgarsa ham
+    # eski qatorlar o'qilishi kerak.
+    assert changed["from_value"] == "todo"
+    assert changed["to_value"] == "done"
     assert changed["actor"]["id"] == str(env.admin.id)
-    assert changed["metadata"]["to_status_id"] == str(closed.id)
-    assert by_verb["completed"]["to_value"] == closed.name
+    assert changed["metadata"]["to_status"] == "done"
+    assert changed["metadata"]["from_status"] == "todo"
+    assert by_verb["completed"]["to_value"] == "done"
     # the created row is the oldest, so it sorts last
     assert rows[-1]["verb"] == "created"
 
@@ -720,7 +777,7 @@ def test_move_rebalances_the_column_when_the_gap_is_exhausted(
         task_url(c["id"], "move/"),
         {
             "list_id": str(empty_list.id),
-            "status_id": a["status_id"],
+            "status": a["status"],
             "before_id": a["id"],
             "after_id": b["id"],
         },
@@ -756,7 +813,7 @@ def test_move_without_rebalance_reports_false_in_the_event(
         task_url(c["id"], "move/"),
         {
             "list_id": str(empty_list.id),
-            "status_id": a["status_id"],
+            "status": a["status"],
             "before_id": a["id"],
             "after_id": b["id"],
         },
@@ -781,7 +838,7 @@ def test_concurrent_moves_into_the_same_gap(env, empty_list, captured_events):
     """
     a, b = make_tasks(env, empty_list, ["A", "B"])
     x, y = make_tasks(env, empty_list, ["X", "Y"])
-    status = Status.objects.get(pk=a["status_id"])
+    status = TaskStatus.TODO.value
     barrier = threading.Barrier(2, timeout=30)
     outcome = {}
 
@@ -789,7 +846,7 @@ def test_concurrent_moves_into_the_same_gap(env, empty_list, captured_events):
         services.move_task(
             Task.objects.select_related("list__space").get(pk=task_id),
             list_id=empty_list.id,
-            status_id=status.id,
+            status=status,
             before_id=a["id"],
             after_id=b["id"],
             actor=env.admin,
@@ -859,12 +916,12 @@ def test_concurrent_moves_into_the_same_gap(env, empty_list, captured_events):
 def test_move_into_a_space_the_actor_cannot_see_is_404(env, empty_list):
     """Manzil bo'lim ko'rinmasa — 404, mavjudligi oshkor qilinmaydi."""
     SpaceMember.objects.create(space=env.space, user=env.guest, access=SpaceAccess.MANAGER)
-    _, hidden_list, hidden_statuses = make_space(env, "Yopiq", is_private=True)
+    _, hidden_list = make_space(env, "Yopiq", is_private=True)
     (task,) = make_tasks(env, empty_list, ["Mening ishim"])
 
     denied = env.guest_client.patch(
         task_url(task["id"], "move/"),
-        {"list_id": hidden_list["id"], "status_id": hidden_statuses[0]["id"]},
+        {"list_id": hidden_list["id"], "status": TaskStatus.TODO.value},
         format="json",
     )
     assert_error(denied, 404, "not_found")
@@ -879,9 +936,9 @@ def test_move_into_another_space_checks_the_destination_too(env, empty_list):
     manzilda paydo bo'lardi.
     """
     SpaceMember.objects.create(space=env.space, user=env.guest, access=SpaceAccess.MANAGER)
-    other, other_list, other_statuses = make_space(env, "Ikkinchi")
+    other, other_list = make_space(env, "Ikkinchi")
     (task,) = make_tasks(env, empty_list, ["Ko'chadi"])
-    payload = {"list_id": other_list["id"], "status_id": other_statuses[0]["id"]}
+    payload = {"list_id": other_list["id"], "status": TaskStatus.TODO.value}
 
     denied = env.guest_client.patch(task_url(task["id"], "move/"), payload, format="json")
     assert_error(denied, 403, "permission_denied")
@@ -890,7 +947,7 @@ def test_move_into_another_space_checks_the_destination_too(env, empty_list):
     # o'sha bo'lim ICHIDA ko'chirish hamon ishlaydi (manba = manzil)
     inside = env.guest_client.patch(
         task_url(task["id"], "move/"),
-        {"list_id": str(env.list.id), "status_id": str(env.statuses[1].id)},
+        {"list_id": str(env.list.id), "status": TaskStatus.IN_PROGRESS.value},
         format="json",
     )
     assert inside.status_code == 200, inside.content
@@ -905,11 +962,11 @@ def test_move_into_another_space_checks_the_destination_too(env, empty_list):
 
 
 def test_admin_may_still_move_across_spaces(env, empty_list):
-    _, other_list, other_statuses = make_space(env, "Uchinchi")
+    _, other_list = make_space(env, "Uchinchi")
     (task,) = make_tasks(env, empty_list, ["Admin ko'chiradi"])
     moved = env.admin_client.patch(
         task_url(task["id"], "move/"),
-        {"list_id": other_list["id"], "status_id": other_statuses[0]["id"]},
+        {"list_id": other_list["id"], "status": TaskStatus.TODO.value},
         format="json",
     )
     assert moved.status_code == 200, moved.content
@@ -920,7 +977,7 @@ def test_move_with_a_soft_deleted_neighbour_is_a_conflict(env, empty_list):
     """O'chirilgan qator ustunda yo'q — mijozning ko'rinishi eskirgan."""
     a, b, c = make_tasks(env, empty_list, ["A", "B", "C"])
     assert env.admin_client.delete(task_url(b["id"])).status_code == 204
-    base = {"list_id": str(empty_list.id), "status_id": a["status_id"]}
+    base = {"list_id": str(empty_list.id), "status": a["status"]}
 
     after = env.admin_client.patch(
         task_url(c["id"], "move/"), {**base, "after_id": b["id"]}, format="json"
@@ -1147,7 +1204,7 @@ def test_task_read_keeps_404_before_403(env, empty_list):
     for key in ("list", "board", "detail", "activity", "workspace"):
         assert_error(outsider[key], 404, "not_found")
 
-    _, hidden_list, _ = make_space(env, "Yopiq bo'lim", is_private=True)
+    _, hidden_list = make_space(env, "Yopiq bo'lim", is_private=True)
     hidden_task = env.admin_client.post(
         tasks_url(hidden_list["id"]), {"title": "Yopiq ish"}, format="json"
     ).json()
@@ -1159,13 +1216,15 @@ def test_task_read_keeps_404_before_403(env, empty_list):
 # ============================================================ board (group_by)
 
 
-def test_board_query_count_does_not_scale_with_status_count(env, empty_list):
+def test_board_query_count_does_not_scale_with_task_count(env, empty_list):
     """Doska ilgari HAR BIR status uchun alohida `COUNT(*)` + alohida `SELECT`
-    yugurtirardi: 30 ustunli doskada ~60-90 so'rov.
+    yugurtirardi.
 
-    Endi so'rovlar soni ustunlar soniga BOG'LIQ EMAS: bitta `GROUP BY`,
-    bitta `ROW_NUMBER() OVER (PARTITION BY status_id)` va o'zgarmas
-    `prefetch` lar.
+    Ustunlar soni endi qat'iy to'rtta, shuning uchun "ustun qo'shib ko'ramiz"
+    stsenariysi mavjud emas. Qulflanadigan invariant esa saqlanadi: bitta
+    `GROUP BY`, bitta `ROW_NUMBER() OVER (PARTITION BY status)` va o'zgarmas
+    `prefetch` lar — ya'ni so'rovlar soni VAZIFALAR soniga ham, ular necha
+    ustunga tarqalganiga ham bog'liq emas.
     """
     make_tasks(env, empty_list, ["A", "B"])
     url = tasks_url(empty_list.id) + "?group_by=status"
@@ -1178,30 +1237,39 @@ def test_board_query_count_does_not_scale_with_status_count(env, empty_list):
         return len(ctx.captured_queries), response.json()
 
     small, body = measure()
-    assert len(body["groups"]) == len(env.statuses)
+    assert len(body["groups"]) == 4
 
-    Status.objects.bulk_create(
+    # Har bir ustunga vazifa tarqatamiz — barcha to'rttasi to'ladi.
+    keys = evenly_spaced(24)
+    Task.objects.bulk_create(
         [
-            Status(status_set=env.status_set, name=f"S{i}", order=100 + i)
-            for i in range(27)
+            Task(
+                list=empty_list,
+                status=STATUS_ORDER[i % 4],
+                title=f"Q{i:02d}",
+                position=keys[i],
+                created_by=env.admin,
+                updated_by=env.admin,
+            )
+            for i in range(24)
         ]
     )
     large, body = measure()
-    assert len(body["groups"]) == len(env.statuses) + 27
-    assert large == small, f"{small} → {large} so'rov: ustunlar soni ta'sir qilmasligi kerak"
+    assert len(body["groups"]) == 4
+    assert sum(g["count"] for g in body["groups"]) == 26
+    assert large == small, f"{small} → {large} so'rov: hajm ta'sir qilmasligi kerak"
 
 
 def test_board_group_size_is_capped_independently_of_page_size(env, empty_list):
     """Doska javobi sahifalanmaydi (§1.5 istisnosi), shuning uchun ustun
     hajmi `page_size` ga emas, qat'iy shiftga bog'liq: aks holda
-    `?page_size=200` × 30 status = bitta javobda 6000 vazifa."""
-    default_status = env.statuses[0]
+    `?page_size=100` × 4 ustun = bitta javobda 400 vazifa."""
     keys = evenly_spaced(60)
     Task.objects.bulk_create(
         [
             Task(
                 list=empty_list,
-                status=default_status,
+                status=TaskStatus.TODO,
                 title=f"T{i:02d}",
                 position=keys[i],
                 created_by=env.admin,
@@ -1214,18 +1282,18 @@ def test_board_group_size_is_capped_independently_of_page_size(env, empty_list):
 
     def column(query):
         body = env.member_client.get(url + query).json()
-        return next(g for g in body["groups"] if g["status_id"] == str(default_status.id))
+        return next(g for g in body["groups"] if g["status"] == "todo")
 
-    capped = column("&page_size=200")
+    capped = column("&page_size=100")
     assert capped["count"] == 60  # to'liq son hamon ko'rsatiladi
-    assert len(capped["results"]) == MAX_TASKS_PER_GROUP
-    assert [t["title"] for t in capped["results"]] == [
+    assert len(capped["tasks"]) == MAX_TASKS_PER_GROUP
+    assert [t["title"] for t in capped["tasks"]] == [
         f"T{i:02d}" for i in range(MAX_TASKS_PER_GROUP)
     ]
 
-    assert len(column("&page_size=5")["results"]) == 5  # kichikroq so'rov hurmat qilinadi
+    assert len(column("&page_size=5")["tasks"]) == 5  # kichikroq so'rov hurmat qilinadi
     assert_error(
-        env.member_client.get(url + "&page_size=201"), 400, "validation_error"
+        env.member_client.get(url + "&page_size=101"), 400, "validation_error"
     )
 
 
@@ -1250,7 +1318,7 @@ def test_board_groups_apply_filters_ordering_and_match_the_flat_result(env, empt
     # DISTINCT'dan oldin hisoblanadi, shuning uchun view avval `pk` to'plamini
     # oladi — shu tarmoq aynan shu yerda qulflanadi.
     grouped = env.member_client.get(url + "?group_by=status&assignee=me").json()
-    titles = [t["title"] for g in grouped["groups"] for t in g["results"]]
+    titles = [t["title"] for g in grouped["groups"] for t in g["tasks"]]
     assert titles == ["Alpha", "Beta"]
     assert sum(g["count"] for g in grouped["groups"]) == 2
 
@@ -1259,15 +1327,15 @@ def test_board_groups_apply_filters_ordering_and_match_the_flat_result(env, empt
     assert flat["count"] == sum(g["count"] for g in grouped["groups"])
 
     # ichma-ich prefetch oynali so'rovdan keyin ham ishlaydi
-    alpha = next(t for t in grouped["groups"][0]["results"] if t["title"] == "Alpha")
+    alpha = next(t for t in grouped["groups"][0]["tasks"] if t["title"] == "Alpha")
     assert [x["id"] for x in alpha["assignees"]] == [str(env.member.id)]
     assert [x["name"] for x in alpha["tags"]] == ["core"]
 
     tagged = env.member_client.get(url + f"?group_by=status&tag={tag['id']}").json()
-    assert [t["title"] for g in tagged["groups"] for t in g["results"]] == ["Alpha"]
+    assert [t["title"] for g in tagged["groups"] for t in g["tasks"]] == ["Alpha"]
 
     ordered = env.member_client.get(url + "?group_by=status&ordering=-title").json()
-    assert [t["title"] for g in ordered["groups"] for t in g["results"]] == [
+    assert [t["title"] for g in ordered["groups"] for t in g["tasks"]] == [
         "Gamma",
         "Beta",
         "Alpha",
@@ -1346,9 +1414,8 @@ def test_filter_combinations_status_and_tags(env, empty_list):
         {"assignee_ids": [str(env.member.id)], "tag_ids": [other_tag["id"]]},
         format="json",
     )
-    in_progress, done = env.statuses[1], env.statuses[2]
     env.admin_client.patch(
-        task_url(c["id"]), {"status_id": str(in_progress.id)}, format="json"
+        task_url(c["id"]), {"status": TaskStatus.IN_PROGRESS.value}, format="json"
     )
     url = tasks_url(empty_list.id)
 
@@ -1368,15 +1435,18 @@ def test_filter_combinations_status_and_tags(env, empty_list):
         "Gamma",
     }
 
-    # status
-    assert titles(f"?status={in_progress.id}") == ["Gamma"]
-    assert set(titles(f"?status={env.statuses[0].id}&status={in_progress.id}")) == {
+    # status — endi kodlar bo'yicha; `?status_type=` OLIB TASHLANDI
+    # (`status == "done"` yopiq degani, alohida "tur" tushunchasi yo'q).
+    assert titles("?status=in_progress") == ["Gamma"]
+    assert set(titles("?status=todo&status=in_progress")) == {
         "Alpha report",
         "Beta report",
         "Gamma",
     }
-    assert titles(f"?status={done.id}") == []
-    assert titles("?status_type=active") == ["Gamma"]
+    assert titles("?status=done") == []
+    assert_error(
+        env.member_client.get(url + "?status=active"), 400, "validation_error"
+    )
 
     # tag
     assert titles(f"?tag={tag['id']}") == ["Alpha report"]
@@ -1394,7 +1464,7 @@ def test_filter_combinations_status_and_tags(env, empty_list):
 def test_workspace_tasks_pagination_filters_and_private_spaces(env, empty_list):
     """Ilgari bu endpoint uchun faqat `?q=alpha` sinalardi."""
     make_tasks(env, empty_list, [f"T{i:02d}" for i in range(7)])
-    private, private_list, _ = make_space(env, "Maxfiy", is_private=True)
+    private, private_list = make_space(env, "Maxfiy", is_private=True)
     secret = env.admin_client.post(
         tasks_url(private_list["id"]), {"title": "Maxfiy ish"}, format="json"
     )
@@ -1426,7 +1496,7 @@ def test_workspace_tasks_pagination_filters_and_private_spaces(env, empty_list):
     assert page["count"] == 8 and len(page["results"]) == 3
     assert page["next"] and page["previous"]
     assert_error(env.guest_client.get(url + "?page=99"), 404, "not_found")
-    assert_error(env.guest_client.get(url + "?page_size=201"), 400, "validation_error")
+    assert_error(env.guest_client.get(url + "?page_size=101"), 400, "validation_error")
 
     # filtrlar shu yerda ham amal qiladi
     env.admin_client.patch(

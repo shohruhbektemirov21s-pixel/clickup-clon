@@ -39,6 +39,8 @@ every frame — the same call the team already made for presence
 `_payload()`, so a new emitter cannot forget it.
 """
 
+from typing import Any
+
 import uuid
 
 from asgiref.sync import async_to_sync
@@ -255,7 +257,9 @@ def emit_list_updated(task_list, *, actor=None, client_id=None):
     _send(space_group(task_list.space_id), "list.updated", payload)
 
 
-def emit_permissions_updated(workspace, *, actor=None, client_id=None):
+def emit_permissions_updated(
+    workspace: Any, *, actor: Any = None, client_id: str | None = None
+) -> None:
     """permission.updated on the workspace channel (DESIGN_PERMISSIONS.md D.10).
 
     Genuinely workspace-wide (it carries no space content, only a version

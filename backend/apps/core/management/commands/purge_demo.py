@@ -186,18 +186,16 @@ class Command(BaseCommand):
         placeholder_list_ids = set(placeholders.values_list("list_id", flat=True))
 
         with transaction.atomic():
-            # 1) Vazifalar. `Task.status` PROTECT bo'lgani uchun ish maydonini
-            #    to'g'ridan-to'g'ri o'chirib bo'lmaydi: cascade Status'ga
-            #    yetganda unga tayangan vazifalar uni himoya qiladi.
-            #    `all_objects` — soft-delete qilinganlari ham ketsin, va
-            #    `hard_delete()` — `delete()` bu yerda faqat `deleted_at` ni
-            #    qo'yardi, ya'ni qator baribir Status'ni himoya qilib qolardi.
+            # 1) Vazifalar AVVAL, ataylab. `all_objects` — soft-delete
+            #    qilinganlari ham ketsin, va `hard_delete()` — `delete()` bu
+            #    yerda faqat `deleted_at` ni qo'yardi, ya'ni qator jadvalda
+            #    qolib ketardi.
             task_count, _ = Task.all_objects.filter(
                 list__space__workspace__in=workspaces
             ).hard_delete()
 
-            # 2) Ish maydoni — bo'lim, jild, ro'yxat, status, a'zolik, taklif,
-            #    teg va izohlar CASCADE bilan ketadi.
+            # 2) Ish maydoni — bo'lim, jild, ro'yxat, a'zolik, taklif, teg va
+            #    izohlar CASCADE bilan ketadi.
             workspace_count, _ = workspaces.delete()
 
             # 3) Hisoblar — endi ularni himoya qiladigan ish maydoni qolmadi.

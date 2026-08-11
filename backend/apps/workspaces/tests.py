@@ -4,6 +4,7 @@ import pytest
 from django.utils import timezone
 
 from apps.core.access import bump_permissions_version
+from apps.core.enums import TaskStatus
 from apps.workspaces import services
 from apps.workspaces.models import (
     Folder,
@@ -75,7 +76,7 @@ def test_workspace_delete_requires_confirm_name(env):
 
     task = Task.objects.create(
         list=env.list,
-        status=env.statuses[0],
+        status=TaskStatus.TODO,
         title="O'chib ketishi kerak",
         position="n",
         created_by=env.owner,
@@ -90,7 +91,8 @@ def test_workspace_delete_requires_confirm_name(env):
     assert not TaskList.objects.filter(pk=list_id).exists()
     assert not WorkspaceMember.objects.filter(workspace_id=workspace_id).exists()
     assert not SpaceMember.objects.filter(space_id=space_id).exists()
-    # `Task.status` PROTECT — yumshoq o'chirilganlari ham qolmasligi kerak.
+    # Yumshoq o'chirilganlari ham qolmasligi kerak (idish o'chirilganda
+    # vazifalar `hard_delete()` bilan ketadi).
     assert not Task.all_objects.filter(pk=task.pk).exists()
 
 
@@ -262,7 +264,7 @@ def test_member_removal_is_all_or_nothing(env, monkeypatch):
 
     task = Task.objects.create(
         list=env.list,
-        status=env.statuses[0],
+        status=TaskStatus.TODO,
         title="Biriktirilgan",
         position="n",
         created_by=env.owner,
@@ -655,14 +657,8 @@ def test_space_create_and_visibility(env):
     )
     assert created.status_code == 201, created.content
     space_id = created.json()["id"]
-    # default status set auto-created
-    status_set = env.admin_client.get(f"/api/v1/spaces/{space_id}/status-set/")
-    assert status_set.status_code == 200
-    assert [s["name"] for s in status_set.json()["statuses"]] == [
-        "BAJARILADI",
-        "JARAYONDA",
-        "BAJARILDI",
-    ]
+    # Status to'plami endi yaratilmaydi — `spaces/{id}/status-set/` yo'q (§9).
+    assert env.admin_client.get(f"/api/v1/spaces/{space_id}/status-set/").status_code == 404
 
     # duplicate name (CI) -> 409
     dup = env.admin_client.post(url, {"name": "private ops"}, format="json")
@@ -859,122 +855,36 @@ def test_list_move_reorder_and_reparent(env):
     assert reparented.json()["folder_id"] == folder["id"]
 
 
-# ------------------------------------------------------------- status sets
+# ------------------------------------------------- status sets (OLIB TASHLANDI)
+#
+# Bu yerda uchta test turardi: `test_space_status_set_put_with_mapping`,
+# `test_status_set_invariants` va `test_list_status_set_override_and_delete`.
+# Ular BUTUNLAY YO'Q BO'LGAN xatti-harakatni tekshirardi — sozlanadigan status
+# to'plami, `status_mapping` bilan qayta yo'naltirish va ro'yxat darajasidagi
+# override. Model olib tashlangach, ularni "yangi modelga moslashtirish" mumkin
+# emas: moslashtirilgan versiya boshqa narsani tekshirgan bo'lardi. Shuning
+# uchun ular o'chirildi va o'rniga endpointlarning haqiqatan yo'qolgani
+# qulflanadi (pastda). Yangi status xatti-harakati `apps/tasks/tests.py` da
+# sinaladi (`test_create_task_rejects_an_unknown_status_code`,
+# `test_patch_status_round_trip_sets_and_clears_completed_at`,
+# `test_group_by_status_shape`).
 
 
-def test_space_status_set_put_with_mapping(env):
-    from apps.tasks.models import Task
+def test_status_set_endpoints_are_gone(env):
+    """§9 dagi beshta endpoint 404 bo'lishi SHART.
 
-    url = f"/api/v1/spaces/{env.space.id}/status-set/"
-    current = env.admin_client.get(url).json()
-    keep = current["statuses"][0]
-    in_progress = current["statuses"][1]
-    complete = current["statuses"][2]
+    Marshrut butunlay olib tashlangani uchun har qanday metod 404 beradi —
+    405 emas (405 marshrut hali borligini bildirardi).
+    """
+    space_url = f"/api/v1/spaces/{env.space.id}/status-set/"
+    list_url = f"/api/v1/lists/{env.list.id}/status-set/"
+    payload = {"statuses": []}
 
-    # A bootstrapped workspace starts empty, so park a task on the status that
-    # the payload below drops — that is what makes the mapping mandatory.
-    Task.objects.create(
-        list=env.list,
-        status_id=in_progress["id"],
-        title="Mapping uchun vazifa",
-        position="n",
-        created_by=env.admin,
-        updated_by=env.admin,
-    )
-
-    payload = {
-        "name": "Bug workflow",
-        "statuses": [
-            {
-                "id": keep["id"],
-                "name": "TO DO",
-                "color": "#87909E",
-                "type": "open",
-                "is_default": True,
-            },
-            {"name": "IN REVIEW", "color": "#4194F6", "type": "active", "is_default": False},
-            {"id": complete["id"], "name": "SHIPPED", "color": "#6BC950", "type": "closed",
-             "is_default": False},
-        ],
-    }
-    # IN PROGRESS is removed but still holds a task -> missing mapping = 409
-    missing = env.admin_client.put(url, payload, format="json")
-    error = assert_error(missing, 409, "conflict")
-    assert "status_mapping" in error["details"]
-
-    payload["status_mapping"] = {in_progress["id"]: keep["id"]}
-    ok = env.admin_client.put(url, payload, format="json")
-    assert ok.status_code == 200, ok.content
-    body = ok.json()
-    assert body["name"] == "Bug workflow"
-    assert [s["name"] for s in body["statuses"]] == ["TO DO", "IN REVIEW", "SHIPPED"]
-    assert [s["order"] for s in body["statuses"]] == [0, 1, 2]
-
-    # member may read but not write
-    denied = env.member_client.put(url, payload, format="json")
-    assert_error(denied, 403, "permission_denied")
-
-
-def test_status_set_invariants(env):
-    url = f"/api/v1/spaces/{env.space.id}/status-set/"
-    no_closed = {
-        "statuses": [
-            {"name": "A", "type": "open", "is_default": True},
-            {"name": "B", "type": "active", "is_default": False},
-        ]
-    }
-    assert_error(env.admin_client.put(url, no_closed, format="json"), 400, "validation_error")
-
-    two_defaults = {
-        "statuses": [
-            {"name": "A", "type": "open", "is_default": True},
-            {"name": "B", "type": "closed", "is_default": True},
-        ]
-    }
-    assert_error(env.admin_client.put(url, two_defaults, format="json"), 400, "validation_error")
-
-
-def test_list_status_set_override_and_delete(env):
-    from apps.tasks.models import Task
-
-    url = f"/api/v1/lists/{env.list.id}/tasks/"
-    # hard-remove sample tasks so no status_mapping is needed (soft-deleted
-    # tasks still count as "referenced" per contract section 9)
-    Task.all_objects.filter(list=env.list).hard_delete()
-
-    effective = env.member_client.get(f"/api/v1/lists/{env.list.id}/status-set/")
-    assert effective.json()["space_id"] == str(env.space.id)  # inherited
-
-    override = {
-        "name": "List flow",
-        "statuses": [
-            {"name": "OPEN", "type": "open", "is_default": True},
-            {"name": "DONE", "type": "closed", "is_default": False},
-        ],
-    }
-    put = env.admin_client.put(
-        f"/api/v1/lists/{env.list.id}/status-set/", override, format="json"
-    )
-    assert put.status_code == 200, put.content
-    assert put.json()["list_id"] == str(env.list.id)
-    assert [s["name"] for s in put.json()["statuses"]] == ["OPEN", "DONE"]
-
-    # new tasks now use the override's default
-    task = env.member_client.post(url, {"title": "T"}, format="json").json()
-    open_status = put.json()["statuses"][0]
-    assert task["status_id"] == open_status["id"]
-
-    # deleting the override needs a mapping for referenced statuses
-    space_default = env.member_client.get(
-        f"/api/v1/spaces/{env.space.id}/status-set/"
-    ).json()["statuses"][0]
-    removed = env.admin_client.delete(
-        f"/api/v1/lists/{env.list.id}/status-set/",
-        {"status_mapping": {open_status["id"]: space_default["id"]}},
-        format="json",
-    )
-    assert removed.status_code == 200, removed.content
-    assert removed.json()["space_id"] == str(env.space.id)
+    assert env.admin_client.get(space_url).status_code == 404
+    assert env.admin_client.put(space_url, payload, format="json").status_code == 404
+    assert env.admin_client.get(list_url).status_code == 404
+    assert env.admin_client.put(list_url, payload, format="json").status_code == 404
+    assert env.admin_client.delete(list_url).status_code == 404
 
 
 # ------------------------------------------------------------- search
@@ -1062,7 +972,7 @@ def test_search_returns_every_type_in_the_documented_shape(env, haystack):
         by_type.setdefault(row["type"], []).append(row["item"])
     # To'liq obyektlar qaytadi, id emas.
     assert by_type["task"][0]["assignees"] == []
-    assert by_type["task"][0]["status_id"]
+    assert by_type["task"][0]["status"] == "todo"
     assert {t["title"] for t in by_type["task"]} == {
         "Kompas vazifasi", "Kompas yashirin vazifasi"
     }
@@ -1168,7 +1078,7 @@ def test_search_still_matches_descriptions_and_the_bootstrap_list(env):
 
     Task.objects.create(
         list=env.list,
-        status=env.statuses[0],
+        status=TaskStatus.TODO,
         title="Sarlavhada yo'q",
         description_html="<p>Ichida esa parolniyangilash bor</p>",
         position="n",
