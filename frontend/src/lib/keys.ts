@@ -19,6 +19,12 @@ export const keys = {
     ["workspace", workspaceId, "activity"] as const,
   invitations: (workspaceId: string) =>
     ["workspace", workspaceId, "invitations"] as const,
+  /** Chat: ish maydonidagi barcha suhbatlar (kanal + DM). */
+  conversations: (workspaceId: string) =>
+    ["workspace", workspaceId, "conversations"] as const,
+  /** Bitta suhbatning xabarlari. */
+  chatMessages: (conversationId: string) =>
+    ["chat", conversationId, "messages"] as const,
   tags: (workspaceId: string) => ["workspace", workspaceId, "tags"] as const,
   /**
    * Workspace-wide task reads (dashboard, member profile). `scope` keeps the

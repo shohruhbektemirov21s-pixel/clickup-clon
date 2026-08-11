@@ -2,8 +2,9 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
+  ArrowLeft,
   Check,
   LogOut,
   Menu,
@@ -60,6 +61,7 @@ export function TopBar({
       >
         <Menu />
       </Button>
+      <BackButton workspaceId={workspaceId} />
       <WorkspaceHomeLink workspaceId={workspaceId} />
       <form onSubmit={onSearchSubmit} className="mx-auto w-full max-w-md">
         <div className="relative">
@@ -76,6 +78,40 @@ export function TopBar({
       <ThemeToggle />
       <AccountMenu workspaceId={workspaceId} />
     </header>
+  );
+}
+
+/**
+ * «Orqaga» — bir qadam ortga.
+ *
+ * Ish maydoni sahifasining O'ZIDA yashiriladi: u ilovaning ildizi, undan
+ * ortga qaytish foydalanuvchini ilovadan tashqariga (landing yoki kirish
+ * sahifasiga) otib yuborardi.
+ *
+ * `router.back()` brauzer tarixiga tayanadi, tarix esa bo'sh bo'lishi mumkin
+ * — masalan ro'yxat havolasi yangi ichki oynada ochilgan bo'lsa. Shuning
+ * uchun tarix chuqurligi tekshiriladi va bo'lmasa ish maydoni bosh
+ * sahifasiga qaytariladi, ya'ni tugma hech qachon "hech narsa qilmaydi"
+ * holatida qolmaydi.
+ */
+function BackButton({ workspaceId }: { workspaceId: string }) {
+  const router = useRouter();
+  const pathname = usePathname();
+
+  if (pathname === `/w/${workspaceId}`) return null;
+
+  const goBack = () => {
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      router.back();
+      return;
+    }
+    router.push(`/w/${workspaceId}`);
+  };
+
+  return (
+    <Button variant="ghost" size="icon-sm" onClick={goBack} aria-label="Orqaga">
+      <ArrowLeft />
+    </Button>
   );
 }
 

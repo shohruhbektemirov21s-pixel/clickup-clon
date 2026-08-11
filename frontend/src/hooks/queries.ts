@@ -11,7 +11,9 @@ import { api } from "@/lib/api";
 import { keys } from "@/lib/keys";
 import { useAuthStore } from "@/stores/auth-store";
 import type {
+  ChatMessage,
   Comment,
+  Conversation,
   GroupedTasksResponse,
   Invitation,
   InvitationLookup,
@@ -467,5 +469,32 @@ export function useWorkspaceSearch(workspaceId: string, q: string) {
     }),
     enabled: enabled && !!workspaceId && q.trim().length >= 2,
     placeholderData: keepPreviousData,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Chat
+// ---------------------------------------------------------------------------
+
+/** Ish maydonidagi ko'rinadigan suhbatlar (kanallar + o'z DM'laringiz). */
+export function useConversations(workspaceId: string) {
+  const enabled = useAuthed();
+  return useQuery({
+    queryKey: keys.conversations(workspaceId),
+    queryFn: () =>
+      api.get<Paginated<Conversation>>(`workspaces/${workspaceId}/chat/channels/`),
+    enabled: enabled && !!workspaceId,
+  });
+}
+
+export function useChatMessages(conversationId: string | null) {
+  const enabled = useAuthed();
+  return useQuery({
+    queryKey: keys.chatMessages(conversationId ?? "none"),
+    queryFn: () =>
+      api.get<Paginated<ChatMessage>>(`chat/conversations/${conversationId}/messages/`, {
+        page_size: 100,
+      }),
+    enabled: enabled && !!conversationId,
   });
 }

@@ -16,7 +16,8 @@ import {
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { useMe, useMembers, useTags, useTask } from "@/hooks/queries";
+import { useMe, useMembers, useMyPermissions, useTags, useTask } from "@/hooks/queries";
+import { can } from "@/lib/permissions";
 import { useUpdateTask } from "@/hooks/mutations";
 import { api, isApiError } from "@/lib/api";
 import { keys } from "@/lib/keys";
@@ -235,6 +236,8 @@ function FieldGrid({
 }) {
   const { data: members } = useMembers(workspaceId);
   const { data: tags } = useTags(workspaceId);
+  // Mas'ul topilmaganda taklif blokini ko'rsatish uchun (`member.invite`).
+  const { data: my } = useMyPermissions(workspaceId);
   const updateTask = useUpdateTask(listId);
   const queryClient = useQueryClient();
   const watching = !!meId && task.watchers.some((w) => w.id === meId);
@@ -281,6 +284,8 @@ function FieldGrid({
           value={task.assignees}
           members={members?.results ?? []}
           disabled={!canAssign}
+          workspaceId={workspaceId}
+          canInvite={can(my, "member.invite")}
           onChange={(ids) =>
             updateTask.mutate({
               taskId: task.id,

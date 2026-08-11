@@ -17,6 +17,8 @@ import {
   OrderingVisual,
   PermissionMatrixVisual,
 } from "@/components/marketing/feature-visuals";
+import { fetchShowcase } from "@/lib/showcase";
+import type { ShowcaseResponse } from "@/types/api";
 
 const REPO = "https://github.com/shohruhbektemirov21s-pixel/clickup-clon";
 const DOCS = `${REPO}/blob/main/docs`;
@@ -41,17 +43,26 @@ const DEEP_STYLE: React.CSSProperties = {
   background: "linear-gradient(180deg, #0a0a0f 0%, rgba(10,10,15,0.55) 45%, rgba(10,10,15,0) 100%)",
 };
 
-/** Public marketing landing shown at `/` to signed-out visitors. */
-export function Landing() {
+/**
+ * Public marketing landing shown at `/` to signed-out visitors.
+ *
+ * Server komponenti bo'lib qoladi va ma'lumotni bir marta serverda o'qiydi
+ * (`GET public/showcase/`) — sahifada qo'lda yozilgan namunaviy qator yo'q.
+ * Backend javob bermasa `data` `null` bo'ladi va sahifa bo'sh holatlar bilan
+ * baribir to'liq render bo'ladi.
+ */
+export async function Landing() {
+  const data = await fetchShowcase();
+
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <SiteHeader />
 
       <main className="flex-1">
-        <Hero />
-        <Stats />
-        <Features />
-        <WhySection />
+        <Hero data={data} />
+        <Stats data={data} />
+        <Features data={data} />
+        <WhySection data={data} />
         <QuickStart />
         <FinalCta />
       </main>
@@ -128,7 +139,8 @@ function HeaderLink({
 
 /* -------------------------------------------------------------------- hero */
 
-function Hero() {
+function Hero({ data }: { data: ShowcaseResponse | null }) {
+  const codes = data?.stats.permission_codes;
   return (
     <section className="relative isolate overflow-hidden border-b">
       <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
@@ -154,8 +166,8 @@ function Hero() {
 
           <p className="mt-5 max-w-2xl text-base leading-relaxed text-muted-foreground sm:text-lg">
             Clickish — bo&apos;lim, jild, ro&apos;yxat va vazifalar iyerarxiyasi, sudrab
-            tartiblash, 48 ta ruxsat kodi bilan granular rollar va WebSocket orqali bir zumda
-            yangilanadigan hamkorlik.
+            tartiblash, {codes ? `${codes} ta ruxsat kodi` : "granular ruxsat kodlari"} bilan
+            granular rollar va WebSocket orqali bir zumda yangilanadigan hamkorlik.
           </p>
 
           <div className="mt-8 flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
@@ -169,18 +181,18 @@ function Hero() {
               className="h-11 px-6 text-[0.95rem]"
               render={<Link href="/login" />}
             >
-              Demo rejimda ko&apos;rish
+              Kirish
             </Button>
           </div>
 
           <p className="mt-3 text-xs text-muted-foreground">
-            Demo hisobga kirish uchun parol shart emas — kirish sahifasidagi «Demo rejimda kirish»
-            tugmasi.
+            Ro&apos;yxatdan o&apos;tish bepul — birinchi ish maydoningizni bir daqiqada
+            yaratasiz.
           </p>
         </div>
 
         <div className="mx-auto mt-12 max-w-5xl sm:mt-16">
-          <AppPreview />
+          <AppPreview data={data?.workspace ?? null} />
         </div>
       </div>
     </section>
@@ -189,18 +201,25 @@ function Hero() {
 
 /* ------------------------------------------------------------------- stats */
 
-const STATS = [
-  { value: "48", label: "ruxsat kodi" },
-  { value: "4", label: "rol darajasi" },
-  { value: "12", label: "specced ekran" },
-  { value: "0", label: "sahifa yangilash" },
-];
+/**
+ * Raqamlar bazadan keladi — `GET public/showcase/` jamlangan COUNT'lar. Backend
+ * javob bermasa butun blok tushib qoladi: noto'g'ri raqam ko'rsatgandan
+ * ko'ra hech narsa ko'rsatmagan yaxshi.
+ */
+function Stats({ data }: { data: ShowcaseResponse | null }) {
+  if (!data) return null;
+  const { stats } = data;
+  const items = [
+    { value: stats.permission_codes, label: "ruxsat kodi" },
+    { value: stats.roles, label: "rol darajasi" },
+    { value: stats.tasks, label: "vazifa" },
+    { value: stats.members, label: "foydalanuvchi" },
+  ];
 
-function Stats() {
   return (
     <section aria-label="Raqamlarda" className="border-b bg-muted/30">
       <dl className="mx-auto grid w-full max-w-6xl grid-cols-2 gap-px px-5 py-10 sm:px-6 md:grid-cols-4">
-        {STATS.map((stat) => (
+        {items.map((stat) => (
           <div key={stat.label} className="flex flex-col items-center gap-1 px-2 text-center">
             <dt className="sr-only">{stat.label}</dt>
             <dd className="text-3xl font-bold tracking-tight text-primary sm:text-4xl">
@@ -216,7 +235,8 @@ function Stats() {
 
 /* ---------------------------------------------------------------- features */
 
-const FEATURES = [
+/** `codes` — katalogdagi haqiqiy ruxsat kodlari soni (bazadan). */
+const featureList = (codes: number | undefined) => [
   {
     icon: FolderTree,
     title: "Ish maydonlari iyerarxiyasi",
@@ -234,7 +254,7 @@ const FEATURES = [
   },
   {
     icon: ShieldCheck,
-    title: "48 ta ruxsat kodi",
+    title: codes ? `${codes} ta ruxsat kodi` : "Granular ruxsat kodlari",
     text: "Har bir ish maydonida rol × huquq matritsasi sozlanadi; tekshiruv har doim serverda.",
   },
   {
@@ -249,7 +269,8 @@ const FEATURES = [
   },
 ];
 
-function Features() {
+function Features({ data }: { data: ShowcaseResponse | null }) {
+  const features = featureList(data?.stats.permission_codes);
   return (
     <section id="imkoniyatlar" className="scroll-mt-16 border-b">
       <div className="mx-auto w-full max-w-6xl px-5 py-16 sm:px-6 sm:py-20">
@@ -264,7 +285,7 @@ function Features() {
         </div>
 
         <ul className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {FEATURES.map(({ icon: Icon, title, text }) => (
+          {features.map(({ icon: Icon, title, text }) => (
             <li
               key={title}
               className="group rounded-xl border bg-card p-5 transition-colors hover:border-primary/40 hover:bg-primary/[0.03]"
@@ -287,31 +308,39 @@ function Features() {
 
 /* -------------------------------------------------------------- nima uchun */
 
-const WHY = [
+const whySections = (data: ShowcaseResponse | null) => [
   {
     eyebrow: "Real vaqt",
     title: "Har bir o'zgarish — bir zumda, hammada",
     text: "Vazifa ko'chdimi, izoh qo'shildimi, kimdir ro'yxatga kirdimi — hodisa servis qatlamidan chiqadi va WebSocket orqali barcha ochiq oynalarga yetadi. O'z aks-sadolaringiz bostiriladi, shuning uchun kursor sakramaydi.",
     bullets: ["Presence — kim onlayn", "Avtomatik qayta ulanish", "Izoh va fayl hodisalari"],
-    visual: <ActivityFeedVisual />,
+    visual: <ActivityFeedVisual items={data?.workspace?.activity ?? []} />,
   },
   {
     eyebrow: "Huquqlar",
     title: "Rollar tugmani yashirish bilan cheklanmaydi",
-    text: "48 ta ruxsat kodi rol × huquq matritsasida sozlanadi. Frontend faqat tugmani ko'rsatadi yoki yashiradi; ruxsatni har bir endpoint mustaqil tekshiradi. Ish maydonidan tashqaridagi resurs har doim 404 qaytaradi — mavjudligi oshkor bo'lmaydi.",
+    text: `${
+      data?.stats.permission_codes ?? "Har bir"
+    } ta ruxsat kodi rol × huquq matritsasida sozlanadi. Frontend faqat tugmani ko'rsatadi yoki yashiradi; ruxsatni har bir endpoint mustaqil tekshiradi. Ish maydonidan tashqaridagi resurs har doim 404 qaytaradi — mavjudligi oshkor bo'lmaydi.`,
     bullets: ["Egasi / Admin / A'zo / Mehmon", "Egasi qatori qulflangan", "404 va 403 qoidasi"],
-    visual: <PermissionMatrixVisual />,
+    visual: (
+      <PermissionMatrixVisual
+        matrix={data?.matrix ?? null}
+        totalCodes={data?.stats.permission_codes ?? null}
+      />
+    ),
   },
   {
     eyebrow: "Tartiblash",
     title: "Sudrash tez — chunki bitta qator yangilanadi",
     text: "Ko'chirishda mijoz qo'shni elementlarni hisoblab, serverga faqat before/after yuboradi. Server kasr pozitsiya qaytaradi va ro'yxat optimistik yangilanadi; xato bo'lsa avvalgi holatga qaytadi.",
     bullets: ["Optimistik yangilanish", "Ustunlar orasida status almashadi", "dnd-kit klaviatura bilan"],
-    visual: <OrderingVisual />,
+    visual: <OrderingVisual rows={data?.workspace?.ordering ?? []} />,
   },
 ];
 
-function WhySection() {
+function WhySection({ data }: { data: ShowcaseResponse | null }) {
+  const sections = whySections(data);
   return (
     <section id="nima-uchun" className="scroll-mt-16 border-b bg-muted/20">
       <div className="mx-auto w-full max-w-6xl space-y-16 px-5 py-16 sm:space-y-24 sm:px-6 sm:py-20">
@@ -323,7 +352,7 @@ function WhySection() {
           </p>
         </div>
 
-        {WHY.map((item, index) => (
+        {sections.map((item, index) => (
           <div
             key={item.title}
             className="grid items-center gap-8 lg:grid-cols-2 lg:gap-14"
@@ -368,16 +397,17 @@ function QuickStart() {
           </h2>
           <p className="mt-3 text-sm leading-relaxed text-muted-foreground sm:text-base">
             Docker Compose PostgreSQL 16, Redis 7, Django backend va Next.js frontendni birga
-            ko&apos;taradi. Backend migratsiyani o&apos;zi bajaradi,{" "}
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.85em]">seed_demo</code>{" "}
-            esa demo ish maydoni va besh xil roldagi foydalanuvchini yaratadi.
+            ko&apos;taradi. Backend{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.85em]">migrate</code> ni
+            o&apos;zi bajaradi — keyin ro&apos;yxatdan o&apos;tib birinchi ish maydoningizni
+            yaratasiz.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             <Button variant="outline" render={<a href={`${DOCS}/DOCKER.md`} target="_blank" rel="noreferrer" />}>
               Docker qo&apos;llanmasi
             </Button>
-            <Button variant="ghost" render={<Link href="/login" />}>
-              Demo rejimda ko&apos;rish
+            <Button variant="ghost" render={<Link href="/register" />}>
+              Ro&apos;yxatdan o&apos;tish
               <ArrowRight data-icon="inline-end" />
             </Button>
           </div>
@@ -407,8 +437,7 @@ function FinalCta() {
           Jamoangizni bugun ko&apos;chiring
         </h2>
         <p className="mt-4 max-w-xl text-base text-muted-foreground">
-          Ish maydoni yarating, bo&apos;limlarni qo&apos;shing va jamoani taklif qiling — yoki
-          avval demo ma&apos;lumot bilan sinab ko&apos;ring.
+          Ish maydoni yarating, bo&apos;limlarni qo&apos;shing va jamoani taklif qiling.
         </p>
         <div className="mt-8 flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row">
           <Button size="lg" className="h-11 px-6 text-[0.95rem]" render={<Link href="/register" />}>
@@ -421,7 +450,7 @@ function FinalCta() {
             className="h-11 px-6 text-[0.95rem]"
             render={<Link href="/login" />}
           >
-            Demo rejimda ko&apos;rish
+            Kirish
           </Button>
         </div>
       </div>
@@ -438,7 +467,7 @@ const FOOTER: { title: string; links: { label: string; href: string; external?: 
       { label: "Imkoniyatlar", href: "#imkoniyatlar" },
       { label: "Nima uchun", href: "#nima-uchun" },
       { label: "Ishga tushirish", href: "#ishga-tushirish" },
-      { label: "Demo rejimda ko'rish", href: "/login" },
+      { label: "Kirish", href: "/login" },
     ],
   },
   {
@@ -505,7 +534,7 @@ function SiteFooter() {
         </div>
 
         <div className="mt-10 flex flex-col items-start justify-between gap-3 border-t pt-6 text-xs text-muted-foreground sm:flex-row sm:items-center">
-          <p>© 2026 Clickish — ClickUp uslubidagi demo loyiha.</p>
+          <p>© 2026 Clickish — ochiq kodli vazifa boshqaruvi.</p>
           <p>Next.js va Django asosida qurilgan.</p>
         </div>
       </div>

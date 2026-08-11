@@ -6,6 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
+import { InviteByEmail, looksLikeEmail } from "@/components/shared/invite-by-email";
 import {
   Command,
   CommandEmpty,
@@ -224,15 +225,38 @@ export function AssigneePicker({
   onChange,
   disabled,
   children,
+  workspaceId,
+  canInvite = false,
 }: {
   value: UserSummary[];
   members: Member[];
   onChange: (ids: string[]) => void;
   disabled?: boolean;
   children?: React.ReactNode;
+  /** Berilganda, ro'yxatda topilmagan email uchun taklif bloki chiqadi. */
+  workspaceId?: string;
+  /** Chaqiruvchi `member.invite` ruxsatini tekshirib uzatadi. */
+  canInvite?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
+  const [query, setQuery] = React.useState("");
   const selected = new Set(value.map((u) => u.id));
+
+  // Yozilgan matn email'ga o'xshaydimi va ro'yxatda unday a'zo bormi.
+  const trimmed = query.trim().toLowerCase();
+  const matchesExistingMember = members.some(
+    (m) => (m.user.email ?? "").toLowerCase() === trimmed,
+  );
+  const showInvite =
+    canInvite && !!workspaceId && looksLikeEmail(query) && !matchesExistingMember;
+
+  // Popover yopilganda qidiruv tozalanadi — qayta ochilganda eski matn turib
+  // qolsa, ro'yxat sababsiz filtrlangan ko'rinardi. Tozalash effektda emas,
+  // aynan yopilish hodisasida: bu holat o'zgarishining sababi.
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (!next) setQuery("");
+  };
 
   const toggle = (userId: string) => {
     const next = new Set(selected);
@@ -242,7 +266,7 @@ export function AssigneePicker({
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger
         disabled={disabled}
         render={
@@ -264,9 +288,17 @@ export function AssigneePicker({
       <PopoverContent className="w-72 p-0" align="start">
         <Command>
           {/* Always searchable — the roster can grow well past a screenful. */}
-          <CommandInput placeholder="Ism yoki email bo'yicha qidirish…" />
+          <CommandInput
+            value={query}
+            onValueChange={setQuery}
+            placeholder="Ism yoki email bo'yicha qidirish…"
+          />
           <CommandList>
-            <CommandEmpty>A&apos;zolar topilmadi.</CommandEmpty>
+            {/* Taklif bloki bo'lsa "topilmadi" matni ortiqcha — blokning
+                o'zi nima qilish kerakligini aytadi. */}
+            <CommandEmpty>
+              {showInvite ? null : "A'zolar topilmadi."}
+            </CommandEmpty>
             <CommandGroup>
               {members.map((member) => {
                 const isSelected = selected.has(member.user.id);
@@ -312,6 +344,13 @@ export function AssigneePicker({
               })}
             </CommandGroup>
           </CommandList>
+          {showInvite && workspaceId ? (
+            <InviteByEmail
+              email={query}
+              workspaceId={workspaceId}
+              onInvited={() => handleOpenChange(false)}
+            />
+          ) : null}
         </Command>
       </PopoverContent>
     </Popover>

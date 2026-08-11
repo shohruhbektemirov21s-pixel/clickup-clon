@@ -13,7 +13,7 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.comments.models import Comment
 from apps.comments.services import create_comment
-from apps.core.enums import Priority, WatcherSource, WorkspaceRole
+from apps.core.enums import ActivityVerb, Priority, WatcherSource, WorkspaceRole
 from apps.core.ordering import evenly_spaced, midstring
 from apps.tasks.models import Tag, Task, TaskAssignee, TaskWatcher, TaskTag
 from apps.workspaces.models import Folder, TaskList, WorkspaceMember
@@ -190,15 +190,115 @@ class Command(BaseCommand):
             },
         )
 
+        self._seed_starter_list(workspace, user)
+
         for tag in tags.values():
             tag.usage_count = TaskTag.objects.filter(tag=tag).count()
             tag.save(update_fields=["usage_count"])
         refresh_list_counts(sprint)
         refresh_list_counts(backlog)
         self._ensure_team(user, workspace)
+        # Jamoadan KEYIN: aktorlar shu a'zolardan tanlanadi, aks holda
+        # tasmadagi har bir qator `owner` nomidan chiqardi.
+        self._seed_activity(created_tasks, user, workspace)
 
         self.stdout.write(self.style.SUCCESS(f"Workspace '{workspace.name}' seeded."))
         self._print_credentials(email, password)
+
+    def _seed_starter_list(self, workspace, owner):
+        """`Jamoa bo'limi / Boshlash` ro'yxatini ham to'ldiradi.
+
+        `bootstrap_workspace` bu ro'yxatni ATAYLAB bo'sh qoldiradi — yangi
+        hisob nolinchi holatdan boshlashi kerak. Lekin demo uchun buning
+        aksi kerak: demo hisob kirganda aynan shu ro'yxatga tushadi (u
+        daraxtdagi birinchisi), va u bo'sh bo'lsa butun demo "ma'lumot yo'q"
+        bo'lib ko'rinadi — mazmun esa `Mahsulot` bo'limida yashiringan
+        bo'ladi.
+        """
+        space = workspace.spaces.get(name="Jamoa bo'limi")
+        task_list = space.lists.get(name="Boshlash")
+        by_type = {s.type: s for s in space.status_set.statuses.all()}
+
+        starter = [
+            ("Haftalik rejani tasdiqlash", "active", Priority.HIGH),
+            ("Mijoz uchun taqdimot tayyorlash", "open", Priority.NORMAL),
+            ("Yangi a'zolarni ish maydoniga qo'shish", "open", Priority.LOW),
+            ("O'tgan sprint yakunini yozish", "closed", Priority.NORMAL),
+        ]
+        positions = evenly_spaced(len(starter))
+        for (title, stype, priority), pos in zip(starter, positions):
+            task = Task.objects.create(
+                list=task_list,
+                status=by_type[stype],
+                title=title,
+                description_html=f"<p>{title}.</p>",
+                priority=priority,
+                position=pos,
+                due_date=timezone.now() + timedelta(days=2),
+                created_by=owner,
+                updated_by=owner,
+                completed_at=timezone.now() if stype == "closed" else None,
+            )
+            TaskWatcher.objects.create(task=task, user=owner, source=WatcherSource.AUTO_CREATOR)
+            TaskAssignee.objects.create(task=task, user=owner, assigned_by=owner)
+
+        refresh_list_counts(task_list)
+
+    def _seed_activity(self, tasks, owner, workspace):
+        """Demo vazifalar uchun faoliyat tarixini yozadi.
+
+        Vazifalar yuqorida `Task.objects.create()` bilan to'g'ridan-to'g'ri
+        yaratiladi — tez, lekin servis qatlamini chetlab o'tadi, ya'ni
+        `TaskActivity` yozilmaydi. Natijada demo ish maydonining faoliyat
+        tasmasi bo'sh bo'lib qolardi va landing'dagi «Real vaqt» bloki hech
+        narsa ko'rsatmasdi. Bu yerda tarix ataylab yoziladi.
+
+        Aktorlar jamoadan olinadi, hammasi `owner` bo'lib qolmasin: tasma
+        bir nechta odam ishlayotganini ko'rsatishi kerak.
+        """
+        from apps.tasks.models import TaskActivity
+
+        actors = list(
+            WorkspaceMember.objects.filter(workspace=workspace)
+            .exclude(user=owner)
+            .select_related("user")
+            .order_by("joined_at")[:3]
+        )
+        actor_users = [m.user for m in actors] or [owner]
+
+        now = timezone.now()
+        rows = []
+        #: `(row, kerakli_vaqt)`. Vaqt ALOHIDA saqlanadi: `created_at` da
+        #: `auto_now_add=True` bor va u INSERT oldidan instansiyadagi qiymatni
+        #: ham bosib ketadi, ya'ni `row.created_at` ni keyin o'qib bo'lmaydi —
+        #: u "hozir" bo'lib qolgan bo'lardi va hamma qator bir xil vaqtda
+        #: turardi.
+        stamps = []
+
+        def add(task, actor, verb, moment, **extra):
+            row = TaskActivity(task=task, actor=actor, verb=verb, **extra)
+            rows.append(row)
+            stamps.append(moment)
+
+        for index, task in enumerate(tasks):
+            actor = actor_users[index % len(actor_users)]
+            # Ro'yxatdagi birinchi vazifa eng yangi bo'lsin.
+            base = now - timedelta(minutes=7 * index)
+            add(task, actor, ActivityVerb.CREATED, base - timedelta(minutes=4))
+            add(
+                task,
+                actor,
+                ActivityVerb.STATUS_CHANGED,
+                base - timedelta(minutes=2),
+                from_value="Ochiq",
+                to_value=task.status.name,
+            )
+            if task.completed_at:
+                add(task, actor, ActivityVerb.COMPLETED, base)
+
+        TaskActivity.objects.bulk_create(rows)
+        for row, moment in zip(rows, stamps):
+            TaskActivity.objects.filter(pk=row.pk).update(created_at=moment)
 
     def _ensure_team(self, owner, workspace):
         """Idempotent: extra demo members + a few assignments and comments so

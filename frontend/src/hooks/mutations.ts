@@ -12,6 +12,9 @@ import {
   writeTaskEverywhere,
 } from "@/lib/task-cache";
 import type {
+  ChatMessage,
+  Conversation,
+  CreateChannelRequest,
   AddSpaceMemberRequest,
   BulkSpaceMembersRequest,
   BulkSpaceMembersResponse,
@@ -891,5 +894,69 @@ export function useBulkSpaceMembers(spaceId: string) {
       toast.success(parts.length ? parts.join(", ") : "O'zgarishlar saqlandi");
     },
     onError: (err) => toast.error(spaceMemberError(err)),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Chat
+// ---------------------------------------------------------------------------
+
+export function useCreateChannel(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateChannelRequest) =>
+      api.post<Conversation>(`workspaces/${workspaceId}/chat/channels/`, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: keys.conversations(workspaceId) });
+      toast.success("Kanal yaratildi");
+    },
+    onError: (err) => toast.error(errorMessage(err)),
+  });
+}
+
+/** DM ochadi yoki mavjudini qaytaradi — ikkalasi ham bir xil javob. */
+export function useOpenDirect(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) =>
+      api.post<Conversation>(`workspaces/${workspaceId}/chat/direct/`, { user_id: userId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: keys.conversations(workspaceId) });
+    },
+    onError: (err) => toast.error(errorMessage(err)),
+  });
+}
+
+export function useJoinConversation(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (conversationId: string) =>
+      api.post(`chat/conversations/${conversationId}/join/`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: keys.conversations(workspaceId) });
+      toast.success("Kanalga qo'shildingiz");
+    },
+    onError: (err) => toast.error(errorMessage(err)),
+  });
+}
+
+export function useSendMessage(workspaceId: string, conversationId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: string) =>
+      api.post<ChatMessage>(`chat/conversations/${conversationId}/messages/`, { body }),
+    onSuccess: (message) => {
+      // Javobni darhol keshka yozamiz — broadcast o'z aks-sadosini
+      // yubormaydi, shuning uchun kutib o'tirish kerak emas.
+      queryClient.setQueryData<Paginated<ChatMessage>>(
+        keys.chatMessages(conversationId),
+        (old) =>
+          old && !old.results.some((m) => m.id === message.id)
+            ? { ...old, count: old.count + 1, results: [message, ...old.results] }
+            : old,
+      );
+      queryClient.invalidateQueries({ queryKey: keys.conversations(workspaceId) });
+    },
+    onError: (err) => toast.error(errorMessage(err)),
   });
 }

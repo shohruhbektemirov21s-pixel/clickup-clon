@@ -62,7 +62,7 @@ JWT via `djangorestframework-simplejwt`.
 - Token lifetimes are environment-configured (`ACCESS_TOKEN_LIFETIME_MINUTES`, `REFRESH_TOKEN_LIFETIME_DAYS`; dev defaults **60 min / 7 days**). Clients MUST NOT hard-code lifetimes — decode `exp` and refresh proactively (~2 min before expiry).
 - Refresh rotation is ON with blacklist: every `POST auth/refresh/` returns a **new** `access` AND a **new** `refresh`; the used refresh token is blacklisted. Replaying it returns `401 token_not_valid`.
 - Refresh tokens are returned in the JSON body, not cookies (flagged review item OQ-1; if this changes, this doc changes).
-- Unauthenticated requests to any endpoint except `auth/register/`, `auth/login/`, `auth/refresh/`, `invitations/lookup/`, `health/` return `401`.
+- Unauthenticated requests to any endpoint except `auth/register/`, `auth/login/`, `auth/refresh/`, `invitations/lookup/`, `health/`, `public/showcase/` (§14.1) return `401`.
 
 ### 1.4 Client id header (realtime echo suppression)
 
@@ -1067,6 +1067,109 @@ Unauthenticated and unthrottled; it touches no database. It is endpoint **#78** 
 
 ---
 
+## 14.1 Public landing content
+
+| # | Method | Path | Auth | Success |
+|---|---|---|---|---|
+| 85 | GET | `public/showcase/` | **public** | `200` (body below) |
+
+The marketing landing at `/` is rendered **only for signed-out visitors** (an
+authenticated visitor is redirected to their workspace), so it has no token to
+call the rest of the API with. This is the one endpoint that feeds it, and it
+exists so the landing renders **database rows instead of hardcoded sample
+data**. Throttled per source address (`showcase` scope, default `60/min`);
+it is anonymous, uncached and runs several `COUNT(*)` queries.
+
+```jsonc
+{
+  "stats": {                      // aggregate counts only, never row content
+    "permission_codes": 49, "roles": 4, "workspaces": 11,
+    "spaces": 12, "tasks": 33, "members": 21
+  },
+  "matrix": {                     // the catalog's DEFAULT_MATRIX (§1.7.1)
+    "roles": ["Egasi", "Admin", "A'zo", "Mehmon"],
+    "rows": [{ "code": "task.create", "label": "Vazifa yaratish",
+               "allow": [true, true, true, false] }]   // index 0 = owner, always true
+  },
+  "workspace": null               // see the disclosure rule below
+}
+```
+
+**Disclosure rule (binding).** `stats` and `matrix` are always returned: the
+permission catalog is already public in `docs/DESIGN_PERMISSIONS.md` and the
+counts carry no row content. The `workspace` block — space names, task titles,
+assignee initials, activity feed, position keys — is returned **only when
+`SHOWCASE_WORKSPACE_ID` names a workspace**, and is `null` otherwise. The
+setting is empty by default, so the out-of-the-box behaviour is that **no
+record of anyone's is readable anonymously**. Within a configured workspace:
+
+- user emails are **never** serialised — initials (`"AK"`) and avatar colour only;
+- **private spaces are never named**; they collapse into one `locked` row that
+  carries a count and nothing else;
+- an unknown or malformed id yields `workspace: null`, not a `500`.
+
+Anything named by `SHOWCASE_WORKSPACE_ID` must be treated as world-readable.
+
+---
+
+## 14.2 Chat — `apps.chat`
+
+| # | Method | Path | Auth | Authority | Success |
+|---|---|---|---|---|---|
+| 86 | GET | `workspaces/{id}/chat/channels/` | required | membership | `200` `Paginated<Conversation>` |
+| 87 | POST | `workspaces/{id}/chat/channels/` | required | membership | `201` `Conversation` |
+| 88 | POST | `workspaces/{id}/chat/direct/` | required | membership | `200` `Conversation` |
+| 89 | POST | `chat/conversations/{id}/join/` | required | visible + open channel | `204` |
+| 90 | GET | `chat/conversations/{id}/messages/` | required | conversation visible | `200` `Paginated<Message>` |
+| 91 | POST | `chat/conversations/{id}/messages/` | required | conversation **member** | `201` `Message` |
+
+Channels and direct messages share one `Conversation` row, split by `kind`
+(`channel` \| `direct`). `GET .../chat/channels/` returns **both** — it is the
+caller's full conversation list, ordered by `last_message_at` descending.
+
+**Visibility.** An open channel (`is_private: false`) is listed for every
+workspace member. A private channel and every DM are listed **only for their
+own members**; to everyone else they are `404`, never `403` — same
+existence-oracle rule as §1.7. `POST .../messages/` additionally requires
+membership of the conversation: a member who can *read* an open channel gets
+`403` until they `join/`.
+
+**DM identity.** `direct/` is idempotent: the pair `(A, B)` is keyed by an
+order-independent `dm_key`, unique per workspace, so `A→B` and `B→A` resolve
+to the same conversation. The peer must be a member of the same workspace
+(`404` otherwise), and a DM with yourself is `400`.
+
+**`body` is plain text, never HTML.** The chat composer is the highest-traffic
+input in the product; accepting rich text there is the widest stored-XSS door
+in the app. Clients render it as text.
+
+```jsonc
+// Conversation
+{
+  "id": "…", "workspace_id": "…", "kind": "channel",
+  "name": "umumiy",            // "" for a DM
+  "title": "umumiy",           // DM: the other person's name
+  "topic": "", "is_private": false,
+  "peer": null,                // DM: the other UserSummary
+  "last_message": { "id": "…", "body": "Salom", "author": {…}, "created_at": "…" },
+  "last_message_at": "2026-08-11T06:58:26Z",
+  "unread": 3,                 // other people's messages since your last read
+  "is_member": true,
+  "created_at": "…"
+}
+```
+
+Reading `GET .../messages/` marks the conversation read for the caller.
+
+**Realtime.** `ws/chat/{conversation_id}/` (§15.1 ticket handshake, same as the
+other channels). The socket is **read-only**: it emits `chat.message.created`
+and answers `ping` with `pong`; sending happens over REST so validation,
+throttling and broadcast stay in one place. The group `chat.<id>` is the
+authorisation boundary — the handshake runs the same visibility predicate as
+the REST list, and embedded `email` is nulled in every frame (§15.2).
+
+---
+
 ## 15. WebSocket contract — `apps.realtime`
 
 ### 15.1 Channels & auth
@@ -1194,10 +1297,15 @@ A mutation that fails validation/permission emits **no** event. Every successful
 
 ---
 
-## 16. Endpoint inventory (84)
+## 16. Endpoint inventory (91)
 
-**84 method+path pairs under `/api/v1/`.** This table is the authoritative count; the header at the
+**91 method+path pairs under `/api/v1/`.** This table is the authoritative count; the header at the
 top of the file quotes it. Verified by walking Django's URL resolver, not by counting rows by hand.
+
+> **v1.3.5 adds #85, `GET public/showcase/` (§14.1).** It is the second public
+> read endpoint after `health/` and the only one that reads the database
+> without a token, so the disclosure rule in §14.1 is part of this contract,
+> not an implementation detail.
 
 > **The `#` column in §2–§15 is a stable identifier, not a dense sequence.** Numbers are assigned
 > once and never reused, so the ordering reflects the order features landed, not the order they are
@@ -1225,11 +1333,12 @@ top of the file quotes it. Verified by walking Django's URL resolver, not by cou
 | Comments | 4 | list, create, update, delete |
 | Search | 2 | workspace tasks, workspace search |
 | Realtime | 1 | handshake ticket (`POST realtime/ticket/`, §15.1) |
-| Misc | 1 | health |
+| Chat | 6 | conversations list/create, direct, join, messages list/post (§14.2) |
+| Misc | 2 | health, public showcase (§14.1) |
 
-Sum: 5+6+3+6+5+7+5+5+5+6+5+10+4+4+4+2+1+1 = **84**.
+Sum: 5+6+3+6+5+7+5+5+5+6+5+10+4+4+4+2+1+6+2 = **91**.
 
-WebSocket: `/ws/list/{list_id}/`, `/ws/workspaces/{workspace_id}/` — 2 client-facing channels over 4 server-side groups (§15.1).
+WebSocket: `/ws/list/{list_id}/`, `/ws/workspaces/{workspace_id}/`, `/ws/chat/{conversation_id}/` — 3 client-facing channels over 5 server-side groups (§15.1, plus `chat.<conversation_id>`).
 
 ---
 

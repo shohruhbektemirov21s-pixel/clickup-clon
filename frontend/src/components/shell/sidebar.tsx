@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Folder as FolderIcon,
   List as ListIcon,
+  MessageSquare,
   Plus,
   Settings,
   Users,
@@ -152,6 +153,13 @@ export function Sidebar({ workspaceId }: { workspaceId: string }) {
       <TeamSection workspaceId={workspaceId} canInvite={canInvite} />
 
       <div className="border-t p-2">
+        <Link
+          href={`/w/${workspaceId}/chat`}
+          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <MessageSquare className="size-4" />
+          Chat
+        </Link>
         <Link
           href={`/w/${workspaceId}/settings`}
           className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"

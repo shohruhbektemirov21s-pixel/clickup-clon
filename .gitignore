@@ -43,3 +43,7 @@ backend/ca/*
 frontend/ca/*
 !backend/ca/.gitkeep
 !frontend/ca/.gitkeep
+
+# Qo'lda olingan baza zaxiralari (haqiqiy ma'lumot bo'ladi)
+db.sqlite3.bak-*
+*.sqlite3.bak-*

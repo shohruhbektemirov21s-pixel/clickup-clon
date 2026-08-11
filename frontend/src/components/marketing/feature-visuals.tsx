@@ -1,21 +1,30 @@
 import { Check, GripVertical, Lock, Minus } from "lucide-react";
+import type {
+  ShowcaseActivity,
+  ShowcaseMatrix,
+  ShowcaseOrderingRow,
+} from "@/types/api";
 
 /**
  * «Nima uchun» bo'limidagi navbatlashuvchi bloklarning vizuallari.
- * Barchasi dekorativ — matn mazmuni yonidagi paragraflarda takrorlanadi.
+ *
+ * Har uchala blokning mazmuni bazadan keladi (`GET public/showcase/`): ruxsat
+ * matritsasi katalogning haqiqiy standart qiymatlari, faoliyat tasmasi
+ * haqiqiy `TaskActivity` qatorlari, tartiblash bloki esa vazifalarning
+ * haqiqiy kasr pozitsiya kalitlari. Bu faylda namunaviy qator yo'q.
  */
 
-const ROLES = ["Egasi", "Admin", "A'zo", "Mehmon"] as const;
+function EmptyVisual({ text }: { text: string }) {
+  return <p className="px-4 py-10 text-center text-xs text-muted-foreground">{text}</p>;
+}
 
-const MATRIX: { code: string; allow: boolean[] }[] = [
-  { code: "task.create", allow: [true, true, true, false] },
-  { code: "task.delete", allow: [true, true, false, false] },
-  { code: "member.invite", allow: [true, true, false, false] },
-  { code: "role.permission.update", allow: [true, false, false, false] },
-];
-
-/** 48 ta ruxsat kodidan to'rttasi — rol × huquq matritsasi ko'rinishi. */
-export function PermissionMatrixVisual() {
+export function PermissionMatrixVisual({
+  matrix,
+  totalCodes,
+}: {
+  matrix: ShowcaseMatrix | null;
+  totalCodes: number | null;
+}) {
   return (
     <div
       aria-hidden
@@ -24,45 +33,55 @@ export function PermissionMatrixVisual() {
       <div className="flex items-center gap-2 border-b bg-muted/40 px-4 py-2.5">
         <Lock className="size-3.5 text-muted-foreground" />
         <span className="text-xs font-medium">Rol × huquq matritsasi</span>
-        <span className="ml-auto font-mono text-[10px] text-muted-foreground">48 kod</span>
+        {totalCodes ? (
+          <span className="ml-auto font-mono text-[10px] text-muted-foreground">
+            {totalCodes} kod
+          </span>
+        ) : null}
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[22rem] text-left">
-          <thead>
-            <tr className="border-b">
-              <th className="px-4 py-2 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-                Ruxsat kodi
-              </th>
-              {ROLES.map((role) => (
-                <th
-                  key={role}
-                  className="px-2 py-2 text-center text-[10px] font-medium tracking-wide text-muted-foreground uppercase"
-                >
-                  {role}
+      {matrix?.rows.length ? (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[22rem] text-left">
+            <thead>
+              <tr className="border-b">
+                <th className="px-4 py-2 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+                  Ruxsat kodi
                 </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {MATRIX.map((row) => (
-              <tr key={row.code}>
-                <td className="px-4 py-2 font-mono text-[11px] text-foreground">{row.code}</td>
-                {row.allow.map((allowed, i) => (
-                  <td key={ROLES[i]} className="px-2 py-2 text-center">
-                    {allowed ? (
-                      <Check
-                        className={`mx-auto size-3.5 ${i === 0 ? "text-muted-foreground" : "text-status-closed"}`}
-                      />
-                    ) : (
-                      <Minus className="mx-auto size-3.5 text-muted-foreground/40" />
-                    )}
-                  </td>
+                {matrix.roles.map((role) => (
+                  <th
+                    key={role}
+                    className="px-2 py-2 text-center text-[10px] font-medium tracking-wide text-muted-foreground uppercase"
+                  >
+                    {role}
+                  </th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody className="divide-y">
+              {matrix.rows.map((row) => (
+                <tr key={row.code}>
+                  <td className="px-4 py-2 font-mono text-[11px] text-foreground">{row.code}</td>
+                  {row.allow.map((allowed, i) => (
+                    <td key={matrix.roles[i] ?? i} className="px-2 py-2 text-center">
+                      {allowed ? (
+                        <Check
+                          className={`mx-auto size-3.5 ${
+                            i === 0 ? "text-muted-foreground" : "text-status-closed"
+                          }`}
+                        />
+                      ) : (
+                        <Minus className="mx-auto size-3.5 text-muted-foreground/40" />
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <EmptyVisual text="Ruxsat katalogi yuklanmadi." />
+      )}
       <p className="border-t bg-muted/30 px-4 py-2 text-[11px] text-muted-foreground">
         Egasi ustuni qulflangan — bazadagi cheklov buni kafolatlaydi.
       </p>
@@ -70,35 +89,16 @@ export function PermissionMatrixVisual() {
   );
 }
 
-const FEED = [
-  {
-    who: "Aziz",
-    what: "«Taklif tokeni» vazifasini Bajarilmoqda ga o'tkazdi",
-    when: "hozir",
-    tone: "bg-status-active",
-  },
-  {
-    who: "Malika",
-    what: "izoh qoldirdi: «Matritsa saqlanmayapti»",
-    when: "12 s",
-    tone: "bg-brand-pink",
-  },
-  {
-    who: "Jasur",
-    what: "spec.pdf faylini biriktirdi",
-    when: "48 s",
-    tone: "bg-brand-green",
-  },
-  {
-    who: "Nodira",
-    what: "ro'yxatga qo'shildi",
-    when: "1 daq",
-    tone: "bg-brand-yellow",
-  },
-];
+/** Faoliyat nuqtasining rangi — backend qaytargan ohang kaliti bo'yicha. */
+const TONE_CLASS: Record<ShowcaseActivity["tone"], string> = {
+  open: "bg-status-open",
+  active: "bg-status-active",
+  closed: "bg-status-closed",
+  accent: "bg-primary",
+  muted: "bg-muted-foreground/40",
+};
 
-/** Presence + faoliyat tasmasi ko'rinishi. */
-export function ActivityFeedVisual() {
+export function ActivityFeedVisual({ items }: { items: ShowcaseActivity[] }) {
   return (
     <div
       aria-hidden
@@ -110,35 +110,30 @@ export function ActivityFeedVisual() {
           <span className="relative inline-flex size-2 rounded-full bg-status-closed" />
         </span>
         <span className="text-xs font-medium">Faoliyat tasmasi</span>
-        <span className="ml-auto font-mono text-[10px] text-muted-foreground">
-          ws://…/ws/list/4/
-        </span>
+        <span className="ml-auto font-mono text-[10px] text-muted-foreground">ws://…/ws/list/</span>
       </div>
-      <ul className="divide-y">
-        {FEED.map((item) => (
-          <li key={item.who} className="flex items-start gap-3 px-4 py-3">
-            <span className={`mt-1.5 size-2 shrink-0 rounded-full ${item.tone}`} />
-            <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
-              <span className="font-medium text-foreground">{item.who}</span> {item.what}
-            </p>
-            <span className="shrink-0 font-mono text-[10px] text-muted-foreground/70">
-              {item.when}
-            </span>
-          </li>
-        ))}
-      </ul>
+      {items.length ? (
+        <ul className="divide-y">
+          {items.map((item, i) => (
+            <li key={`${item.who}-${i}`} className="flex items-start gap-3 px-4 py-3">
+              <span className={`mt-1.5 size-2 shrink-0 rounded-full ${TONE_CLASS[item.tone]}`} />
+              <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
+                <span className="font-medium text-foreground">{item.who}</span> {item.what}
+              </p>
+              <span className="shrink-0 font-mono text-[10px] text-muted-foreground/70">
+                {item.when}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <EmptyVisual text="Hozircha faoliyat yo'q." />
+      )}
     </div>
   );
 }
 
-const ORDER_ROWS = [
-  { title: "Ro'yxat sarlavhasini tahrirlash", position: "1.000", state: "idle" },
-  { title: "Doskada sudrash animatsiyasi", position: "1.500", state: "dragging" },
-  { title: "Filtrlar paneli", position: "2.000", state: "idle" },
-];
-
-/** Kasr pozitsiyalar bilan sudrab tartiblash ko'rinishi. */
-export function OrderingVisual() {
+export function OrderingVisual({ rows }: { rows: ShowcaseOrderingRow[] }) {
   return (
     <div
       aria-hidden
@@ -148,36 +143,42 @@ export function OrderingVisual() {
         <GripVertical className="size-3.5 text-muted-foreground" />
         <span className="text-xs font-medium">Sudrab tartiblash</span>
         <span className="ml-auto font-mono text-[10px] text-muted-foreground">
-          PATCH /tasks/42/move/
+          PATCH /tasks/{"{id}"}/move/
         </span>
       </div>
-      <ul className="space-y-2 p-4">
-        {ORDER_ROWS.map((row) => {
-          const dragging = row.state === "dragging";
-          return (
-            <li
-              key={row.title}
-              className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 ${
-                dragging
-                  ? "border-primary/50 bg-primary/5 shadow-lg shadow-primary/15 sm:translate-x-3"
-                  : "bg-background"
-              }`}
-            >
-              <GripVertical
-                className={`size-3.5 shrink-0 ${dragging ? "text-primary" : "text-muted-foreground/40"}`}
-              />
-              <span className="min-w-0 flex-1 truncate text-xs">{row.title}</span>
-              <span
-                className={`shrink-0 rounded-md px-1.5 py-0.5 font-mono text-[10px] ${
-                  dragging ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+      {rows.length ? (
+        <ul className="space-y-2 p-4">
+          {rows.map((row, i) => {
+            // O'rtadagi qator «sudralayotgan» holatda ko'rsatiladi — bu
+            // vizual holat, ma'lumot emas.
+            const dragging = i === 1;
+            return (
+              <li
+                key={row.title}
+                className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 ${
+                  dragging
+                    ? "border-primary/50 bg-primary/5 shadow-lg shadow-primary/15 sm:translate-x-3"
+                    : "bg-background"
                 }`}
               >
-                {row.position}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
+                <GripVertical
+                  className={`size-3.5 shrink-0 ${dragging ? "text-primary" : "text-muted-foreground/40"}`}
+                />
+                <span className="min-w-0 flex-1 truncate text-xs">{row.title}</span>
+                <span
+                  className={`shrink-0 rounded-md px-1.5 py-0.5 font-mono text-[10px] ${
+                    dragging ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  {row.position}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <EmptyVisual text="Tartiblash uchun vazifa yo'q." />
+      )}
       <p className="border-t bg-muted/30 px-4 py-2 text-[11px] text-muted-foreground">
         Faqat bitta qator yangilanadi — jadval qayta raqamlanmaydi.
       </p>

@@ -45,6 +45,13 @@ env = environ.Env(
     # backoff 1s->30s bo'lgani uchun 60/min sog'lom klient uchun keng, chipta
     # zaxirasini yig'moqchi bo'lgan hisob uchun esa tor.
     REALTIME_TICKET_THROTTLE_RATE=(str, "60/min"),
+    # `GET public/showcase/` anonim va keshlanmagan; bir nechta COUNT(*) qiladi.
+    SHOWCASE_THROTTLE_RATE=(str, "60/min"),
+    # Landing sahifasida mazmuni ko'rsatiladigan ish maydoni. BO'SH = hech
+    # qanday yozuv anonim ko'rsatilmaydi (faqat jamlangan sonlar va ruxsat
+    # katalogi). Bu yerga qo'yilgan ish maydoni butun internetga OCHIQ deb
+    # hisoblanadi — faqat namoyish uchun ajratilganini ko'rsating.
+    SHOWCASE_WORKSPACE_ID=(str, ""),
     # Vazifa biriktirmasining maksimal hajmi (MB) — §10.7.
     MAX_ATTACHMENT_MB=(int, 10),
     DEMO_THROTTLE_RATE=(str, "10/hour"),
@@ -133,6 +140,8 @@ LOCAL_APPS = [
     "apps.tasks",
     "apps.comments",
     "apps.realtime",
+    "apps.emailcheck",
+    "apps.chat",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -262,9 +271,19 @@ REST_FRAMEWORK = {
         "attachment": env("ATTACHMENT_THROTTLE_RATE"),
         "comments": env("COMMENT_THROTTLE_RATE"),
         "realtime_ticket": env("REALTIME_TICKET_THROTTLE_RATE"),
+        "showcase": env("SHOWCASE_THROTTLE_RATE"),
+        # `POST workspaces/{id}/check-email/` server IP'sidan begona MX'larga
+        # so'rov yuboradi — tor tutiladi.
+        "emailcheck": env("EMAILCHECK_THROTTLE_RATE", default="30/hour"),
+        # Chat xabari — izohlar bilan bir xil tartibda.
+        "chat": env("CHAT_THROTTLE_RATE", default="60/min"),
         "demo": env("DEMO_THROTTLE_RATE"),
     },
 }
+
+# Landing (`/`) shu ish maydonining mazmunini anonim ko'rsatadi. Bo'sh =
+# hech kimning yozuvi oshkor bo'lmaydi — apps/core/showcase.py ga qarang.
+SHOWCASE_WORKSPACE_ID = env("SHOWCASE_WORKSPACE_ID").strip()
 
 # Demo rejim — `POST auth/demo/` parolsiz token beradi. O'chiq bo'lsa endpoint
 # 404 qaytaradi (403 emas: mavjudligini oshkor qilmaydi).
@@ -516,5 +535,22 @@ DATA_UPLOAD_MAX_NUMBER_FILES = env.int("DATA_UPLOAD_MAX_NUMBER_FILES", default=1
 #: Yuklangan fayl diskda 0o644 bo'lsin (ba'zi tizimlarda default 0o600 bo'lib,
 #: web-server o'qiy olmaydi). Hech qachon bajariladigan bit qo'yilmaydi.
 FILE_UPLOAD_PERMISSIONS = 0o644
+
+# --------------------------------------------------------------------------
+# Email tekshiruvi (apps.emailcheck)
+# --------------------------------------------------------------------------
+
+#: SMTP tekshiruvida server ko'radigan kimlik. Ikkalasi ham HAQIQIY va sizga
+#: tegishli bo'lishi shart — ko'p MX server yuboruvchi domenni (SPF, reverse
+#: DNS) tekshiradi va mos kelmasa ulanishni uzadi yoki IP'ni bloklaydi.
+EMAILCHECK_HELO_HOSTNAME = env("EMAILCHECK_HELO_HOSTNAME", default="")
+EMAILCHECK_MAIL_FROM = env("EMAILCHECK_MAIL_FROM", default="")
+
+#: Tashqi tekshiruv xizmati (`zerobounce` | `abstractapi` | `hunter`) va uning
+#: kaliti. Bo'sh bo'lsa faqat sintaksis + MX bosqichlari ishlaydi — SMTP
+#: probe qilinmaydi. Bu API endpointi uchun ATAYLAB xavfsiz default:
+#: qo'shimcha sozlamasiz server hech kimga SMTP so'rov yubormaydi.
+EMAILCHECK_VERIFIER = env("EMAILCHECK_VERIFIER", default="")
+EMAILCHECK_API_KEY = env("EMAILCHECK_API_KEY", default="")
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

@@ -876,3 +876,158 @@ export interface BulkSpaceMembersResponse {
   removed: number;
   results: SpaceMember[];
 }
+
+// ---------------------------------------------------------------------------
+// Public showcase (`GET public/showcase/`) — landing sahifasining yagona
+// anonim ma'lumot manbai. Barcha qiymatlar bazadan keladi; landing'da qo'lda
+// yozilgan namunaviy qator yo'q.
+// ---------------------------------------------------------------------------
+
+export interface ShowcaseStats {
+  permission_codes: number;
+  roles: number;
+  workspaces: number;
+  spaces: number;
+  tasks: number;
+  members: number;
+}
+
+export interface ShowcaseMatrixRow {
+  code: string;
+  label: string;
+  /** `roles` bilan bir xil tartibda: [Egasi, Admin, A'zo, Mehmon]. */
+  allow: boolean[];
+}
+
+export interface ShowcaseMatrix {
+  roles: string[];
+  rows: ShowcaseMatrixRow[];
+}
+
+/** Email hech qachon kelmaydi — faqat bosh harflar va avatar rangi. */
+export interface ShowcasePerson {
+  initials: string;
+  color: string;
+}
+
+export interface ShowcaseSpace {
+  name: string;
+  color: string;
+  /** Yopiq bo'limlar nomsiz, bitta jamlangan qator sifatida keladi. */
+  locked: boolean;
+  count: number;
+}
+
+export interface ShowcaseTask {
+  title: string;
+  status: StatusType;
+  priority: Priority;
+  /** `DD-MM` yoki muddat qo'yilmagan bo'lsa `null`. */
+  due: string | null;
+  done: boolean;
+  people: ShowcasePerson[];
+}
+
+export interface ShowcaseActivity {
+  who: string;
+  what: string;
+  when: string;
+  tone: "open" | "active" | "closed" | "accent" | "muted";
+}
+
+export interface ShowcaseOrderingRow {
+  title: string;
+  /** Kasr pozitsiya kaliti (base-62), masalan `"V"` yoki `"n1"`. */
+  position: string;
+}
+
+export interface ShowcaseWorkspace {
+  name: string;
+  list_name: string | null;
+  member_count: number;
+  spaces: ShowcaseSpace[];
+  tasks: ShowcaseTask[];
+  activity: ShowcaseActivity[];
+  ordering: ShowcaseOrderingRow[];
+}
+
+export interface ShowcaseResponse {
+  stats: ShowcaseStats;
+  matrix: ShowcaseMatrix;
+  /** `SHOWCASE_WORKSPACE_ID` sozlanmagan bo'lsa `null`. */
+  workspace: ShowcaseWorkspace | null;
+}
+
+// ---------------------------------------------------------------------------
+// Email tekshiruvi (`POST workspaces/{id}/check-email/`)
+// ---------------------------------------------------------------------------
+
+export type EmailCheckStatus = "valid" | "invalid" | "risky" | "unknown";
+
+/**
+ * Manzilning ish maydoniga nisbatan o'rni:
+ * - `member`  — allaqachon a'zo (tekshiruvga chiqilmaydi);
+ * - `invited` — taklif yuborilgan, javob kutilmoqda;
+ * - `outside` — ish maydonida yo'q.
+ */
+export type EmailCheckMembership = "member" | "invited" | "outside";
+
+export interface EmailCheckResponse {
+  email: string;
+  status: EmailCheckStatus;
+  /** O'zbekcha yorliq: mavjud / mavjud emas / shubhali / noaniq. */
+  status_label: string;
+  reason: string;
+  membership: EmailCheckMembership;
+  /** `membership === "member"` bo'lganda to'ldiriladi. */
+  user_id?: string | null;
+  full_name?: string | null;
+  role?: Role | null;
+  /** `membership === "invited"` bo'lganda to'ldiriladi. */
+  invitation_id?: string | null;
+  /** Ro'yxatdan o'tgan, lekin bu ish maydonida yo'q. */
+  has_account?: boolean;
+  checked_at?: string;
+  mx?: string | null;
+  provider?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Chat — kanallar va shaxsiy yozishmalar
+// ---------------------------------------------------------------------------
+
+export type ConversationKind = "channel" | "direct";
+
+export interface ChatMessage {
+  id: string;
+  conversation_id: string;
+  author: UserSummary | null;
+  body: string;
+  edited_at: string | null;
+  created_at: string;
+}
+
+export interface Conversation {
+  id: string;
+  workspace_id: string;
+  kind: ConversationKind;
+  /** Kanal nomi; DM uchun bo'sh satr. */
+  name: string;
+  /** Ro'yxatda ko'rsatiladigan nom — DM uchun suhbatdoshning ismi. */
+  title: string;
+  topic: string;
+  is_private: boolean;
+  /** DM suhbatdoshi; kanal uchun `null`. */
+  peer: UserSummary | null;
+  last_message: ChatMessage | null;
+  last_message_at: string | null;
+  unread: number;
+  is_member: boolean;
+  created_at: string;
+}
+
+export interface CreateChannelRequest {
+  name: string;
+  topic?: string;
+  is_private?: boolean;
+}

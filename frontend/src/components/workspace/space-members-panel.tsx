@@ -23,7 +23,8 @@ import {
 } from "@/hooks/queries";
 import { useBulkSpaceMembers } from "@/hooks/mutations";
 import { displayName, initials } from "@/lib/format";
-import { spacePermissionGate } from "@/lib/permissions";
+import { can, spacePermissionGate } from "@/lib/permissions";
+import { InviteByEmail, looksLikeEmail } from "@/components/shared/invite-by-email";
 import { PROFESSION_LABEL, SPACE_ACCESS_LABEL } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 import type { Member, SpaceAccess, SpaceMember, UserSummary } from "@/types/api";
@@ -320,10 +321,19 @@ export function SpaceMembersPanel({
               />
             </div>
           </div>
+          {/* Ish maydonida bunday odam yo'q, lekin yozilgani email'ga
+              o'xshaydi — uni taklif qilish yo'lini shu yerda beramiz, aks
+              holda foydalanuvchi "topilmadi" ga qarab turib qolardi va
+              taklif yuborish uchun boshqa sahifaga o'tishi kerak bo'lardi. */}
+          {looksLikeEmail(query) && candidates.length === 0 && can(my, "member.invite") ? (
+            <InviteByEmail email={query} workspaceId={workspaceId} onInvited={() => setQuery("")} />
+          ) : null}
           <ul className="max-h-[26rem] overflow-y-auto">
             {candidates.length === 0 ? (
               <li className="px-4 py-6 text-center text-sm text-muted-foreground">
-                Mos a&apos;zo topilmadi.
+                {looksLikeEmail(query)
+                  ? "Ish maydonida bunday a'zo yo'q."
+                  : "Mos a'zo topilmadi."}
               </li>
             ) : (
               candidates.map((member) => {

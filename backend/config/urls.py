@@ -15,10 +15,13 @@ def health(request):
 
 api_v1 = [
     path("health/", health, name="health"),
+    path("", include("apps.core.urls")),
     path("", include("apps.accounts.urls")),
     path("", include("apps.workspaces.urls")),
     path("", include("apps.tasks.urls")),
     path("", include("apps.comments.urls")),
+    path("", include("apps.emailcheck.urls")),
+    path("", include("apps.chat.urls")),
 ]
 
 urlpatterns = [

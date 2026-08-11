@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { DemoLoginButton } from "@/components/auth/demo-login-button";
 import { PasswordInput } from "@/components/auth/password-input";
 import { PasswordStrength, scorePassword } from "@/components/auth/password-strength";
 import { isApiError } from "@/lib/api";
@@ -160,7 +159,6 @@ export function LoginForm() {
       <Button type="submit" disabled={pending} aria-busy={pending}>
         {pending ? "Kirilmoqda…" : "Kirish"}
       </Button>
-      <DemoLoginButton onWorkspaceRoute={firstWorkspaceRoute} />
       <p className="text-center text-sm text-muted-foreground">
         Hisobingiz yo&apos;qmi?{" "}
         <Link href="/register" className="font-medium text-primary hover:underline">
@@ -457,7 +455,7 @@ export function RegisterForm({ invite }: { invite?: InviteContext } = {}) {
             : "Hisob yaratish"}
       </Button>
 
-      {inviteMode ? null : <DemoLoginButton onWorkspaceRoute={firstWorkspaceRoute} />}
+      
 
       <p className="text-center text-sm text-muted-foreground">
         Hisobingiz bormi?{" "}

@@ -5,7 +5,8 @@ import { ChevronDown, ChevronRight, MessageSquare, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useGroupedTasks, useMembers, useTags } from "@/hooks/queries";
+import { useGroupedTasks, useMembers, useMyPermissions, useTags } from "@/hooks/queries";
+import { can } from "@/lib/permissions";
 import { useCreateTask, useUpdateTask } from "@/hooks/mutations";
 import { TaskActionsMenu } from "@/components/task/task-actions-menu";
 import type { ListPermissions } from "@/components/list/use-list-permissions";
@@ -40,6 +41,10 @@ export function ListView({
   // ta observer yozib, roster yangilanishida butun ro'yxatni qayta chizardi.
   const { data: members } = useMembers(workspaceId);
   const { data: tags } = useTags(workspaceId);
+  // Taklif bloki mas'ul tanlagichida ko'rinadimi. `member.invite` —
+  // ish maydoni darajasidagi kod, bo'lim darajasida emas.
+  const { data: my } = useMyPermissions(workspaceId);
+  const canInvite = can(my, "member.invite");
 
   if (isPending) return <ListSkeleton />;
   if (isError) {
@@ -74,6 +79,8 @@ export function ListView({
             tags={tags?.results ?? []}
             onOpenTask={onOpenTask}
             perms={perms}
+            workspaceId={workspaceId}
+            canInvite={canInvite}
           />
         ))
       )}
@@ -104,6 +111,8 @@ function StatusGroup({
   tags,
   onOpenTask,
   perms,
+  workspaceId,
+  canInvite,
 }: {
   listId: string;
   status: Status;
@@ -114,6 +123,8 @@ function StatusGroup({
   tags: Tag[];
   onOpenTask: (taskId: string) => void;
   perms: ListPermissions;
+  workspaceId: string;
+  canInvite: boolean;
 }) {
   const [collapsed, setCollapsed] = React.useState(false);
   const [composing, setComposing] = React.useState(false);
@@ -173,6 +184,8 @@ function StatusGroup({
                 tags={tags}
                 onOpen={() => onOpenTask(task.id)}
                 perms={perms}
+                workspaceId={workspaceId}
+                canInvite={canInvite}
               />
             ))
           )}
@@ -206,6 +219,8 @@ function TaskRow({
   tags,
   onOpen,
   perms,
+  workspaceId,
+  canInvite,
 }: {
   listId: string;
   task: Task;
@@ -214,6 +229,8 @@ function TaskRow({
   tags: Tag[];
   onOpen: () => void;
   perms: ListPermissions;
+  workspaceId: string;
+  canInvite: boolean;
 }) {
   const updateTask = useUpdateTask(listId);
   const status = statuses.find((s) => s.id === task.status_id);
@@ -270,6 +287,8 @@ function TaskRow({
           value={task.assignees}
           members={members}
           disabled={!canAssign}
+          workspaceId={workspaceId}
+          canInvite={canInvite}
           onChange={(ids) =>
             updateTask.mutate({
               taskId: task.id,
