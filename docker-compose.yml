@@ -1,4 +1,4 @@
-# ClickUp clone — development stack.
+# UzWork — development stack.
 #
 #   cp .env.docker.example .env
 #   docker compose up -d --build
@@ -10,6 +10,12 @@
 # Production overrides live in docker-compose.prod.yml:
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
+# Loyiha nomi UzWork (ADR 0014), lekin bu kalit ATAYLAB `clickup` bo'lib qoladi:
+# compose undan nomlangan volume prefikslarini yasaydi (`clickup_pgdata`,
+# `clickup_media`, `clickup_static`, `clickup_redisdata`). O'zgartirilsa mavjud
+# o'rnatmalar bo'sh bazaga qarab uyg'onadi va eski volume'lar yetim qoladi —
+# bu brend masalasi uchun to'lanadigan narx emas. Migratsiya kerak bo'lsa: yangi
+# nom + `docker volume` bilan qo'lda ko'chirish, alohida ish sifatida.
 name: clickup
 
 services:
@@ -83,18 +89,83 @@ services:
       - static:/app/staticfiles
       - media:/app/media
 
-  # ----------------------------------------------------------- Next.js front
+  # ------------------------------------------- Celery worker (fon vazifalar)
+  # ADR 0012. Bu servis MAJBURIY, ixtiyoriy emas: `REDIS_URL` shu yerda
+  # o'rnatilgani uchun `CELERY_TASK_ALWAYS_EAGER` O'CHADI (u faqat broker
+  # manzili bo'sh bo'lganda yoqiladi). Ya'ni worker bo'lmasa davriy vazifalar
+  # navbatga tushadi-yu, hech qachon bajarilmaydi — jimgina.
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      # Migratsiya FAQAT `backend` konteynerida — ikki joydan bir vaqtda
+      # migratsiya qilish poyga va yarim qo'llanilgan sxema demakdir.
+      RUN_MIGRATIONS: "0"
+      RUN_COLLECTSTATIC: "0"
+    command: ["celery", "-A", "config", "worker", "-l", "info", "--concurrency", "2"]
+    # Image'ning HEALTHCHECK'i :8000 da HTTP so'raydi; worker'da HTTP server yo'q,
+    # shuning uchun u abadiy "unhealthy" bo'lardi.
+    healthcheck:
+      disable: true
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - static:/app/staticfiles
+      # SHART: `purge_soft_deleted` biriktirma FAYLLARINI diskdan o'chiradi,
+      # ya'ni worker `backend` bilan aynan bir xil media volume'ini ko'rishi kerak.
+      - media:/app/media
+
+  # ------------------------------------------- Celery beat (davriy jadval)
+  # QAT'IYAN bitta nusxa. Ikkita beat — har bir vazifa ikki marta navbatga
+  # tushadi, ya'ni ikki marta o'chirish urinishi.
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      RUN_MIGRATIONS: "0"
+      RUN_COLLECTSTATIC: "0"
+    command: ["celery", "-A", "config", "beat", "-l", "info", "--schedule", "/tmp/celerybeat-schedule"]
+    healthcheck:
+      disable: true
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+
+  # -------------------------------------------------- Vite SPA behind nginx
+  # ADR 0011: the image is a static `dist/` served by nginx-unprivileged (uid
+  # 101), not a Node server. So there is no runtime env here at all — a `VITE_*`
+  # under `environment:` would be silently ignored. Vite inlines these into the
+  # bundle at BUILD time, which is why they are `args:` and why changing one
+  # means `docker compose up -d --build frontend`, not a restart.
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
       target: runner
       args:
-        # NEXT_PUBLIC_* is inlined at build time — changing it requires a
-        # rebuild (`docker compose up -d --build frontend`), not a restart.
-        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api/v1}
-        NEXT_PUBLIC_WS_BASE_URL: ${NEXT_PUBLIC_WS_BASE_URL:-ws://localhost:8000}
-        NEXT_PUBLIC_API_MODE: ${NEXT_PUBLIC_API_MODE:-real}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000/api/v1}
+        VITE_WS_BASE_URL: ${VITE_WS_BASE_URL:-ws://localhost:8000}
+        VITE_API_MODE: ${VITE_API_MODE:-real}
     depends_on:
       backend:
         condition: service_healthy

@@ -1,0 +1,77 @@
+{
+  "name": "UzWork (ClickUp clone) — Django 5.2 + Next.js 16",
+  // Plain Ubuntu base + official feature images, not a stack-specific base
+  // image: this repo runs two independently-versioned toolchains
+  // (backend/Dockerfile: python:3.14-slim, frontend/Dockerfile: node:22-slim)
+  // and features let each be pinned to match those Dockerfiles exactly
+  // instead of whatever a combined base image happens to ship.
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.14",
+      "installTools": false
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    },
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+
+  "forwardPorts": [3000, 8000],
+  "portsAttributes": {
+    "3000": {
+      "label": "Frontend (next dev)",
+      "onAutoForward": "notify"
+    },
+    "8000": {
+      "label": "Backend (manage.py runserver)",
+      "onAutoForward": "notify"
+    }
+  },
+
+  // Mirrors "venv + npm (primary)" from CLAUDE.md: a fresh .venv (there is
+  // none in a new Codespace to reuse), backend deps, frontend deps, and
+  // both .env files seeded from their committed .example so `runserver` /
+  // `npm run dev` work without a manual step. Redis is intentionally not
+  // installed — CLAUDE.md notes Channels falls back to the in-memory layer
+  // when REDIS_URL is empty, which is exactly what backend/.env.example
+  // ships, so day-to-day work needs no Redis container here. Reach for
+  // "Docker Compose (supported)" (docs/DOCKER.md) when Postgres/Redis parity
+  // with prod actually matters.
+  "postCreateCommand": "python3 -m venv .venv && ./.venv/bin/pip install --upgrade pip && ./.venv/bin/pip install -r backend/requirements.txt && npm --prefix frontend ci && [ -f backend/.env ] || cp backend/.env.example backend/.env && [ -f frontend/.env.local ] || cp frontend/.env.example frontend/.env.local",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "batisteo.vscode-django",
+        "dbaeumer.vscode-eslint",
+        "bradlc.vscode-tailwindcss",
+        "esbenp.prettier-vscode",
+        "eamodio.gitlens",
+        "ms-azuretools.vscode-docker",
+        "editorconfig.editorconfig"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python",
+        "python.terminal.activateEnvironment": true,
+        "editor.formatOnSave": false,
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit"
+          }
+        },
+        "[typescript][typescriptreact]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        }
+      }
+    }
+  },
+
+  "remoteUser": "vscode"
+}

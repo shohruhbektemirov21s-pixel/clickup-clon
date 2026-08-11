@@ -135,19 +135,74 @@ services:
         reservations:
           memory: 256M
 
-  frontend:
+  # ------------------------------------------------- Celery worker / beat
+  # Dev'dagi bind mount (`./backend:/app`) prod'da tushiriladi — kod image
+  # ichida. `worker` uchun `media` volume'i QOLADI: `purge_soft_deleted`
+  # biriktirma fayllarini diskdan o'chiradi va u fayllar shu volume'da.
+  worker:
     restart: unless-stopped
     environment:
-      NODE_ENV: production
+      DEBUG: "False"
+      RUN_MIGRATIONS: "0"
+      RUN_COLLECTSTATIC: "0"
+      RUN_SEED_DEMO: "0"
+      LOG_FORMAT: "json"
+      LOG_LEVEL: "INFO"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes: !override
+      - media:/app/media
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          memory: 128M
+
+  beat:
+    restart: unless-stopped
+    environment:
+      DEBUG: "False"
+      RUN_MIGRATIONS: "0"
+      RUN_COLLECTSTATIC: "0"
+      RUN_SEED_DEMO: "0"
+      LOG_FORMAT: "json"
+      LOG_LEVEL: "INFO"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes: !override []
+    deploy:
+      # BITTA nusxa, muzokarasiz. Ikkinchi beat har bir davriy vazifani
+      # ikkilantiradi — `purge_soft_deleted` uchun bu ikkita parallel
+      # o'chirish tranzaksiyasi degani.
+      replicas: 1
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 192M
+        reservations:
+          memory: 64M
+
+  # ADR 0011: this is nginx serving a static `dist/`, not a Node server. It has
+  # no runtime configuration — the API/WS origins were baked in by `vite build`
+  # (see the `args:` in docker-compose.yml). `NODE_ENV` used to live here for
+  # `next start` and would now be dead weight, so it is gone. The memory limit
+  # is cut accordingly: nginx serving files needs a fraction of what the Next
+  # server did.
+  frontend:
+    restart: unless-stopped
     ports: !override
       - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
     deploy:
       resources:
         limits:
-          cpus: "1.0"
-          memory: 768M
+          cpus: "0.5"
+          memory: 128M
         reservations:
-          memory: 256M
+          memory: 32M
 
   # ------------------------------------------------------------------ backups
   # `pgdata` is a local named volume: if this host's disk dies, every task,

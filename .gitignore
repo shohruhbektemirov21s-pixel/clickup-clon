@@ -15,14 +15,14 @@ db.sqlite3-journal
 .env
 !.env.example
 
-# Node / Next.js
+# Node / Vite
+# (`.next/`, `next-env.d.ts` va `.vercel` ADR 0011 bilan ketdi — frontend
+# endi Vite. `frontend/dist/` `frontend/.gitignore` da.)
 node_modules/
-.next/
 out/
 build/
-.vercel
+dist/
 *.tsbuildinfo
-next-env.d.ts
 
 # Playwright
 /frontend/test-results/
@@ -47,3 +47,6 @@ frontend/ca/*
 # Qo'lda olingan baza zaxiralari (haqiqiy ma'lumot bo'ladi)
 db.sqlite3.bak-*
 *.sqlite3.bak-*
+
+# mypy lokal ishga tushirilganda yozadi (CI ham shu nomni ishlatadi)
+backend/mypy.log

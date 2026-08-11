@@ -1,0 +1,2789 @@
+{
+    "openapi": "3.0.3",
+    "info": {
+        "title": "UzWork API",
+        "version": "1.0.0",
+        "description": "UzWork REST API. See docs/API_CONTRACT.md."
+    },
+    "paths": {
+        "/api/v1/attachments/{attachment_id}/": {
+            "delete": {
+                "operationId": "attachments_destroy",
+                "description": "`DELETE attachments/{id}/` — o'ziniki vs boshqaniki ikki xil kod.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "attachment_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "attachments"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/attachments/{attachment_id}/download/": {
+            "get": {
+                "operationId": "attachments_download_retrieve",
+                "description": "`GET attachments/{id}/download/` — yagona o'qish yo'li.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "attachment_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "attachments"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/demo/": {
+            "post": {
+                "operationId": "auth_demo_create",
+                "description": "`POST auth/demo/` — parolsiz demo hisobga kirish.\n\nXAVFSIZLIK:\n  * Parol hech qachon klientga ketmaydi — tugma faqat shu endpointni\n    chaqiradi, demo parol backend'da qoladi (frontend bundle'ida yo'q).\n  * `DEMO_MODE=False`, hisob yo'q yoki nofaol → `404` (`403` EMAS, endpoint\n    borligini oshkor qilmaydi).\n  * Demo hisob `is_staff`/`is_superuser` bo'lsa → `404`. Shu tufayli bu\n    tugma orqali Django `/admin/` ga hech qachon kirib bo'lmaydi.\n  * `demo` throttle scope IP bo'yicha cheklaydi.",
+                "tags": [
+                    "auth"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/login/": {
+            "post": {
+                "operationId": "auth_login_create",
+                "tags": [
+                    "auth"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/logout/": {
+            "post": {
+                "operationId": "auth_logout_create",
+                "tags": [
+                    "auth"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/password/change/": {
+            "post": {
+                "operationId": "auth_password_change_create",
+                "tags": [
+                    "auth"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/refresh/": {
+            "post": {
+                "operationId": "auth_refresh_create",
+                "description": "`POST auth/refresh/` — rotatsiya + blacklist, ya'ni IKKI yozish.\n\nEndpoint `AllowAny` (aynan shu yerda mijozda yaroqli access token yo'q),\nshuning uchun yagona chegara throttle bo'lishi mumkin. Usiz istalgan\nanonim mijoz `OutstandingToken` + `BlacklistedToken` jadvallariga\ncheklanmagan yozish yuklamasini bera olardi.",
+                "tags": [
+                    "auth"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/register/": {
+            "post": {
+                "operationId": "auth_register_create",
+                "tags": [
+                    "auth"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/chat/conversations/{conversation_id}/join/": {
+            "post": {
+                "operationId": "chat_conversations_join_create",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "conversation_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "chat"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/chat/conversations/{conversation_id}/messages/": {
+            "get": {
+                "operationId": "chat_conversations_messages_retrieve",
+                "description": "`GET/POST chat/conversations/{id}/messages/`.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "conversation_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "chat"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "post": {
+                "operationId": "chat_conversations_messages_create",
+                "description": "`GET/POST chat/conversations/{id}/messages/`.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "conversation_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "chat"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/comments/{comment_id}/": {
+            "patch": {
+                "operationId": "comments_partial_update",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "comment_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "comments"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "delete": {
+                "operationId": "comments_destroy",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "comment_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "comments"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/folders/{folder_id}/": {
+            "get": {
+                "operationId": "folders_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "folder_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "folders"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "patch": {
+                "operationId": "folders_partial_update",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "folder_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "folders"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "delete": {
+                "operationId": "folders_destroy",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "folder_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "folders"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/health/": {
+            "get": {
+                "operationId": "health_retrieve",
+                "tags": [
+                    "health"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/invitations/{invitation_id}/": {
+            "delete": {
+                "operationId": "invitations_destroy",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "invitation_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "invitations"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/invitations/{invitation_id}/resend/": {
+            "post": {
+                "operationId": "invitations_resend_create",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "invitation_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "invitations"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/invitations/accept/": {
+            "post": {
+                "operationId": "invitations_accept_create",
+                "tags": [
+                    "invitations"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/invitations/decline/": {
+            "post": {
+                "operationId": "invitations_decline_create",
+                "tags": [
+                    "invitations"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/invitations/lookup/": {
+            "get": {
+                "operationId": "invitations_lookup_retrieve",
+                "tags": [
+                    "invitations"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/lists/{list_id}/": {
+            "get": {
+                "operationId": "lists_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "list_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "lists"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "patch": {
+                "operationId": "lists_partial_update",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "list_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "lists"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "delete": {
+                "operationId": "lists_destroy",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "list_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "lists"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/lists/{list_id}/move/": {
+            "patch": {
+                "operationId": "lists_move_partial_update",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "list_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "lists"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/lists/{list_id}/tasks/": {
+            "get": {
+                "operationId": "lists_tasks_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "list_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "lists"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "post": {
+                "operationId": "lists_tasks_create",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "list_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "lists"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/me/": {
+            "get": {
+                "operationId": "me_retrieve",
+                "tags": [
+                    "me"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "patch": {
+                "operationId": "me_partial_update",
+                "tags": [
+                    "me"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/me/avatar/": {
+            "post": {
+                "operationId": "me_avatar_create",
+                "tags": [
+                    "me"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/notifications/": {
+            "get": {
+                "operationId": "notifications_list",
+                "description": "`GET notifications/?workspace=&unread=&page_size=` — yangi birinchi.",
+                "summary": "Bildirishnomalar ro'yxati",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "unread",
+                        "schema": {
+                            "type": "boolean"
+                        },
+                        "description": "Faqat o'qilmaganlar."
+                    },
+                    {
+                        "in": "query",
+                        "name": "workspace",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Ish maydoni bo'yicha filtr."
+                    }
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/Notification"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/notifications/{notification_id}/read/": {
+            "post": {
+                "operationId": "notifications_read_create",
+                "description": "`POST notifications/{id}/read/` — idempotent, allaqachon o'qilgan bo'lsa ham 200.",
+                "summary": "Bittasini o'qilgan deb belgilash",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "notification_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Notification"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/notifications/read-all/": {
+            "post": {
+                "operationId": "notifications_read_all_create",
+                "description": "`POST notifications/read-all/` — `?workspace=` bilan bitta ish maydoni.",
+                "summary": "Hammasini o'qilgan deb belgilash",
+                "tags": [
+                    "notifications"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NotificationReadAll"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/notifications/unread-count/": {
+            "get": {
+                "operationId": "notifications_unread_count_retrieve",
+                "description": "`GET notifications/unread-count/?workspace=` — qo'ng'iroqcha nishoni.\n\nAlohida endpoint: nishon har bir `notification.created` freymidan keyin\nyangilanadi, ro'yxatning o'zi esa faqat menyu ochilganda kerak.",
+                "summary": "O'qilmaganlar soni",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "workspace",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NotificationUnreadCount"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/permissions/": {
+            "get": {
+                "operationId": "permissions_retrieve",
+                "description": "`GET permissions/` — auth talab qilinadi, rol talab qilinmaydi, pagination yo'q.",
+                "tags": [
+                    "permissions"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/public/showcase/": {
+            "get": {
+                "operationId": "public_showcase_retrieve",
+                "tags": [
+                    "public"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/realtime/ticket/": {
+            "post": {
+                "operationId": "realtime_ticket_create",
+                "description": "`POST realtime/ticket/` — bir martalik WebSocket handshake chiptasi (§15.1).\n\nBrauzer WS handshake'ida `Authorization` sarlavhasini qo'ya olmaydi, shuning\nuchun ilgari access token to'g'ridan-to'g'ri URL'da (`?token=`) ketardi va\nproxy/APM access log'larida qolardi. Bu endpoint uning o'rniga hech qanday\nda'vo olib yurmaydigan, 30 soniya yashaydigan va **bir marta** ishlatiladigan\nopaque chipta beradi: log'dan olingan URL bilan endi soket ochib bo'lmaydi.\n\nAutentifikatsiya talab qilinadi (chipta faqat so'rovchining o'ziga tegishli),\n`realtime_ticket` throttle scope'i esa chipta zavodiga aylanishiga yo'l\nqo'ymaydi.",
+                "tags": [
+                    "realtime"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/spaces/{space_id}/": {
+            "get": {
+                "operationId": "spaces_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "space_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "spaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "patch": {
+                "operationId": "spaces_partial_update",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "space_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "spaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "delete": {
+                "operationId": "spaces_destroy",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "space_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "spaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/spaces/{space_id}/folders/": {
+            "get": {
+                "operationId": "spaces_folders_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "space_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "spaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "post": {
+                "operationId": "spaces_folders_create",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "space_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "spaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/spaces/{space_id}/lists/": {
+            "get": {
+                "operationId": "spaces_lists_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "space_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "spaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "post": {
+                "operationId": "spaces_lists_create",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "space_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "spaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/spaces/{space_id}/members/": {
+            "get": {
+                "operationId": "spaces_members_retrieve",
+                "description": "`GET|POST spaces/{space_id}/members/`.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "space_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "spaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "post": {
+                "operationId": "spaces_members_create",
+                "description": "`GET|POST spaces/{space_id}/members/`.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "space_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "spaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/spaces/{space_id}/members/{user_id}/": {
+            "patch": {
+                "operationId": "spaces_members_partial_update",
+                "description": "`PATCH|DELETE spaces/{space_id}/members/{user_id}/`.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "space_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "path",
+                        "name": "user_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "spaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "delete": {
+                "operationId": "spaces_members_destroy",
+                "description": "`PATCH|DELETE spaces/{space_id}/members/{user_id}/`.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "space_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "path",
+                        "name": "user_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "spaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/spaces/{space_id}/members/bulk/": {
+            "post": {
+                "operationId": "spaces_members_bulk_create",
+                "description": "`POST spaces/{space_id}/members/bulk/` — PM panelining \"Saqlash\" tugmasi.\n\nJavob `{\"added\", \"removed\", \"results\"}`: `results` — tranzaksiyadan keyingi\n**to'liq** bo'lim jamoasi, shunda klient bitta javob bilan holatni almashtira\noladi va ikkinchi `GET` qilmaydi.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "space_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "spaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/tags/{tag_id}/": {
+            "patch": {
+                "operationId": "tags_partial_update",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "tag_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "tags"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "delete": {
+                "operationId": "tags_destroy",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "tag_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "tags"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/tasks/{task_id}/": {
+            "get": {
+                "operationId": "tasks_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "task_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "patch": {
+                "operationId": "tasks_partial_update",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "task_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "delete": {
+                "operationId": "tasks_destroy",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "task_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/tasks/{task_id}/activity/": {
+            "get": {
+                "operationId": "tasks_activity_retrieve",
+                "description": "GET tasks/{id}/activity/ — the task's history, newest first.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "task_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/tasks/{task_id}/attachments/": {
+            "get": {
+                "operationId": "tasks_attachments_retrieve",
+                "description": "`GET|POST tasks/{task_id}/attachments/`.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "task_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "post": {
+                "operationId": "tasks_attachments_create",
+                "description": "`GET|POST tasks/{task_id}/attachments/`.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "task_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/tasks/{task_id}/comments/": {
+            "get": {
+                "operationId": "tasks_comments_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "task_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "post": {
+                "operationId": "tasks_comments_create",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "task_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/tasks/{task_id}/move/": {
+            "patch": {
+                "operationId": "tasks_move_partial_update",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "task_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/tasks/{task_id}/watch/": {
+            "post": {
+                "operationId": "tasks_watch_create",
+                "description": "Kuzatuvchi bo'lish / bekor qilish.\n\n`task.watch` kodi katalogda va grant to'plamlarida bor edi, lekin bu yerda\nhech qachon tekshirilmasdi — ya'ni matritsadan uni olib tashlash REST\nxatti-harakatiga ta'sir qilmasdi (\"yolg'on nazorat\").",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "task_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "delete": {
+                "operationId": "tasks_watch_destroy",
+                "description": "Kuzatuvchi bo'lish / bekor qilish.\n\n`task.watch` kodi katalogda va grant to'plamlarida bor edi, lekin bu yerda\nhech qachon tekshirilmasdi — ya'ni matritsadan uni olib tashlash REST\nxatti-harakatiga ta'sir qilmasdi (\"yolg'on nazorat\").",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "task_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "tasks"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/": {
+            "get": {
+                "operationId": "workspaces_retrieve",
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "post": {
+                "operationId": "workspaces_create",
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/{workspace_id}/": {
+            "get": {
+                "operationId": "workspaces_retrieve_2",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "patch": {
+                "operationId": "workspaces_partial_update",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "delete": {
+                "operationId": "workspaces_destroy",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/{workspace_id}/activity/": {
+            "get": {
+                "operationId": "workspaces_activity_retrieve",
+                "description": "`GET workspaces/{id}/activity/` — docs/API_CONTRACT.md §10.8.\n\nIsh maydoni bo'yicha faoliyat tasmasi, yangisidan eskisiga. Filtrlar:\n`?actor=<user uuid>` va `?verb=<ActivityVerb>`; ikkalasi ham ixtiyoriy va\nAND bilan birlashadi. Sahifalash — standart §1.5 konverti.\n\nXAVFSIZLIK: `visible_spaces_q` — tasma faqat chaqiruvchi ko'ra oladigan\nbo'limlardagi vazifalar tarixini beradi. O'chirilgan (soft-delete)\nvazifalar yozuvlari ham chiqmaydi: vazifaning o'zi 404 bo'lsa, uning\ntarixi ham ko'rinmasligi kerak.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/{workspace_id}/chat/channels/": {
+            "get": {
+                "operationId": "workspaces_chat_channels_retrieve",
+                "description": "`GET/POST workspaces/{id}/chat/channels/` — kanallar.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "post": {
+                "operationId": "workspaces_chat_channels_create",
+                "description": "`GET/POST workspaces/{id}/chat/channels/` — kanallar.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/{workspace_id}/chat/direct/": {
+            "post": {
+                "operationId": "workspaces_chat_direct_create",
+                "description": "`POST workspaces/{id}/chat/direct/` — DM ochadi yoki mavjudini qaytaradi.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/{workspace_id}/check-email/": {
+            "post": {
+                "operationId": "workspaces_check_email_create",
+                "description": "Manzilning holatini va ish maydoniga nisbatan o'rnini qaytaradi.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/{workspace_id}/invitations/": {
+            "get": {
+                "operationId": "workspaces_invitations_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "post": {
+                "operationId": "workspaces_invitations_create",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/{workspace_id}/members/": {
+            "get": {
+                "operationId": "workspaces_members_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "post": {
+                "operationId": "workspaces_members_create",
+                "description": "Ro'yxatdan o'tgan foydalanuvchini email taklifisiz qo'shish.\n\nRuxsat `member.invite` — bu aynan «jamoaga odam qo'shish» huquqi;\nalohida kod kiritilmadi, chunki ikkala yo'l ham bir xil natijaga\n(yangi a'zolik) olib keladi va ularni ajratish matritsada \"taklif\nyubora oladi, lekin qo'sha olmaydi\" degan ma'nosiz holat yaratardi.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/{workspace_id}/members/{user_id}/": {
+            "patch": {
+                "operationId": "workspaces_members_partial_update",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "user_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "delete": {
+                "operationId": "workspaces_members_destroy",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "user_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/{workspace_id}/members/{user_id}/profile/": {
+            "get": {
+                "operationId": "workspaces_members_profile_retrieve",
+                "description": "`GET workspaces/{id}/members/{user_id}/profile/` — docs/API_CONTRACT.md §4.1.\n\n\"Bu odam nima qilyapti\" savoliga bitta javob: rol, qo'shilgan sana,\nstatistika va bo'limlar kesimi.\n\nXAVFSIZLIK (binding). Har bir raqam **chaqiruvchining** ko'rish doirasida\nhisoblanadi — `visible_spaces_q(caller_membership)`. Mehmon yopiq\nbo'limdagi vazifalarni ko'rmaydi, demak ular hisobga ham kirmaydi; aks\nholda profil sahifasi yopiq bo'lim mavjudligini raqam orqali oshkor\nqilardi. A'zo bo'lmagan `user_id` (yoki boshqa workspace a'zosi) → 404.\n\nUNUMDORLIK. Barcha agregatlar `annotate`/`aggregate` bilan olinadi:\na'zoga yoki bo'limga qarab so'rov ko'paymaydi (N+1 yo'q).",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "user_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/{workspace_id}/members/leave/": {
+            "post": {
+                "operationId": "workspaces_members_leave_create",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/{workspace_id}/my-permissions/": {
+            "get": {
+                "operationId": "workspaces_my_permissions_retrieve",
+                "description": "`GET workspaces/{id}/my-permissions/` — har qanday a'zo (guest ham).",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/{workspace_id}/role-permissions/": {
+            "get": {
+                "operationId": "workspaces_role_permissions_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "put": {
+                "operationId": "workspaces_role_permissions_update",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/{workspace_id}/role-permissions/reset/": {
+            "post": {
+                "operationId": "workspaces_role_permissions_reset_create",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/{workspace_id}/search/": {
+            "get": {
+                "operationId": "workspaces_search_retrieve",
+                "description": "`GET workspaces/{id}/search/?q=` — docs/API_CONTRACT.md §13.\n\nUNUMDORLIK (bu endpoint ilgari ish maydoni o'sishi bilan chiziqli edi).\nUch narsa qat'iy:\n\n1. **Sahifalash DB'da.** Ilgari to'rttala queryset to'liq Python\n   ro'yxatiga aylantirilib, keyin `StandardPagination` undan 50 tasini\n   kesib olardi: 50 000 mos vazifa 50 tasini qaytarish uchun 50 000 dict\n   quriladi. Endi `_SearchResults` faqat `COUNT(*)` va bitta\n   `LIMIT/OFFSET` kesmasini ishlatadi.\n2. **Prefetch.** `TaskSerializer` biriktirilganlar / teglar /\n   kuzatuvchilarni o'qiydi — prefetch'siz bu har bir vazifa uchun 4 ta\n   so'rov (`ListTasksView` buni to'g'ri qiladi, qidiruv qilmasdi).\n3. **Doira o'zgarmaydi.** `visible_spaces_q(membership)` — mehmon yopiq\n   bo'limni ham, undagi vazifalarni ham, hatto ularning NOMINI ham\n   ko'rmaydi. `count` sahifalashdan oldin filtrlangan (§13).\n\nFTS haqida (§13 \"PostgreSQL full-text\"). `Q(title__icontains=q)` —\noldingi joker belgili LIKE, uni hech qanday indeks tutolmaydi. To'g'ri\nyechim `SearchVector`ni GIN indeksli `SearchVectorField` ustida ishlatish,\nammo bu `apps/tasks/models.py` ga migratsiya talab qiladi (boshqa\nmuhandisning fayli); indekssiz FTS esa aynan shu sekvensial skanerlashni\nberadi, ustiga natija TO'PLAMINI ham o'zgartiradi (stemming + so'z\nchegarasi: \"Bosh\" endi \"Boshlash\" ni topmaydi), bu esa §13 dagi \"result\nsets must be equivalent\" bandini buzardi. Shuning uchun bu yerda ikkala\nDB uchun bir xil, chegaralangan `icontains` yo'li qoldi.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/{workspace_id}/spaces/": {
+            "get": {
+                "operationId": "workspaces_spaces_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "post": {
+                "operationId": "workspaces_spaces_create",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/{workspace_id}/tags/": {
+            "get": {
+                "operationId": "workspaces_tags_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "post": {
+                "operationId": "workspaces_tags_create",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/{workspace_id}/tasks/": {
+            "get": {
+                "operationId": "workspaces_tasks_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/{workspace_id}/tree/": {
+            "get": {
+                "operationId": "workspaces_tree_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/workspaces/{workspace_id}/user-search/": {
+            "get": {
+                "operationId": "workspaces_user_search_list",
+                "description": "`GET workspaces/{id}/user-search/?q=` — ro'yxatdan o'tgan foydalanuvchilar.\n\nXAVFSIZLIK. Bu yagona endpoint bo'lib, ish maydoni tashqarisidagi\nhisoblarni ko'rsatadi, shuning uchun uchta chegara qo'yilgan:\n\n1. **Ruxsat** — `member.invite` (standartda faqat admin/owner). Oddiy\n   a'zo yoki mehmon butun foydalanuvchilar bazasini varaqlay olmaydi.\n2. **Minimal so'rov** — kamida 2 belgi va bo'sh `q` bilan hech narsa\n   qaytmaydi, ya'ni \"hammasini ber\" so'rovi yo'q.\n3. **Chegara va throttle** — 10 ta natija, `invite` scope'idagi rate\n   limit (yaratish bilan bir xil byudjet).\n\nNomsiz hisoblar ham topilishi uchun email bo'yicha qidiriladi; natijadagi\n`email` `UserSummarySerializer` qoidalari bo'yicha maskalanadi.",
+                "summary": "Ro'yxatdan o'tgan foydalanuvchilarni qidirish",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "q",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Kamida 2 belgi."
+                    },
+                    {
+                        "in": "path",
+                        "name": "workspace_id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/UserSearchResult"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "KindEnum": {
+                "enum": [
+                    "member_added",
+                    "member_joined",
+                    "member_removed",
+                    "role_changed",
+                    "invitation_accepted",
+                    "task_assigned"
+                ],
+                "type": "string",
+                "description": "* `member_added` - Ish maydoniga qo'shildingiz\n* `member_joined` - Jamoaga yangi a'zo qo'shildi\n* `member_removed` - Ish maydonidan chiqarildingiz\n* `role_changed` - Rolingiz o'zgardi\n* `invitation_accepted` - Taklif qabul qilindi\n* `task_assigned` - Vazifa biriktirildi"
+            },
+            "Notification": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "readOnly": true
+                    },
+                    "workspace_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "readOnly": true,
+                        "nullable": true
+                    },
+                    "actor": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/UserSummary"
+                            }
+                        ],
+                        "readOnly": true
+                    },
+                    "kind": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/KindEnum"
+                            }
+                        ],
+                        "readOnly": true
+                    },
+                    "title": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "body": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "url": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "is_read": {
+                        "type": "boolean",
+                        "readOnly": true
+                    },
+                    "read_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true,
+                        "nullable": true
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true
+                    }
+                },
+                "required": [
+                    "actor",
+                    "body",
+                    "created_at",
+                    "id",
+                    "is_read",
+                    "kind",
+                    "read_at",
+                    "title",
+                    "url",
+                    "workspace_id"
+                ]
+            },
+            "NotificationReadAll": {
+                "type": "object",
+                "properties": {
+                    "updated": {
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                    "updated"
+                ]
+            },
+            "NotificationUnreadCount": {
+                "type": "object",
+                "properties": {
+                    "count": {
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                    "count"
+                ]
+            },
+            "ProfessionEnum": {
+                "enum": [
+                    "project_manager",
+                    "developer",
+                    "designer",
+                    "qa",
+                    "analyst",
+                    "marketing",
+                    "other"
+                ],
+                "type": "string",
+                "description": "* `project_manager` - Loyiha menejeri\n* `developer` - Dasturchi\n* `designer` - Dizayner\n* `qa` - Tester\n* `analyst` - Analitik\n* `marketing` - Marketolog\n* `other` - Boshqa"
+            },
+            "UserSearchResult": {
+                "type": "object",
+                "description": "`GET workspaces/{id}/user-search/?q=` bitta qatori.\n\n`is_member` / `has_pending_invitation` — UI tugmasi uchun: qo'shilgan\nodamni qayta qo'shishga urinish 409 beradi, shuning uchun holat\nro'yxatning o'zida ko'rinadi.",
+                "properties": {
+                    "user": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/UserSummary"
+                            }
+                        ],
+                        "readOnly": true
+                    },
+                    "is_member": {
+                        "type": "boolean",
+                        "readOnly": true
+                    },
+                    "role": {
+                        "type": "string",
+                        "readOnly": true,
+                        "nullable": true
+                    },
+                    "has_pending_invitation": {
+                        "type": "boolean",
+                        "readOnly": true
+                    }
+                },
+                "required": [
+                    "has_pending_invitation",
+                    "is_member",
+                    "role",
+                    "user"
+                ]
+            },
+            "UserSummary": {
+                "type": "object",
+                "description": "Har joyda ishlatiladigan qisqa foydalanuvchi obyekti.\n\n**AppSec O-1 — mehmonga email ko'rsatilmaydi.** `member.read` endi `guest`\nda ham bor (jamoa ro'yxati hammaga ochiq), lekin mehmon ko'pincha tashqi\nkontraktor yoki mijoz bo'ladi: roster + assignee + izoh muallifi orqali u\nbitta so'rovda butun jamoaning ish emaillarini yig'ib olardi — targeted\nphishing uchun tayyor ro'yxat. Shuning uchun **mehmon uchun begona `email`\n`null`** bo'ladi (maska emas, `null`: \"m***@acme.io\" ham domenni va nom\nuzunligini oshkor qiladi, ya'ni muammoni faqat kichraytirardi).\n\nIsm, avatar va kasb ochiq qoladi — talab aynan \"userlarga boshqa userlar\nko'rinsin\" edi, va ular phishing uchun email kabi to'g'ridan-to'g'ri\nfoydali emas.\n\nQoidalar:\n\n* chaqiruvchi mehmon **va** obyekt o'zi emas → `email is None`;\n* chaqiruvchi o'zini ko'rayotgan bo'lsa → o'z emaili doim ko'rinadi;\n* a'zolik aniqlanmasa (masalan `/me/`, WS broadcast) → maskalanmaydi.\n\nA'zolikni `apps.core.access.require_membership()` `request.user` ga\nyozib qo'yadi (`remember_membership`), shuning uchun view'larga qo'shimcha\n`context` uzatish shart emas. Aniq ko'rsatish kerak bo'lsa\n`context={\"membership\": ...}` ustunlik qiladi.",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "readOnly": true
+                    },
+                    "email": {
+                        "type": "string",
+                        "nullable": true,
+                        "readOnly": true
+                    },
+                    "full_name": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "avatar": {
+                        "type": "string",
+                        "format": "uri",
+                        "nullable": true,
+                        "readOnly": true
+                    },
+                    "avatar_color": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "profession": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/ProfessionEnum"
+                            }
+                        ],
+                        "readOnly": true
+                    }
+                },
+                "required": [
+                    "avatar",
+                    "avatar_color",
+                    "email",
+                    "full_name",
+                    "id",
+                    "profession"
+                ]
+            }
+        },
+        "securitySchemes": {
+            "jwtAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT"
+            }
+        }
+    }
+}

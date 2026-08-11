@@ -8,9 +8,9 @@ name: CI
 #                     satrlarining taqqoslanishi (collation) va `icontains`
 #                     semantikasi ikki backend'da bir xil emas — shuning uchun
 #                     ikkalasi ham tekshiriladi.
-#   frontend        — eslint + tsc + next build
+#   frontend        — eslint + tsc + vitest + vite build
 #   e2e             — Playwright HAQIQIY stack ustida (Postgres + Redis +
-#                     Daphne + next start). Ilgari bu umuman ishlamas edi:
+#                     Daphne + `vite preview`). Ilgari bu umuman ishlamas edi:
 #                     23 ta test faqat odam uchta jarayonni qo'lda ko'targanda
 #                     tekshirilardi.
 #   docker          — ikkala Dockerfile ham hali quriladimi
@@ -28,19 +28,33 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # ---------------------------------------------------------------- ratchets
-  # Ikkala son ham O'LCHANGAN, taxmin qilinmagan, va faqat YUQORIGA
-  # ko'tariladi: qizil natijani yashirish uchun pasaytirish darvozani
-  # o'chirish bilan barobar.
+  # ---------------------------------------------------------------- ratchet
+  # Bu yerda BITTA son bor va u XATO BUDJETI: o'lchangan, taxmin qilinmagan,
+  # va faqat PASAYADI. Ko'tarish — darvozani o'chirish bilan barobar, chunki
+  # budjet aynan "backlog o'smasin" uchun turibdi.
   #
-  # Coverage poli ATAYLAB bu yerda emas — u `backend/.coveragerc` dagi
-  # `fail_under` da (2026-08-10 da o'lchangan 83.04% → 83). Bitta manba
-  # bo'lgani uchun lokal `pytest --cov` va CI bir xil darvozani qo'llaydi.
+  # (Coverage poli boshqa yo'nalishda ishlaydi — u faqat KO'TARILADI — va
+  # ataylab bu yerda emas, `backend/.coveragerc` dagi `fail_under` da
+  # (2026-08-10 da o'lchangan 83.04% → 83). Bitta manba bo'lgani uchun lokal
+  # `pytest --cov` va CI bir xil darvozani qo'llaydi.)
   #
   # drf-spectacular: 2026-08-10 da 54 ta noyob xato ("unable to guess
   # serializer" — `serializer_class` siz APIView'lar). `--fail-on-warn` ni
   # hozir yoqib bo'lmaydi, lekin backlog o'sishi ham mumkin emas.
-  SCHEMA_UNIQUE_ERROR_BUDGET: "54"
+  # 2026-08-11: qiymat 54 edi, lekin o'sha paytda
+  # haqiqiy son 60 ga chiqib ketgan edi (ya'ni darvoza jimgina yiqilib
+  # turardi). Status modeli refaktoringi ikkita status-set view'ini olib
+  # tashladi va yangi endpointlar (§19 bildirishnomalar, user-search)
+  # `@extend_schema` bilan annotatsiya qilindi — shuning uchun ular NOLGA
+  # qo'shadi. Haqiqiy son: 58. Yangi APIView qo'shsangiz annotatsiya bering,
+  # bu raqamni ko'tarmang.
+  SCHEMA_UNIQUE_ERROR_BUDGET: "58"
+
+  # mypy: 2026-08-11 da o'lchangan. `apps/core` QAT'IY va 0 xato (alohida
+  # qadam), qolgan daraxt esa shu budjet ostida. Boshlang'ich 117 edi;
+  # `apps/core` tozalangach 46 ga tushdi. Yangi kodga tip yozing — bu
+  # raqamni ko'tarish darvozani o'chirish bilan barobar.
+  MYPY_ERROR_BUDGET: "46"
 
 jobs:
   # ==========================================================================
@@ -132,6 +146,45 @@ jobs:
         working-directory: backend
         run: ruff check --output-format=github .
 
+      # ------------------------------------------------------------- mypy
+      # Reja §10: "Typecheck: mypy (backend, bosqichma-bosqich)". Ikki qadam,
+      # chunki bitta son butun daraxtni bir xil qattiqlikda ushlab turolmaydi.
+      #
+      # `--follow-imports=silent` MAJBURIY: usiz `apps/core` tekshiruvi begona
+      # modullarning xatolarini ham sanaydi va qat'iy darvoza boshqa faylning
+      # holatiga bog'lanib qoladi.
+      - name: mypy — apps/core qat'iy (0 xato)
+        working-directory: backend
+        run: python -m mypy --follow-imports=silent apps/core
+
+      - name: mypy — butun backend (ratchet)
+        working-directory: backend
+        run: |
+          set -o pipefail
+          python -m mypy > mypy.log 2>&1 || true
+          python - <<'PY'
+          import os, re, sys, pathlib
+
+          log = pathlib.Path("mypy.log").read_text(encoding="utf-8", errors="replace")
+          match = re.search("Found ([0-9]+) errors? in", log)
+          found = int(match.group(1)) if match else 0   # "Success: no issues" -> 0
+          budget = int(os.environ["MYPY_ERROR_BUDGET"])
+
+          NL = chr(10)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+              fh.write("## mypy" + NL + NL)
+              fh.write("Xatolar: **%d** / budjet %d" % (found, budget) + NL + NL)
+              fh.write("```" + NL)
+              fh.write(NL.join(log.strip().splitlines()[-5:]) + NL)
+              fh.write("```" + NL)
+
+          if found > budget:
+              print("::error::mypy xatolari oshdi (%d > %d). Yangi kodga tip "
+                    "yozing, budjetni KO'TARMANG." % (found, budget))
+              sys.exit(1)
+          print("mypy ok - %d errors (budget %d)" % (found, budget))
+          PY
+
       # ---------------------------------------------------------- testlar
       - name: Testlar (pytest + coverage)
         working-directory: backend
@@ -218,6 +271,54 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      # --------------------------------------------------- OpenAPI drift-check
+      # Yuqoridagi "OpenAPI sxemasi (ratchet)" qadami boshqa maqsadga xizmat
+      # qiladi: u noyob OGOHLANTIRISH/XATO sonini SCHEMA_UNIQUE_ERROR_BUDGET
+      # bilan solishtiradi (backlog ratchet, YAML, faqat log artefakti).
+      # Bu qadam butunlay boshqa narsani tekshiradi: `api/openapi.json` —
+      # commit qilingan, MAZMUNI tekshiriladigan sxema artefakti — joriy
+      # kod bilan mos keladimi. Ikkalasi ATAYLAB yonma-yon turadi, biri
+      # ikkinchisini almashtirmaydi.
+      #
+      # Yagona vakolatli generatsiya buyrug'i `scripts/gen-openapi.sh` da —
+      # shu skript ishlatiladi, mantiq bu yerda takrorlanmaydi. Farq bo'lsa
+      # (yangi endpoint, o'zgargan serializer va h.k.) `api/openapi.json`
+      # eskirgan demakdir va uni commit qilish PR ning bir qismi bo'lishi
+      # kerak — xuddi `docs/API_CONTRACT.md` kabi.
+      - name: OpenAPI drift-check (api/openapi.json)
+        env:
+          PYTHON: python
+        run: |
+          set -o pipefail
+          bash scripts/gen-openapi.sh
+          # `git status --porcelain`, `git diff --quiet` EMAS: agar
+          # `api/openapi.json` hali umuman commit qilinmagan bo'lsa (repo
+          # uni track qilmaydi), `git diff` uni "yo'q" deb ko'radi va bu
+          # qadam noto'g'ri yashil bo'lardi. `git status` esa yangi
+          # (untracked) faylni ham, o'zgargan (tracked) faylni ham ko'radi.
+          if [ -n "$(git status --porcelain -- api/openapi.json)" ]; then
+            echo "::error::api/openapi.json joriy API bilan mos emas (drift topildi yoki hali commit qilinmagan)."
+            git --no-pager diff --stat -- api/openapi.json || true
+            git status --porcelain -- api/openapi.json
+            {
+              echo "## OpenAPI drift-check"
+              echo ""
+              echo "\`api/openapi.json\` eskirgan. Tuzatish:"
+              echo ""
+              echo '```'
+              echo "bash scripts/gen-openapi.sh"
+              echo "git add api/openapi.json"
+              echo '```'
+              echo ""
+              echo "va natijani shu PR bilan birga commit qiling."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "api/openapi.json joriy holatga mos — drift yo'q."
+          echo "## OpenAPI drift-check" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`api/openapi.json\` joriy holatga mos." >> "$GITHUB_STEP_SUMMARY"
+
   # ==========================================================================
   # Backend — dasturchi muhiti (Windows + SQLite)
   # ==========================================================================
@@ -288,16 +389,17 @@ jobs:
   # Frontend
   # ==========================================================================
   frontend:
-    name: Frontend (Next.js 16 / Node 22)
+    name: Frontend (React 19 · Vite · Node 22)
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
-    # frontend/.env.example bilan sinxron.
+    # frontend/.env.example bilan sinxron. ADR 0011 dan keyin nom fazosi
+    # `VITE_*` — Vite faqat shu prefiksni bundle ichiga kiritadi, `NEXT_PUBLIC_*`
+    # esa endi hech qayerda o'qilmaydi (jimgina `undefined` bo'lardi).
     env:
-      NEXT_PUBLIC_API_BASE_URL: "http://localhost:8000/api/v1"
-      NEXT_PUBLIC_WS_BASE_URL: "ws://localhost:8000"
-      NEXT_PUBLIC_API_MODE: "real"
-      NEXT_TELEMETRY_DISABLED: "1"
+      VITE_API_BASE_URL: "http://localhost:8000/api/v1"
+      VITE_WS_BASE_URL: "ws://localhost:8000"
+      VITE_API_MODE: "real"
 
     steps:
       - name: Checkout
@@ -318,14 +420,23 @@ jobs:
         working-directory: frontend
         run: npm run lint
 
-      # `next build` `frontend/e2e/**` ni ham tekshiradi, lekin tsc darvozasi
-      # alohida turadi — xato xabari build logining ichida emas, shu yerda
-      # ko'rinsin.
-      - name: Type-check (tsc --noEmit)
+      # tsc darvozasi build'dan ALOHIDA turadi: `npm run build` ichida ham
+      # `tsc -b` bor, lekin xato xabari Vite logining ichida ko'milib ketmasin.
+      # `npm run typecheck` → `frontend/package.json` (`tsc --noEmit`) — CI va
+      # lokal `.claude/hooks/tsc-check.sh` bitta buyruqni ishlatadi, ikkalasi
+      # sinxrondan chiqmasin.
+      - name: Type-check (npm run typecheck)
         working-directory: frontend
-        run: npx tsc --noEmit
+        run: npm run typecheck
 
-      - name: Build (next build)
+      # ADR 0013: vitest — komponent/hook/unit qatlami; Playwright quyida,
+      # haqiqiy stack ustida. Bu qadam E2E'dan oldin va undan ~30x tez yiqiladi,
+      # shuning uchun build'dan ham oldinda turadi.
+      - name: Testlar (vitest)
+        working-directory: frontend
+        run: npm test
+
+      - name: Build (vite build)
         working-directory: frontend
         run: npm run build
 
@@ -406,11 +517,11 @@ jobs:
       LOG_LEVEL: "INFO"
       PYTHONUNBUFFERED: "1"
       # --- frontend --------------------------------------------------------
-      # NEXT_PUBLIC_* build vaqtida bundle ichiga yoziladi.
-      NEXT_PUBLIC_API_BASE_URL: "http://localhost:8000/api/v1"
-      NEXT_PUBLIC_WS_BASE_URL: "ws://localhost:8000"
-      NEXT_PUBLIC_API_MODE: "real"
-      NEXT_TELEMETRY_DISABLED: "1"
+      # VITE_* build vaqtida bundle ichiga yoziladi (ADR 0011) — ya'ni bu
+      # qiymatlar `npm run build` qadamida o'qiladi, `vite preview` da emas.
+      VITE_API_BASE_URL: "http://localhost:8000/api/v1"
+      VITE_WS_BASE_URL: "ws://localhost:8000"
+      VITE_API_MODE: "real"
       # --- test ------------------------------------------------------------
       E2E_BASE_URL: "http://localhost:3000"
       E2E_API_BASE_URL: "http://localhost:8000/api/v1"
@@ -473,12 +584,17 @@ jobs:
             > "${GITHUB_WORKSPACE}/daphne.log" 2>&1 &
           echo $! > "${GITHUB_WORKSPACE}/daphne.pid"
 
-      - name: Frontend (next start) ni ko'tarish
+      # `vite preview` — `next start` ning o'rnini bosuvchi: qurilgan `dist/`
+      # ni tarqatadi va SPA fallback qiladi, ya'ni `/w/<id>/l/<id>` kabi chuqur
+      # havolalar to'g'ridan-to'g'ri ochilganda ham 200 qaytadi (E2E aynan
+      # shunday kiradi). `--strictPort` — port band bo'lsa jimgina boshqasiga
+      # o'tib ketmasin, aks holda testlar bo'sh sahifaga urilardi.
+      - name: Frontend (vite preview) ni ko'tarish
         working-directory: frontend
         run: |
-          nohup npx next start --hostname 0.0.0.0 --port 3000 \
-            > "${GITHUB_WORKSPACE}/next.log" 2>&1 &
-          echo $! > "${GITHUB_WORKSPACE}/next.pid"
+          nohup npx vite preview --host 0.0.0.0 --port 3000 --strictPort \
+            > "${GITHUB_WORKSPACE}/frontend.log" 2>&1 &
+          echo $! > "${GITHUB_WORKSPACE}/frontend.pid"
 
       - name: Ikkala server sog'lom bo'lishini kutish
         run: |
@@ -497,7 +613,7 @@ jobs:
             return 1
           }
           wait_for backend  http://localhost:8000/api/v1/health/ "${GITHUB_WORKSPACE}/daphne.log"
-          wait_for frontend http://localhost:3000/login          "${GITHUB_WORKSPACE}/next.log"
+          wait_for frontend http://localhost:3000/login          "${GITHUB_WORKSPACE}/frontend.log"
 
       - name: Playwright
         working-directory: frontend
@@ -521,7 +637,7 @@ jobs:
             echo "### Daphne"
             echo '```'; tail -n 80 "${GITHUB_WORKSPACE}/daphne.log" 2>/dev/null || echo "(log yo'q)"; echo '```'
             echo "### Next"
-            echo '```'; tail -n 80 "${GITHUB_WORKSPACE}/next.log" 2>/dev/null || echo "(log yo'q)"; echo '```'
+            echo '```'; tail -n 80 "${GITHUB_WORKSPACE}/frontend.log" 2>/dev/null || echo "(log yo'q)"; echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       # `trace: retain-on-failure` bo'lgani uchun yashil runda trace deyarli
@@ -535,7 +651,7 @@ jobs:
             frontend/playwright-report/
             frontend/test-results/
             daphne.log
-            next.log
+            frontend.log
           if-no-files-found: warn
           retention-days: 14
 

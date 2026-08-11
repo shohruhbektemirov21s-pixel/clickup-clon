@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Edit|Write(backend/**/*.py)",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/ruff-fix.sh\"",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "if": "Edit|Write(frontend/src/**/*.{ts,tsx})",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/tsc-check.sh\"",
+            "timeout": 120,
+            "async": true,
+            "asyncRewake": true
+          }
+        ]
+      }
+    ]
+  }
+}
