@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -8,9 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCreateTask } from "@/hooks/mutations";
 import { StatusDot } from "@/components/task/pickers";
-import { STATUS_TYPE_COLOR } from "@/lib/format";
+import { BOARD, COMMON, STATUS_COLOR } from "@/i18n/uz";
 import { cn } from "@/lib/utils";
-import type { Status, Task } from "@/types/api";
+import type { Task, TaskStatus } from "@/types/api";
 import { SortableBoardCard } from "@/components/board/board-card";
 
 /** Soft WIP ceiling — above this the header count turns amber and shows `20+`. */
@@ -19,6 +17,7 @@ export const WIP_LIMIT = 20;
 export function BoardColumn({
   listId,
   status,
+  label,
   tasks,
   count,
   dropIndex,
@@ -32,7 +31,9 @@ export function BoardColumn({
   onFocusHandled,
 }: {
   listId: string;
-  status: Status;
+  status: TaskStatus;
+  /** Serverdan kelgan o'zbekcha yorliq (§10.4). */
+  label: string;
   tasks: Task[];
   count: number;
   /** Index the lifted card would land at, or `null` when this is not the target. */
@@ -48,17 +49,17 @@ export function BoardColumn({
 }) {
   const [composing, setComposing] = React.useState(false);
   const { setNodeRef } = useDroppable({
-    id: `column:${status.id}`,
-    data: { type: "column", statusId: status.id },
+    id: `column:${status}`,
+    data: { type: "column", status },
   });
 
   const overWip = count > WIP_LIMIT;
-  const accent = status.color || STATUS_TYPE_COLOR[status.type];
+  const accent = STATUS_COLOR[status];
   const wipHint = `Ustunda ${count} ta vazifa — tavsiya etilgan chegara ${WIP_LIMIT} ta`;
 
   return (
     <section
-      aria-label={`${status.name} ustuni, ${count} ta vazifa`}
+      aria-label={`${label} ustuni, ${count} ta vazifa`}
       className={cn(
         "flex max-h-full w-72 shrink-0 flex-col overflow-hidden rounded-lg bg-muted/50 transition-colors",
         isDropTarget && "bg-primary/5 ring-1 ring-primary/30",
@@ -69,7 +70,7 @@ export function BoardColumn({
       <header className="flex shrink-0 items-center gap-2 px-3 py-2.5">
         <StatusDot status={status} />
         <span className="min-w-0 truncate text-xs font-semibold tracking-wide uppercase">
-          {status.name}
+          {label}
         </span>
         <span
           className={cn(
@@ -94,7 +95,7 @@ export function BoardColumn({
             variant="ghost"
             size="icon-xs"
             className="ml-auto shrink-0 text-muted-foreground"
-            aria-label={`${status.name} ustuniga vazifa qo'shish`}
+            aria-label={`${label} ustuniga vazifa qo'shish`}
             onClick={() => setComposing(true)}
           >
             <Plus />
@@ -104,7 +105,7 @@ export function BoardColumn({
 
       <div ref={setNodeRef} className="flex min-h-16 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2">
         {composing ? (
-          <ColumnComposer listId={listId} statusId={status.id} onDone={() => setComposing(false)} />
+          <ColumnComposer listId={listId} status={status} onDone={() => setComposing(false)} />
         ) : null}
 
         <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
@@ -133,7 +134,7 @@ export function BoardColumn({
 
         {tasks.length === 0 && !composing ? (
           <EmptyColumn
-            statusName={status.name}
+            statusName={label}
             isDragActive={isDragActive}
             isDropTarget={isDropTarget}
             canCreate={canCreate}
@@ -148,7 +149,7 @@ export function BoardColumn({
             className="justify-start text-muted-foreground"
             onClick={() => setComposing(true)}
           >
-            <Plus /> Vazifa qo&apos;shish
+            <Plus /> {COMMON.addTask}
           </Button>
         ) : null}
       </div>
@@ -179,22 +180,22 @@ function EmptyColumn({
             : "border-primary/40 text-muted-foreground",
         )}
       >
-        Vazifani shu yerga tashlang
+        {BOARD.dropHere}
       </div>
     );
   }
 
   return (
     <div className="flex shrink-0 flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-5 text-center">
-      <p className="text-xs font-medium text-muted-foreground">Bu ustun bo&apos;sh</p>
+      <p className="text-xs font-medium text-muted-foreground">{BOARD.emptyColumnTitle}</p>
       <p className="text-[11px] text-muted-foreground/80">
         {canCreate
-          ? `«${statusName}» holatidagi vazifalar shu yerda ko'rinadi.`
-          : "Hozircha bu holatda vazifa yo'q."}
+          ? BOARD.emptyColumnHint(statusName)
+          : BOARD.emptyColumnReadOnly}
       </p>
       {canCreate ? (
         <Button variant="outline" size="sm" className="mt-1" onClick={onCompose}>
-          <Plus /> Vazifa qo&apos;shish
+          <Plus /> {COMMON.addTask}
         </Button>
       ) : null}
     </div>
@@ -203,11 +204,11 @@ function EmptyColumn({
 
 function ColumnComposer({
   listId,
-  statusId,
+  status,
   onDone,
 }: {
   listId: string;
-  statusId: string;
+  status: TaskStatus;
   onDone: () => void;
 }) {
   const [title, setTitle] = React.useState("");
@@ -216,7 +217,7 @@ function ColumnComposer({
   const submit = () => {
     const trimmed = title.trim();
     if (!trimmed) return;
-    createTask.mutate({ title: trimmed, status_id: statusId });
+    createTask.mutate({ title: trimmed, status });
     setTitle("");
   };
 

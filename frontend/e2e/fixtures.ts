@@ -68,11 +68,14 @@ export interface ApiWorkspace {
   my_role: string;
 }
 
+/** Kontrakt §9: holat — to'rtta qat'iy koddan biri, uuid EMAS. */
+export type ApiTaskStatus = "todo" | "in_progress" | "review" | "done";
+
 export interface ApiTask {
   id: string;
   list_id: string;
   title: string;
-  status_id: string;
+  status: ApiTaskStatus;
 }
 
 interface TreeList {
@@ -282,7 +285,13 @@ export async function firstListId(
   throw new Error("Ro'yxat topilmadi — `seed_demo` bajarilganmi?");
 }
 
-/** API orqali vazifa yaratadi. Nomi avtomatik `E2E ` prefiksini oladi. */
+/**
+ * API orqali vazifa yaratadi. Nomi avtomatik `E2E ` prefiksini oladi.
+ *
+ * `extra` ga holat berish kerak bo'lsa — `{ status: "in_progress" }`, ya'ni
+ * KOD; uuid qabul qiluvchi eski maydon endi yo'q. Berilmasa server `todo`
+ * qo'yadi.
+ */
 export async function createTask(
   token: string,
   listId: string,
@@ -510,7 +519,7 @@ export async function login(page: Page, user: DemoUser): Promise<void> {
     .catch(() => false);
   if (left) return;
 
-  // Next.js ning `__next-route-announcer__` elementi ham role="alert" —
+  // Sahifadagi boshqa `role="alert"` elementlari aralashmasin —
   // shuning uchun aynan formadagi banner o'qiladi.
   const banner = await page
     .locator('form p[role="alert"]')

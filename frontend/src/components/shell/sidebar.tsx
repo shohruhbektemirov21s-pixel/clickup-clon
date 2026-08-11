@@ -1,8 +1,6 @@
-"use client";
-
 import * as React from "react";
-import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { Link } from "@/components/ui/link";
+import { useNavigate, useParams } from "react-router";
 import {
   ChevronDown,
   ChevronRight,
@@ -24,7 +22,8 @@ import { InviteMemberDialog } from "@/components/workspace/invite-member-dialog"
 import type { Member, MyPermissions, TreeFolder, TreeList, TreeSpace } from "@/types/api";
 import { initials } from "@/lib/format";
 import { can, canInSpace } from "@/lib/permissions";
-import { ROLE_LABEL, ROLE_RANK } from "@/lib/roles";
+import { COMMON, ROLE_LABEL, SIDEBAR } from "@/i18n/uz";
+import { ROLE_RANK } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 
 type CreateTarget =
@@ -75,7 +74,7 @@ export function Sidebar({ workspaceId }: { workspaceId: string }) {
   const { data: my } = useMyPermissions(workspaceId);
   const [createTarget, setCreateTarget] = React.useState<CreateTarget | null>(null);
   const params = useParams<{ listId?: string }>();
-  const router = useRouter();
+  const navigate = useNavigate();
   const activeListId = params?.listId;
 
   // Bo'lim hali yo'q — bu yagona chinakam ish maydoni darajasidagi kod.
@@ -84,7 +83,7 @@ export function Sidebar({ workspaceId }: { workspaceId: string }) {
 
   /** After deleting the container holding the open list, fall back to home. */
   const leaveIfActive = (containsActive: boolean) => {
-    if (containsActive) router.push(`/w/${workspaceId}`);
+    if (containsActive) navigate(`/w/${workspaceId}`);
   };
 
   return (
@@ -92,13 +91,13 @@ export function Sidebar({ workspaceId }: { workspaceId: string }) {
       <div className="flex-1 overflow-y-auto p-2">
         <div className="mb-1 flex items-center justify-between px-2 pt-1">
           <span className="text-xs font-semibold tracking-wide text-muted-foreground">
-            BO&apos;LIMLAR
+            {SIDEBAR.spacesHeading}
           </span>
           {canCreateSpace ? (
             <Button
               variant="ghost"
               size="icon-xs"
-              aria-label="Yangi bo'lim"
+              aria-label={SIDEBAR.newSpaceAria}
               onClick={() => setCreateTarget({ kind: "space" })}
             >
               <Plus />
@@ -110,14 +109,14 @@ export function Sidebar({ workspaceId }: { workspaceId: string }) {
           <TreeSkeleton />
         ) : isError ? (
           <div className="px-2 py-4 text-sm text-muted-foreground">
-            Bo&apos;limlarni yuklab bo&apos;lmadi.{" "}
+            {SIDEBAR.spacesFailed}{" "}
             <button className="text-primary hover:underline" onClick={() => refetch()}>
-              Qayta urinish
+              {COMMON.retry}
             </button>
           </div>
         ) : tree && tree.spaces.length === 0 ? (
           <div className="px-2 py-4 text-sm text-muted-foreground">
-            Hozircha bo&apos;limlar yo&apos;q.
+            {SIDEBAR.spacesEmpty}
             {canCreateSpace ? (
               <Button
                 variant="outline"
@@ -125,12 +124,10 @@ export function Sidebar({ workspaceId }: { workspaceId: string }) {
                 className="mt-2 w-full"
                 onClick={() => setCreateTarget({ kind: "space" })}
               >
-                Bo&apos;lim yaratish
+                {SIDEBAR.createSpace}
               </Button>
             ) : (
-              <p className="mt-1 text-xs">
-                Bo&apos;lim yaratish uchun administratorga murojaat qiling.
-              </p>
+              <p className="mt-1 text-xs">{SIDEBAR.createSpaceDenied}</p>
             )}
           </div>
         ) : (
@@ -282,9 +279,7 @@ function SpaceNode({
             />
           ))}
           {space.folders.length === 0 && space.lists.length === 0 ? (
-            <p className="py-1 pl-8 text-xs text-muted-foreground">
-              Bu yerda ro&apos;yxatlar yo&apos;q
-            </p>
+            <p className="py-1 pl-8 text-xs text-muted-foreground">{SIDEBAR.noLists}</p>
           ) : null}
         </div>
       ) : null}
@@ -489,7 +484,7 @@ function TeamSection({
             ))}
           </div>
         ) : members.length === 0 ? (
-          <p className="px-2 py-1 text-xs text-muted-foreground">A&apos;zolar yo&apos;q</p>
+          <p className="px-2 py-1 text-xs text-muted-foreground">{SIDEBAR.noMembers}</p>
         ) : (
           <ul className="max-h-48 overflow-y-auto">
             {members.map((member) => (

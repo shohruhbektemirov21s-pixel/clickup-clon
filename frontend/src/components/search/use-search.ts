@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * Qidiruv so'rovi uchun umumiy klient mantiq: 250 ms debounce, "kamida 2 belgi"
  * qoidasi va miltillashga qarshi "oldingi natijani saqlab turish".

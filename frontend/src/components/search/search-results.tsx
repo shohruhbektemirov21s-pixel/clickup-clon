@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * S8 — to'liq qidiruv natijalari sahifasi (`/w/{id}/search?q=`).
  *
@@ -10,8 +8,8 @@
  */
 
 import * as React from "react";
-import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { Link } from "@/components/ui/link";
+import { useNavigate, useSearchParams } from "react-router";
 import {
   Folder as FolderIcon,
   List as ListIcon,
@@ -26,8 +24,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PriorityFlag, StatusDot } from "@/components/task/pickers";
-import { useMembers, useStatusesByListIds, useWorkspaceTree } from "@/hooks/queries";
+import { useMembers, useWorkspaceTree } from "@/hooks/queries";
 import { formatDueDate, initials, isOverdue, PRIORITY_META } from "@/lib/format";
+import { COMMON, SEARCH, STATUS_LABEL } from "@/i18n/uz";
 import { cn } from "@/lib/utils";
 import { Highlight } from "@/components/search/highlight";
 import {
@@ -45,11 +44,11 @@ import {
   taskPath,
 } from "@/components/search/tree-index";
 import { filterMembers, groupResults, MIN_QUERY_LENGTH, useSearch } from "@/components/search/use-search";
-import type { Member, Status, Task } from "@/types/api";
+import type { Member, Task } from "@/types/api";
 
 export function SearchResults({ workspaceId }: { workspaceId: string }) {
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const urlQuery = searchParams.get("q") ?? "";
 
   const [value, setValue] = React.useState(urlQuery);
@@ -75,8 +74,8 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
     const next = debouncedQuery
       ? `/w/${workspaceId}/search?q=${encodeURIComponent(debouncedQuery)}`
       : `/w/${workspaceId}/search`;
-    router.replace(next, { scroll: false });
-  }, [debouncedQuery, router, workspaceId]);
+    navigate(next, { replace: true });
+  }, [debouncedQuery, navigate, workspaceId]);
 
   const { data: tree } = useWorkspaceTree(workspaceId);
   const index = React.useMemo(() => buildTreeIndex(tree), [tree]);
@@ -87,12 +86,6 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
     () => filterMembers(membersPage?.results ?? [], resultQuery, 10),
     [membersPage, resultQuery],
   );
-
-  const listIds = React.useMemo(
-    () => Array.from(new Set(groups.tasks.map((task) => task.list_id))),
-    [groups.tasks],
-  );
-  const { statusById } = useStatusesByListIds(listIds);
 
   const total = groups.total + members.length;
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -109,8 +102,8 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
             autoFocus
             value={value}
             onChange={(event) => setValue(event.target.value)}
-            placeholder="Vazifa, ro'yxat, bo'lim yoki a'zoni qidiring…"
-            aria-label="Ish maydoni bo'yicha qidirish"
+            placeholder={SEARCH.inputPlaceholder}
+            aria-label={SEARCH.pageSearchAria}
             className="h-11 pr-24 pl-9 text-base"
           />
           <div className="absolute top-1/2 right-2 flex -translate-y-1/2 items-center gap-1.5">
@@ -140,17 +133,15 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
           <ShortQueryState workspaceId={workspaceId} hasText={value.trim().length > 0} />
         ) : search.isError ? (
           <div className="rounded-lg border border-danger/30 bg-danger/5 p-4 text-sm">
-            <p className="font-medium text-danger">Qidiruv amalga oshmadi.</p>
-            <p className="mt-1 text-muted-foreground">
-              Tarmoqni tekshirib, qayta urinib ko&apos;ring.
-            </p>
+            <p className="font-medium text-danger">{SEARCH.failed}</p>
+            <p className="mt-1 text-muted-foreground">{SEARCH.errorHint}</p>
             <Button
               variant="outline"
               size="sm"
               className="mt-3"
               onClick={() => search.refetch()}
             >
-              Qayta urinish
+              {COMMON.retry}
             </Button>
           </div>
         ) : search.isInitialLoading ? (
@@ -160,23 +151,22 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
         ) : (
           <div className={cn("space-y-6", search.isStale && "opacity-60 transition-opacity")}>
             <p className="text-sm text-muted-foreground" aria-live="polite">
-              «{resultQuery}» bo&apos;yicha {total} ta natija
+              {SEARCH.resultCount(resultQuery, total)}
             </p>
 
-            <ResultGroup title="Vazifalar" count={groups.tasks.length}>
+            <ResultGroup title={SEARCH.groupTasks} count={groups.tasks.length}>
               {groups.tasks.map((task) => (
                 <TaskResultRow
                   key={task.id}
                   workspaceId={workspaceId}
                   task={task}
-                  status={statusById.get(task.status_id)}
                   path={taskPath(index, task.list_id)}
                   query={resultQuery}
                 />
               ))}
             </ResultGroup>
 
-            <ResultGroup title="Ro'yxatlar" count={groups.lists.length}>
+            <ResultGroup title={SEARCH.groupLists} count={groups.lists.length}>
               {groups.lists.map((list) => (
                 <ResultRow
                   key={list.id}
@@ -204,7 +194,7 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
               ))}
             </ResultGroup>
 
-            <ResultGroup title="Jildlar" count={groups.folders.length}>
+            <ResultGroup title={SEARCH.groupFolders} count={groups.folders.length}>
               {groups.folders.map((folder) => {
                 const indexed = index.folders.get(folder.id);
                 return (
@@ -220,7 +210,7 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
               })}
             </ResultGroup>
 
-            <ResultGroup title="Bo'limlar" count={groups.spaces.length}>
+            <ResultGroup title={SEARCH.groupSpaces} count={groups.spaces.length}>
               {groups.spaces.map((space) => (
                 <ResultRow
                   key={space.id}
@@ -239,7 +229,7 @@ export function SearchResults({ workspaceId }: { workspaceId: string }) {
               ))}
             </ResultGroup>
 
-            <ResultGroup title="A'zolar" count={members.length}>
+            <ResultGroup title={SEARCH.groupMembers} count={members.length}>
               {members.map((member) => (
                 <MemberResultRow
                   key={member.user.id}
@@ -289,18 +279,16 @@ const ROW_CLASS =
 function TaskResultRow({
   workspaceId,
   task,
-  status,
   path,
   query,
 }: {
   workspaceId: string;
   task: Task;
-  status?: Status;
   path: string;
   query: string;
 }) {
   const href = taskHref(workspaceId, task.list_id, task.id);
-  const overdue = isOverdue(task.due_date, status?.type);
+  const overdue = isOverdue(task.due_date, task.status);
 
   return (
     <li>
@@ -329,12 +317,10 @@ function TaskResultRow({
             {PRIORITY_META[task.priority].label}
           </span>
         ) : null}
-        {status ? (
-          <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-            <StatusDot status={status} />
-            <span className="max-sm:hidden">{status.name}</span>
-          </span>
-        ) : null}
+        <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <StatusDot status={task.status} />
+          <span className="max-sm:hidden">{STATUS_LABEL[task.status]}</span>
+        </span>
         <span
           className={cn(
             "w-20 shrink-0 text-right text-xs max-sm:hidden",
@@ -386,7 +372,7 @@ function ResultRow({
           {body}
         </Link>
       ) : (
-        <div className={cn(ROW_CLASS, "cursor-default")} title="Ichida ro'yxat yo'q">
+        <div className={cn(ROW_CLASS, "cursor-default")} title={SEARCH.noListInside}>
           {body}
         </div>
       )}
@@ -449,11 +435,12 @@ function ShortQueryState({
         <Search className="size-6 text-muted-foreground" />
         <p className="text-sm font-medium">
           {hasText
-            ? `Kamida ${MIN_QUERY_LENGTH} belgi kiriting`
-            : "Vazifa, ro'yxat, bo'lim yoki a'zoni qidiring"}
+            ? SEARCH.tooShortTitle(MIN_QUERY_LENGTH)
+            : SEARCH.idlePagePrompt}
         </p>
         <p className="text-xs text-muted-foreground">
-          Istalgan joydan <Kbd>Ctrl</Kbd> + <Kbd>K</Kbd> bilan tezkor qidiruvni oching.
+          {SEARCH.shortcutHintPrefix} <Kbd>Ctrl</Kbd> + <Kbd>K</Kbd>{" "}
+          {SEARCH.shortcutHintSuffix}
         </p>
       </div>
 
@@ -495,13 +482,11 @@ function NoResultsState({ query }: { query: string }) {
   return (
     <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed p-10 text-center">
       <Search className="size-6 text-muted-foreground" />
-      <p className="text-sm font-medium">
-        «{query}» bo&apos;yicha hech narsa topilmadi
-      </p>
+      <p className="text-sm font-medium">{SEARCH.emptyTitle(query)}</p>
       <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
-        <li>Imloni tekshiring.</li>
-        <li>Qisqaroq yoki boshqa so&apos;z bilan urinib ko&apos;ring.</li>
-        <li>Arxivlangan va o&apos;chirilgan yozuvlar qidiruvga tushmaydi.</li>
+        <li>{SEARCH.tipSpelling}</li>
+        <li>{SEARCH.tipShorter}</li>
+        <li>{SEARCH.tipArchived}</li>
       </ul>
     </div>
   );

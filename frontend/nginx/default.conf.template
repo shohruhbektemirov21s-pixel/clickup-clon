@@ -1,0 +1,59 @@
+# ---------------------------------------------------------------------------
+# UzWork frontend — statik SPA uchun nginx konfiguratsiyasi (ADR 0011).
+# ---------------------------------------------------------------------------
+#
+# `${API_ORIGIN}` va `${WS_ORIGIN}` image QURILAYOTGANDA to'ldiriladi
+# (`frontend/Dockerfile`), chunki `VITE_*` qiymatlari baribir bundle ichiga
+# build vaqtida inline bo'ladi — konteynerni ishga tushirishda ularni
+# almashtirib bo'lmaydi.
+#
+# XAVFSIZLIK SARLAVHALARI: quyidagi ro'yxat `frontend/security-headers.ts`
+# ning prod chiqishi bilan AYNAN bir xil bo'lishi shart. Ikkalasini
+# `src/test/security-headers.test.ts` solishtiradi — sarlavhani faqat shu
+# ikkala joyda birga o'zgartiring.
+#
+# `add_header` faqat SERVER darajasida turibdi: agar biror `location` ichida
+# `add_header` paydo bo'lsa, nginx yuqori darajadagi HAMMA `add_header` larni
+# o'sha location uchun bekor qiladi va sarlavhalar jimgina yo'qoladi. Shuning
+# uchun location'larda faqat `expires` ishlatilgan.
+
+server {
+    # 3000 — docker-compose va E2E shu portga bog'langan.
+    listen 3000;
+    listen [::]:3000;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Framework nomini oshkor qilmaymiz (Next'dagi `poweredByHeader: false`).
+    server_tokens off;
+
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml font/woff2;
+
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ${API_ORIGIN}; font-src 'self' data:; connect-src 'self' ${API_ORIGIN} ${WS_ORIGIN}; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; worker-src 'self' blob:; manifest-src 'self'; upgrade-insecure-requests" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+    add_header Cross-Origin-Opener-Policy "same-origin" always;
+
+    # Vite chiqargan fayl nomlari kontent-hash bilan — abadiy keshlash xavfsiz.
+    location /assets/ {
+        expires 1y;
+        access_log off;
+        try_files $uri =404;
+    }
+
+    # SPA fallback: har qanday manzil `index.html` ni oladi va marshrutni
+    # React Router hal qiladi (`/w/…`, `/invite/…` sahifa yangilanganda ham
+    # ishlashi shu qatorga bog'liq).
+    location / {
+        expires -1;
+        try_files $uri /index.html;
+    }
+}

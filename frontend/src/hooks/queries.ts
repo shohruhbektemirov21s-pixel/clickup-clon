@@ -1,16 +1,10 @@
-"use client";
-
 import * as React from "react";
-import {
-  keepPreviousData,
-  useQueries,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { keys } from "@/lib/keys";
 import { useAuthStore } from "@/stores/auth-store";
 import type {
+  AppNotification,
   ChatMessage,
   Comment,
   Conversation,
@@ -26,16 +20,22 @@ import type {
   RolePermissionMatrix,
   SearchResponse,
   SpaceMember,
-  Status,
-  StatusSet,
   Tag,
   Task,
   TaskAttachment,
   User,
+  UserSearchResponse,
   Workspace,
   WorkspaceActivity,
   WorkspaceTree,
 } from "@/types/api";
+
+/**
+ * Serverning `max_page_size` (§1.5). Bundan kattasini so'rash `400
+ * validation_error` beradi, shuning uchun "hammasini bitta so'rovda" degan
+ * joylar shu chegara bilan cheklanadi.
+ */
+const MAX_PAGE_SIZE = 100;
 
 function useAuthed() {
   return useAuthStore((s) => s.status === "authenticated");
@@ -87,7 +87,7 @@ export function useMembers(workspaceId: string) {
     queryKey: keys.members(workspaceId),
     queryFn: () =>
       api.get<Paginated<Member>>(`workspaces/${workspaceId}/members/`, {
-        page_size: 200,
+        page_size: MAX_PAGE_SIZE,
       }),
     enabled: enabled && !!workspaceId,
     staleTime: 60_000,
@@ -151,7 +151,7 @@ export function useMemberTasks(workspaceId: string, userId: string, canRead = tr
       api.get<Paginated<Task>>(`workspaces/${workspaceId}/tasks/`, {
         assignee: userId,
         ordering: "due_date",
-        page_size: 200,
+        page_size: MAX_PAGE_SIZE,
       }),
     enabled: enabled && !!workspaceId && !!userId && canRead,
     staleTime: 30_000,
@@ -173,7 +173,7 @@ export function useTags(workspaceId: string) {
   return useQuery({
     queryKey: keys.tags(workspaceId),
     queryFn: () =>
-      api.get<Paginated<Tag>>(`workspaces/${workspaceId}/tags/`, { page_size: 200 }),
+      api.get<Paginated<Tag>>(`workspaces/${workspaceId}/tags/`, { page_size: MAX_PAGE_SIZE }),
     enabled: enabled && !!workspaceId,
     staleTime: 60_000,
   });
@@ -189,16 +189,13 @@ export function useList(listId: string) {
   });
 }
 
-export function useStatusSet(listId: string) {
-  const enabled = useAuthed();
-  return useQuery({
-    queryKey: keys.statusSet(listId),
-    queryFn: () => api.get<StatusSet>(`lists/${listId}/status-set/`),
-    enabled: enabled && !!listId,
-    staleTime: 60_000,
-  });
-}
-
+/**
+ * Doska/ro'yxat uchun guruhlangan javob (§10.4).
+ *
+ * Javob DOIM to'rtta guruhni `STATUS_ORDER` tartibida qaytaradi — ustunlar
+ * shu yerdan chiziladi, klient ularni o'zi yasamaydi va endi hech qanday
+ * "status set" so'rovi yo'q.
+ */
 export function useGroupedTasks(listId: string) {
   const enabled = useAuthed();
   return useQuery({
@@ -225,7 +222,7 @@ export function useMyTasks(workspaceId: string) {
       api.get<Paginated<Task>>(`workspaces/${workspaceId}/tasks/`, {
         assignee: "me",
         ordering: "due_date",
-        page_size: 200,
+        page_size: MAX_PAGE_SIZE,
       }),
     enabled: enabled && !!workspaceId,
     staleTime: 30_000,
@@ -246,34 +243,10 @@ export function useWorkspaceTasks(workspaceId: string, canRead = true) {
     queryKey: keys.workspaceTasks(workspaceId, "all"),
     queryFn: () =>
       api.get<Paginated<Task>>(`workspaces/${workspaceId}/tasks/`, {
-        page_size: 200,
+        page_size: MAX_PAGE_SIZE,
       }),
     enabled: enabled && !!workspaceId && canRead,
     staleTime: 60_000,
-  });
-}
-
-/**
- * Status sets for several lists at once (dashboard rows carry only a
- * `status_id`). Shares `keys.statusSet` with `useStatusSet`, so list pages and
- * the dashboard reuse the same cache entries.
- */
-export function useStatusesByListIds(listIds: string[]) {
-  const enabled = useAuthed();
-  return useQueries({
-    queries: listIds.map((listId) => ({
-      queryKey: keys.statusSet(listId),
-      queryFn: () => api.get<StatusSet>(`lists/${listId}/status-set/`),
-      enabled: enabled && !!listId,
-      staleTime: 60_000,
-    })),
-    combine: (results) => {
-      const byId = new Map<string, Status>();
-      for (const result of results) {
-        for (const status of result.data?.statuses ?? []) byId.set(status.id, status);
-      }
-      return { statusById: byId, isPending: results.some((r) => r.isPending) };
-    },
   });
 }
 
@@ -416,7 +389,7 @@ export function useSpaceMembers(spaceId: string | null) {
   return useQuery({
     queryKey: keys.spaceMembers(spaceId ?? ""),
     queryFn: () =>
-      api.get<Paginated<SpaceMember>>(`spaces/${spaceId}/members/`, { page_size: 200 }),
+      api.get<Paginated<SpaceMember>>(`spaces/${spaceId}/members/`, { page_size: MAX_PAGE_SIZE }),
     enabled: enabled && !!spaceId,
     retry: false,
     staleTime: 30_000,
@@ -469,6 +442,81 @@ export function useWorkspaceSearch(workspaceId: string, q: string) {
     }),
     enabled: enabled && !!workspaceId && q.trim().length >= 2,
     placeholderData: keepPreviousData,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// §19 Bildirishnomalar
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET notifications/?workspace=` — qo'ng'iroqcha menyusi va
+ * `/w/{id}/notifications` sahifasi shu bitta kesh yozuvidan o'qiydi.
+ *
+ * Ish maydoni bo'yicha filtrlanadi: qo'ng'iroqcha ish maydoni layout'ida
+ * turadi, ya'ni «boshqa ish maydonidagi voqea» bu yerda shovqin bo'lardi.
+ * Barcha ish maydonlari kerak bo'lsa `workspaceId` ga `null` beriladi.
+ *
+ * Sahifa hajmi QAT'IY: menyu ham, sahifa ham AYNAN bir kesh yozuvidan
+ * o'qiydi, menyu esa birinchi bir nechtasini o'zi kesib oladi. Har biri
+ * o'z `page_size` i bilan so'raganda kalit bir xil, javob esa har xil
+ * bo'lardi — ikkisi bir-birining ma'lumotini almashtirib turardi.
+ *
+ * `enabled` — qo'ng'iroqcha ro'yxatni faqat menyu ochilganda so'raydi;
+ * nishon uchun arzon `unread-count/` yetarli.
+ */
+const NOTIFICATIONS_PAGE_SIZE = 50;
+
+export function useNotifications(workspaceId: string | null, enabled = true) {
+  const authed = useAuthed();
+  return useQuery({
+    queryKey: keys.notifications(workspaceId),
+    queryFn: () =>
+      api.get<Paginated<AppNotification>>("notifications/", {
+        workspace: workspaceId ?? undefined,
+        page_size: NOTIFICATIONS_PAGE_SIZE,
+      }),
+    enabled: authed && enabled,
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * O'qilmaganlar soni — nishon uchun alohida, ARZON so'rov. Ro'yxatning
+ * o'zi faqat menyu ochilganda kerak, nishon esa doim ekranda turadi.
+ * `notification.created` freymi ikkalasini ham bekor qiladi.
+ */
+export function useUnreadNotificationCount(workspaceId: string | null) {
+  const enabled = useAuthed();
+  return useQuery({
+    queryKey: keys.notificationsUnread(workspaceId),
+    queryFn: () =>
+      api.get<{ count: number }>("notifications/unread-count/", {
+        workspace: workspaceId ?? undefined,
+      }),
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * `GET workspaces/{id}/user-search/?q=` — ro'yxatdan o'tgan foydalanuvchilar.
+ * Server 2 belgidan qisqa so'rovga bo'sh javob beradi; shu shart bu yerda ham
+ * takrorlanadi, ya'ni bir harf yozilganda so'rov umuman ketmaydi.
+ * `canSearch` — `member.invite`; usiz so'rov 403 bo'lardi.
+ */
+export function useUserSearch(workspaceId: string, q: string, canSearch: boolean) {
+  const enabled = useAuthed();
+  const query = q.trim();
+  return useQuery({
+    queryKey: keys.userSearch(workspaceId, query),
+    queryFn: () =>
+      api.get<UserSearchResponse>(`workspaces/${workspaceId}/user-search/`, {
+        q: query,
+      }),
+    enabled: enabled && !!workspaceId && canSearch && query.length >= 2,
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
   });
 }
 

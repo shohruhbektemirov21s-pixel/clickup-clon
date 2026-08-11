@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "target": "ES2017",
+    "target": "ES2022",
     "lib": ["dom", "dom.iterable", "esnext"],
     "allowJs": true,
     "skipLibCheck": true,
@@ -11,24 +11,26 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
+    // `vite.config.ts` `./security-headers.ts` ni kengaytmasi bilan import
+    // qiladi — Vite'ning native config loader'i (`type: "module"`) shuni
+    // talab qiladi. Faqat `noEmit` rejimida ruxsat etiladi.
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "incremental": true,
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ],
+    // `vite/client` — `import.meta.env` va asset importlari; `node` esa
+    // `vite.config.ts`, `playwright.config.ts` va `e2e/**` uchun (ular
+    // `process.env` va `node:path` bilan ishlaydi).
+    "types": ["vite/client", "node"],
     "paths": {
       "@/*": ["./src/*"]
     }
   },
   "include": [
-    "next-env.d.ts",
-    "**/*.ts",
-    "**/*.tsx",
-    ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts",
-    "**/*.mts"
+    "src",
+    "e2e",
+    "vite.config.ts",
+    "playwright.config.ts",
+    "security-headers.ts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", "dist"]
 }

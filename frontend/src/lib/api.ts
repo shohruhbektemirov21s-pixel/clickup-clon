@@ -1,7 +1,6 @@
-"use client";
-
 import { API_BASE_URL } from "@/lib/env";
 import { getClientId } from "@/lib/client-id";
+import { MUTATIONS } from "@/i18n/uz";
 import {
   clearRefreshToken,
   getRefreshToken,
@@ -299,7 +298,7 @@ function requestUpload<T>(
           new ApiError(
             0,
             "bad_request",
-            "Tarmoq xatosi — faylni yuklab bo'lmadi. Aloqani tekshiring.",
+            MUTATIONS.errUploadNetwork,
           ),
         );
       xhr.onabort = () => reject(new DOMException("Bekor qilindi", "AbortError"));

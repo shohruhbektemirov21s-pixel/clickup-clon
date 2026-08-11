@@ -1,8 +1,7 @@
-"use client";
-
 import { AlertTriangle, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { BOARD, COMMON } from "@/i18n/uz";
 
 /**
  * Loading state — four column shells that match the real column chrome
@@ -13,7 +12,7 @@ export function BoardSkeleton({ columns = 4 }: { columns?: number }) {
     <div
       className="flex flex-1 items-start gap-4 overflow-hidden p-4"
       role="status"
-      aria-label="Doska yuklanmoqda"
+      aria-label={BOARD.loadingAria}
     >
       {Array.from({ length: columns }).map((_, col) => (
         <div
@@ -65,14 +64,12 @@ export function BoardError({
         <AlertTriangle className="size-5" />
       </span>
       <div className="space-y-1">
-        <p className="text-sm font-medium">Doskani yuklab bo&apos;lmadi</p>
-        <p className="text-xs text-muted-foreground">
-          Ulanishni tekshiring va qaytadan urinib ko&apos;ring.
-        </p>
+        <p className="text-sm font-medium">{BOARD.loadFailedTitle}</p>
+        <p className="text-xs text-muted-foreground">{BOARD.loadFailedHint}</p>
       </div>
       <Button variant="outline" size="sm" onClick={onRetry} disabled={isRetrying}>
         <RotateCw className={isRetrying ? "animate-spin" : undefined} />
-        Qayta urinish
+        {COMMON.retry}
       </Button>
     </div>
   );

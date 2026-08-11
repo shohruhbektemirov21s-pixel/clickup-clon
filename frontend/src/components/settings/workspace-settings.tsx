@@ -1,7 +1,5 @@
-"use client";
-
 import * as React from "react";
-import Link from "next/link";
+import { Link } from "@/components/ui/link";
 import { MailPlus, RefreshCw, Trash2, X } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -38,11 +36,18 @@ import {
   useRevokeInvitation,
 } from "@/hooks/mutations";
 import { InviteMemberDialog } from "@/components/workspace/invite-member-dialog";
+import {
+  AUTH,
+  COMMON,
+  PROFESSION_LABEL,
+  ROLE_LABEL,
+  WORKSPACE_SETTINGS,
+} from "@/i18n/uz";
 import { displayName, initials, timeAgo } from "@/lib/format";
 import { can } from "@/lib/permissions";
 import type { Member, Role } from "@/types/api";
 
-import { PROFESSION_LABEL, ROLE_LABEL, ROLE_RANK } from "@/lib/roles";
+import { ROLE_RANK } from "@/lib/roles";
 
 function SectionSkeleton() {
   return (
@@ -56,17 +61,25 @@ function SectionSkeleton() {
 
 /** "Umumiy" — workspace name. Gated on `workspace.update` (owner by default). */
 export function GeneralSection({ workspaceId }: { workspaceId: string }) {
-  const { data: workspace, isPending } = useWorkspace(workspaceId);
+  const { data: workspace, isPending, isError, refetch } = useWorkspace(workspaceId);
   const { data: my } = useMyPermissions(workspaceId);
   const canRename = can(my, "workspace.update");
 
   if (isPending) return <SectionSkeleton />;
-  if (!workspace) {
+  // Tarmoq/server xatosi «topilmadi» EMAS: birinchisi qayta urinib ko'rish
+  // kerak bo'lgan holat, ikkinchisi esa ruxsat yo'qolgani haqidagi xulosa.
+  if (isError) {
     return (
-      <p className="text-sm text-muted-foreground">
-        Ish maydoni topilmadi yoki sizda endi ruxsat yo&apos;q.
-      </p>
+      <div className="flex flex-col items-start gap-2">
+        <p className="text-sm text-danger">{WORKSPACE_SETTINGS.loadFailed}</p>
+        <Button variant="outline" size="sm" onClick={() => refetch()}>
+          {COMMON.retry}
+        </Button>
+      </div>
     );
+  }
+  if (!workspace) {
+    return <p className="text-sm text-muted-foreground">{WORKSPACE_SETTINGS.notFound}</p>;
   }
 
   return (
@@ -99,7 +112,7 @@ function GeneralForm({
   return (
     <section className="mb-8">
       <h2 className="mb-3 text-sm font-semibold tracking-wide text-muted-foreground uppercase">
-        Umumiy
+        {WORKSPACE_SETTINGS.generalHeading}
       </h2>
       <form
         className="flex max-w-md items-end gap-2"
@@ -110,7 +123,7 @@ function GeneralForm({
         }}
       >
         <div className="flex flex-1 flex-col gap-1.5">
-          <Label htmlFor="ws-rename">Ish maydoni nomi</Label>
+          <Label htmlFor="ws-rename">{AUTH.workspaceNameLabel}</Label>
           <Input
             id="ws-rename"
             value={name}
@@ -124,12 +137,12 @@ function GeneralForm({
             !canRename || rename.isPending || !name.trim() || name.trim() === currentName
           }
         >
-          {rename.isPending ? "Saqlanmoqda…" : "Saqlash"}
+          {rename.isPending ? COMMON.saving : COMMON.save}
         </Button>
       </form>
       {!canRename ? (
         <p className="mt-1.5 text-xs text-muted-foreground">
-          Ish maydoni nomini o&apos;zgartirish uchun ruxsatingiz yo&apos;q.
+          {WORKSPACE_SETTINGS.renameDenied}
         </p>
       ) : null}
     </section>
@@ -163,21 +176,21 @@ export function MembersSection({ workspaceId }: { workspaceId: string }) {
   return (
     <section className="mb-8">
       <h2 className="mb-3 text-sm font-semibold tracking-wide text-muted-foreground uppercase">
-        A&apos;zolar {data ? `(${data.count})` : ""}
+        {WORKSPACE_SETTINGS.membersHeading(data?.count)}
       </h2>
       {isPending ? (
         <SectionSkeleton />
       ) : isError ? (
-        <p className="text-sm text-danger">A&apos;zolarni yuklab bo&apos;lmadi.</p>
+        <p className="text-sm text-danger">{WORKSPACE_SETTINGS.membersFailed}</p>
       ) : (
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Ism</TableHead>
-              <TableHead>Email</TableHead>
-              <TableHead>Kasbi</TableHead>
-              <TableHead>Rol</TableHead>
-              <TableHead>Qo&apos;shilgan</TableHead>
+              <TableHead>{WORKSPACE_SETTINGS.colName}</TableHead>
+              <TableHead>{COMMON.email}</TableHead>
+              <TableHead>{WORKSPACE_SETTINGS.colProfession}</TableHead>
+              <TableHead>{WORKSPACE_SETTINGS.colRole}</TableHead>
+              <TableHead>{WORKSPACE_SETTINGS.colJoined}</TableHead>
               <TableHead className="w-10" />
             </TableRow>
           </TableHeader>
@@ -298,7 +311,7 @@ export function InvitationsSection({ workspaceId }: { workspaceId: string }) {
   if (!canRead) {
     return (
       <p className="text-sm text-muted-foreground">
-        Takliflarni ko&apos;rish uchun ruxsatingiz yo&apos;q.
+        {WORKSPACE_SETTINGS.invitationsDenied}
       </p>
     );
   }
@@ -307,11 +320,11 @@ export function InvitationsSection({ workspaceId }: { workspaceId: string }) {
     <section className="mb-8">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">
-          Kutilayotgan takliflar ({pending.length})
+          {WORKSPACE_SETTINGS.invitationsHeading(pending.length)}
         </h2>
         {canInvite ? (
           <Button size="sm" onClick={() => setInviteOpen(true)}>
-            <MailPlus className="size-3.5" /> Taklif qilish
+            <MailPlus className="size-3.5" /> {WORKSPACE_SETTINGS.invite}
           </Button>
         ) : null}
       </div>
@@ -319,16 +332,16 @@ export function InvitationsSection({ workspaceId }: { workspaceId: string }) {
         <Skeleton className="h-16 w-full" aria-hidden />
       ) : pending.length === 0 ? (
         <p className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
-          Kutilayotgan takliflar yo&apos;q.
+          {WORKSPACE_SETTINGS.invitationsEmpty}
         </p>
       ) : (
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Email</TableHead>
-              <TableHead>Rol</TableHead>
-              <TableHead>Taklif qilgan</TableHead>
-              <TableHead>Muddati</TableHead>
+              <TableHead>{COMMON.email}</TableHead>
+              <TableHead>{WORKSPACE_SETTINGS.colRole}</TableHead>
+              <TableHead>{WORKSPACE_SETTINGS.colInvitedBy}</TableHead>
+              <TableHead>{WORKSPACE_SETTINGS.colExpires}</TableHead>
               <TableHead className="w-20" />
             </TableRow>
           </TableHeader>

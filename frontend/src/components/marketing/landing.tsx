@@ -1,5 +1,5 @@
 import type * as React from "react";
-import Link from "next/link";
+import { Link } from "@/components/ui/link";
 import {
   Activity,
   ArrowRight,
@@ -17,7 +17,10 @@ import {
   OrderingVisual,
   PermissionMatrixVisual,
 } from "@/components/marketing/feature-visuals";
-import { fetchShowcase } from "@/lib/showcase";
+import { useQuery } from "@tanstack/react-query";
+import { COMMON, LANDING } from "@/i18n/uz";
+import { keys } from "@/lib/keys";
+import { fetchShowcase, SHOWCASE_STALE_MS } from "@/lib/showcase";
 import type { ShowcaseResponse } from "@/types/api";
 
 const REPO = "https://github.com/shohruhbektemirov21s-pixel/clickup-clon";
@@ -46,13 +49,21 @@ const DEEP_STYLE: React.CSSProperties = {
 /**
  * Public marketing landing shown at `/` to signed-out visitors.
  *
- * Server komponenti bo'lib qoladi va ma'lumotni bir marta serverda o'qiydi
- * (`GET public/showcase/`) — sahifada qo'lda yozilgan namunaviy qator yo'q.
- * Backend javob bermasa `data` `null` bo'ladi va sahifa bo'sh holatlar bilan
- * baribir to'liq render bo'ladi.
+ * Ma'lumot bazadan keladi (`GET public/showcase/`) — sahifada qo'lda yozilgan
+ * namunaviy qator yo'q. Backend javob bermasa `data` `null` bo'ladi va sahifa
+ * bo'sh holatlar bilan baribir to'liq render bo'ladi.
+ *
+ * NEGA `useQuery`: Next davrida bu server komponenti edi va `await` bilan
+ * o'qirdi. SPA'da server render bosqichi yo'q, so'rov brauzerdan ketadi;
+ * javob kelmaguncha ekranda aynan "backend o'chiq" holatidagi ko'rinish
+ * turadi, ya'ni markup va bo'sh holatlar o'zgarmadi.
  */
-export async function Landing() {
-  const data = await fetchShowcase();
+export function Landing() {
+  const { data = null } = useQuery({
+    queryKey: keys.showcase,
+    queryFn: fetchShowcase,
+    staleTime: SHOWCASE_STALE_MS,
+  });
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -83,7 +94,7 @@ function Logo({ className = "" }: { className?: string }) {
       >
         C
       </span>
-      <span className="text-base font-semibold tracking-tight">Clickish</span>
+      <span className="text-base font-semibold tracking-tight">{LANDING.brand}</span>
     </span>
   );
 }
@@ -93,19 +104,19 @@ function SiteHeader() {
     <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between gap-4 px-5 sm:px-6">
         <Logo />
-        <nav aria-label="Asosiy" className="hidden items-center gap-1 md:flex">
-          <HeaderLink href="#imkoniyatlar">Imkoniyatlar</HeaderLink>
-          <HeaderLink href="#nima-uchun">Nima uchun</HeaderLink>
-          <HeaderLink href="#ishga-tushirish">Ishga tushirish</HeaderLink>
+        <nav aria-label={LANDING.navMain} className="hidden items-center gap-1 md:flex">
+          <HeaderLink href="#imkoniyatlar">{LANDING.navFeatures}</HeaderLink>
+          <HeaderLink href="#nima-uchun">{LANDING.navWhy}</HeaderLink>
+          <HeaderLink href="#ishga-tushirish">{LANDING.navQuickStart}</HeaderLink>
           <HeaderLink href={`${DOCS}/API_CONTRACT.md`} external>
-            Hujjatlar
+            {LANDING.navDocs}
           </HeaderLink>
         </nav>
         <div className="flex items-center gap-2">
           <Button variant="ghost" render={<Link href="/login" />}>
-            Kirish
+            {COMMON.login}
           </Button>
-          <Button render={<Link href="/register" />}>Ro&apos;yxatdan o&apos;tish</Button>
+          <Button render={<Link href="/register" />}>{COMMON.register}</Button>
         </div>
       </div>
     </header>
@@ -156,23 +167,22 @@ function Hero({ data }: { data: ShowcaseResponse | null }) {
         <div className="mx-auto flex max-w-3xl flex-col items-center text-center">
           <span className="inline-flex items-center gap-2 rounded-full border bg-background/70 px-3 py-1 text-xs text-muted-foreground backdrop-blur">
             <span aria-hidden className="size-1.5 rounded-full bg-primary" />
-            Ochiq kod · Django + Next.js · to&apos;liq o&apos;zbek tilida
+            {LANDING.heroBadge}
           </span>
 
           <h1 className="mt-6 text-4xl leading-[1.05] font-bold tracking-tight text-balance sm:text-6xl">
-            Jamoangizning butun ishi —{" "}
-            <span className="text-primary">bitta real vaqtli</span> ish maydonida.
+            {LANDING.heroTitleLead}{" "}
+            <span className="text-primary">{LANDING.heroTitleAccent}</span>{" "}
+            {LANDING.heroTitleTail}
           </h1>
 
           <p className="mt-5 max-w-2xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-            Clickish — bo&apos;lim, jild, ro&apos;yxat va vazifalar iyerarxiyasi, sudrab
-            tartiblash, {codes ? `${codes} ta ruxsat kodi` : "granular ruxsat kodlari"} bilan
-            granular rollar va WebSocket orqali bir zumda yangilanadigan hamkorlik.
+            {LANDING.heroSubtitle(codes)}
           </p>
 
           <div className="mt-8 flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
             <Button size="lg" className="h-11 px-6 text-[0.95rem]" render={<Link href="/register" />}>
-              Ro&apos;yxatdan o&apos;tish
+              {COMMON.register}
               <ArrowRight data-icon="inline-end" />
             </Button>
             <Button
@@ -181,14 +191,11 @@ function Hero({ data }: { data: ShowcaseResponse | null }) {
               className="h-11 px-6 text-[0.95rem]"
               render={<Link href="/login" />}
             >
-              Kirish
+              {COMMON.login}
             </Button>
           </div>
 
-          <p className="mt-3 text-xs text-muted-foreground">
-            Ro&apos;yxatdan o&apos;tish bepul — birinchi ish maydoningizni bir daqiqada
-            yaratasiz.
-          </p>
+          <p className="mt-3 text-xs text-muted-foreground">{LANDING.heroFootnote}</p>
         </div>
 
         <div className="mx-auto mt-12 max-w-5xl sm:mt-16">
@@ -210,14 +217,14 @@ function Stats({ data }: { data: ShowcaseResponse | null }) {
   if (!data) return null;
   const { stats } = data;
   const items = [
-    { value: stats.permission_codes, label: "ruxsat kodi" },
-    { value: stats.roles, label: "rol darajasi" },
-    { value: stats.tasks, label: "vazifa" },
-    { value: stats.members, label: "foydalanuvchi" },
+    { value: stats.permission_codes, label: LANDING.statPermissionCodes },
+    { value: stats.roles, label: LANDING.statRoles },
+    { value: stats.tasks, label: LANDING.statTasks },
+    { value: stats.members, label: LANDING.statMembers },
   ];
 
   return (
-    <section aria-label="Raqamlarda" className="border-b bg-muted/30">
+    <section aria-label={LANDING.statsAria} className="border-b bg-muted/30">
       <dl className="mx-auto grid w-full max-w-6xl grid-cols-2 gap-px px-5 py-10 sm:px-6 md:grid-cols-4">
         {items.map((stat) => (
           <div key={stat.label} className="flex flex-col items-center gap-1 px-2 text-center">
@@ -239,33 +246,33 @@ function Stats({ data }: { data: ShowcaseResponse | null }) {
 const featureList = (codes: number | undefined) => [
   {
     icon: FolderTree,
-    title: "Ish maydonlari iyerarxiyasi",
-    text: "Bo'lim → Jild → Ro'yxat → Vazifa. Yopiq bo'limlar faqat qo'shilgan a'zolarga ko'rinadi.",
+    title: LANDING.featureHierarchyTitle,
+    text: LANDING.featureHierarchyText,
   },
   {
     icon: MousePointer2,
-    title: "Sudrab tartiblash",
-    text: "Kasr pozitsiyalar bilan — vazifani ko'chirganda butun jadval qayta raqamlanmaydi.",
+    title: LANDING.featureOrderingTitle,
+    text: LANDING.featureOrderingText,
   },
   {
     icon: Zap,
-    title: "Real vaqtli hamkorlik",
-    text: "Vazifa, izoh va presence hodisalari WebSocket orqali keladi; sahifani yangilash shart emas.",
+    title: LANDING.featureRealtimeTitle,
+    text: LANDING.featureRealtimeText,
   },
   {
     icon: ShieldCheck,
-    title: codes ? `${codes} ta ruxsat kodi` : "Granular ruxsat kodlari",
-    text: "Har bir ish maydonida rol × huquq matritsasi sozlanadi; tekshiruv har doim serverda.",
+    title: LANDING.featurePermissionsTitle(codes),
+    text: LANDING.featurePermissionsText,
   },
   {
     icon: UserPlus,
-    title: "Takliflar bilan jamoa",
-    text: "Token bilan taklif yuboring — ro'yxatdan o'tgan zahoti a'zolik avtomatik beriladi.",
+    title: LANDING.featureInvitesTitle,
+    text: LANDING.featureInvitesText,
   },
   {
     icon: Paperclip,
-    title: "Fayllar va faoliyat",
-    text: "Vazifalarga hujjat va rasm biriktiring, a'zo profillari va faoliyat tasmasini kuzating.",
+    title: LANDING.featureFilesTitle,
+    text: LANDING.featureFilesText,
   },
 ];
 
@@ -276,12 +283,9 @@ function Features({ data }: { data: ShowcaseResponse | null }) {
       <div className="mx-auto w-full max-w-6xl px-5 py-16 sm:px-6 sm:py-20">
         <div className="max-w-2xl">
           <h2 className="text-2xl font-bold tracking-tight sm:text-4xl">
-            Ishni boshqarish uchun kerak bo&apos;lgan hamma narsa
+            {LANDING.featuresTitle}
           </h2>
-          <p className="mt-3 text-base text-muted-foreground">
-            Har bir imkoniyat ilovada allaqachon ishlaydi — ro&apos;yxat va doska
-            ko&apos;rinishidan tortib huquqlar matritsasigacha.
-          </p>
+          <p className="mt-3 text-base text-muted-foreground">{LANDING.featuresSubtitle}</p>
         </div>
 
         <ul className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -310,19 +314,17 @@ function Features({ data }: { data: ShowcaseResponse | null }) {
 
 const whySections = (data: ShowcaseResponse | null) => [
   {
-    eyebrow: "Real vaqt",
-    title: "Har bir o'zgarish — bir zumda, hammada",
-    text: "Vazifa ko'chdimi, izoh qo'shildimi, kimdir ro'yxatga kirdimi — hodisa servis qatlamidan chiqadi va WebSocket orqali barcha ochiq oynalarga yetadi. O'z aks-sadolaringiz bostiriladi, shuning uchun kursor sakramaydi.",
-    bullets: ["Presence — kim onlayn", "Avtomatik qayta ulanish", "Izoh va fayl hodisalari"],
+    eyebrow: LANDING.whyRealtimeEyebrow,
+    title: LANDING.whyRealtimeTitle,
+    text: LANDING.whyRealtimeText,
+    bullets: LANDING.whyRealtimeBullets,
     visual: <ActivityFeedVisual items={data?.workspace?.activity ?? []} />,
   },
   {
-    eyebrow: "Huquqlar",
-    title: "Rollar tugmani yashirish bilan cheklanmaydi",
-    text: `${
-      data?.stats.permission_codes ?? "Har bir"
-    } ta ruxsat kodi rol × huquq matritsasida sozlanadi. Frontend faqat tugmani ko'rsatadi yoki yashiradi; ruxsatni har bir endpoint mustaqil tekshiradi. Ish maydonidan tashqaridagi resurs har doim 404 qaytaradi — mavjudligi oshkor bo'lmaydi.`,
-    bullets: ["Egasi / Admin / A'zo / Mehmon", "Egasi qatori qulflangan", "404 va 403 qoidasi"],
+    eyebrow: LANDING.whyPermissionsEyebrow,
+    title: LANDING.whyPermissionsTitle,
+    text: LANDING.whyPermissionsText(data?.stats.permission_codes),
+    bullets: LANDING.whyPermissionsBullets,
     visual: (
       <PermissionMatrixVisual
         matrix={data?.matrix ?? null}
@@ -331,10 +333,10 @@ const whySections = (data: ShowcaseResponse | null) => [
     ),
   },
   {
-    eyebrow: "Tartiblash",
-    title: "Sudrash tez — chunki bitta qator yangilanadi",
-    text: "Ko'chirishda mijoz qo'shni elementlarni hisoblab, serverga faqat before/after yuboradi. Server kasr pozitsiya qaytaradi va ro'yxat optimistik yangilanadi; xato bo'lsa avvalgi holatga qaytadi.",
-    bullets: ["Optimistik yangilanish", "Ustunlar orasida status almashadi", "dnd-kit klaviatura bilan"],
+    eyebrow: LANDING.whyOrderingEyebrow,
+    title: LANDING.whyOrderingTitle,
+    text: LANDING.whyOrderingText,
+    bullets: LANDING.whyOrderingBullets,
     visual: <OrderingVisual rows={data?.workspace?.ordering ?? []} />,
   },
 ];
@@ -345,11 +347,8 @@ function WhySection({ data }: { data: ShowcaseResponse | null }) {
     <section id="nima-uchun" className="scroll-mt-16 border-b bg-muted/20">
       <div className="mx-auto w-full max-w-6xl space-y-16 px-5 py-16 sm:space-y-24 sm:px-6 sm:py-20">
         <div className="max-w-2xl">
-          <h2 className="text-2xl font-bold tracking-tight sm:text-4xl">Nima uchun Clickish</h2>
-          <p className="mt-3 text-base text-muted-foreground">
-            Uchta qaror butun mahsulotni belgilaydi: real vaqt, jiddiy huquqlar va arzon
-            tartiblash.
-          </p>
+          <h2 className="text-2xl font-bold tracking-tight sm:text-4xl">{LANDING.whyTitle}</h2>
+          <p className="mt-3 text-base text-muted-foreground">{LANDING.whySubtitle}</p>
         </div>
 
         {sections.map((item, index) => (
@@ -390,24 +389,22 @@ function QuickStart() {
       <div className="mx-auto grid w-full max-w-6xl items-center gap-8 px-5 py-16 sm:px-6 sm:py-20 lg:grid-cols-2 lg:gap-14">
         <div className="min-w-0">
           <p className="text-xs font-semibold tracking-widest text-primary uppercase">
-            Ishga tushirish
+            {LANDING.quickStartEyebrow}
           </p>
           <h2 className="mt-3 text-2xl font-bold tracking-tight sm:text-4xl">
-            Bir buyruq — to&apos;liq stek
+            {LANDING.quickStartTitle}
           </h2>
           <p className="mt-3 text-sm leading-relaxed text-muted-foreground sm:text-base">
-            Docker Compose PostgreSQL 16, Redis 7, Django backend va Next.js frontendni birga
-            ko&apos;taradi. Backend{" "}
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.85em]">migrate</code> ni
-            o&apos;zi bajaradi — keyin ro&apos;yxatdan o&apos;tib birinchi ish maydoningizni
-            yaratasiz.
+            {LANDING.quickStartTextLead}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.85em]">migrate</code>
+            {LANDING.quickStartTextTail}
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             <Button variant="outline" render={<a href={`${DOCS}/DOCKER.md`} target="_blank" rel="noreferrer" />}>
-              Docker qo&apos;llanmasi
+              {LANDING.quickStartDocs}
             </Button>
             <Button variant="ghost" render={<Link href="/register" />}>
-              Ro&apos;yxatdan o&apos;tish
+              {COMMON.register}
               <ArrowRight data-icon="inline-end" />
             </Button>
           </div>
@@ -434,14 +431,12 @@ function FinalCta() {
       </div>
       <div className="mx-auto flex w-full max-w-3xl flex-col items-center px-5 py-20 text-center sm:px-6 sm:py-28">
         <h2 className="text-3xl font-bold tracking-tight text-balance sm:text-5xl">
-          Jamoangizni bugun ko&apos;chiring
+          {LANDING.ctaTitle}
         </h2>
-        <p className="mt-4 max-w-xl text-base text-muted-foreground">
-          Ish maydoni yarating, bo&apos;limlarni qo&apos;shing va jamoani taklif qiling.
-        </p>
+        <p className="mt-4 max-w-xl text-base text-muted-foreground">{LANDING.ctaSubtitle}</p>
         <div className="mt-8 flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row">
           <Button size="lg" className="h-11 px-6 text-[0.95rem]" render={<Link href="/register" />}>
-            Bepul boshlash
+            {LANDING.ctaPrimary}
             <ArrowRight data-icon="inline-end" />
           </Button>
           <Button
@@ -450,7 +445,7 @@ function FinalCta() {
             className="h-11 px-6 text-[0.95rem]"
             render={<Link href="/login" />}
           >
-            Kirish
+            {COMMON.login}
           </Button>
         </div>
       </div>
@@ -462,30 +457,30 @@ function FinalCta() {
 
 const FOOTER: { title: string; links: { label: string; href: string; external?: boolean }[] }[] = [
   {
-    title: "Mahsulot",
+    title: LANDING.footerProduct,
     links: [
-      { label: "Imkoniyatlar", href: "#imkoniyatlar" },
-      { label: "Nima uchun", href: "#nima-uchun" },
-      { label: "Ishga tushirish", href: "#ishga-tushirish" },
-      { label: "Kirish", href: "/login" },
+      { label: LANDING.navFeatures, href: "#imkoniyatlar" },
+      { label: LANDING.navWhy, href: "#nima-uchun" },
+      { label: LANDING.navQuickStart, href: "#ishga-tushirish" },
+      { label: COMMON.login, href: "/login" },
     ],
   },
   {
-    title: "Hujjatlar",
+    title: LANDING.footerDocs,
     links: [
-      { label: "API shartnomasi", href: `${DOCS}/API_CONTRACT.md`, external: true },
-      { label: "Ma'lumotlar modeli", href: `${DOCS}/DATA_MODEL.md`, external: true },
-      { label: "UI spetsifikatsiyasi", href: `${DOCS}/UI_SPEC.md`, external: true },
-      { label: "Huquqlar dizayni", href: `${DOCS}/DESIGN_PERMISSIONS.md`, external: true },
+      { label: LANDING.footerApiContract, href: `${DOCS}/API_CONTRACT.md`, external: true },
+      { label: LANDING.footerDataModel, href: `${DOCS}/DATA_MODEL.md`, external: true },
+      { label: LANDING.footerUiSpec, href: `${DOCS}/UI_SPEC.md`, external: true },
+      { label: LANDING.footerPermissions, href: `${DOCS}/DESIGN_PERMISSIONS.md`, external: true },
     ],
   },
   {
-    title: "Loyiha",
+    title: LANDING.footerProject,
     links: [
-      { label: "Manba kodi", href: REPO, external: true },
-      { label: "Mahsulot talablari", href: `${DOCS}/PRD.md`, external: true },
-      { label: "Sprint rejasi", href: `${DOCS}/SPRINT_PLAN.md`, external: true },
-      { label: "Docker qo'llanmasi", href: `${DOCS}/DOCKER.md`, external: true },
+      { label: LANDING.footerSource, href: REPO, external: true },
+      { label: LANDING.footerPrd, href: `${DOCS}/PRD.md`, external: true },
+      { label: LANDING.footerSprintPlan, href: `${DOCS}/SPRINT_PLAN.md`, external: true },
+      { label: LANDING.footerDocker, href: `${DOCS}/DOCKER.md`, external: true },
     ],
   },
 ];
@@ -498,8 +493,7 @@ function SiteFooter() {
           <div className="lg:col-span-1">
             <Logo />
             <p className="mt-3 max-w-xs text-sm leading-relaxed text-muted-foreground">
-              Jamoaviy vazifa boshqaruvi: ish maydonlari, real vaqtli hamkorlik va granular
-              huquqlar. Interfeys to&apos;liq o&apos;zbek tilida.
+              {LANDING.footerTagline}
             </p>
           </div>
 
@@ -534,8 +528,8 @@ function SiteFooter() {
         </div>
 
         <div className="mt-10 flex flex-col items-start justify-between gap-3 border-t pt-6 text-xs text-muted-foreground sm:flex-row sm:items-center">
-          <p>© 2026 Clickish — ochiq kodli vazifa boshqaruvi.</p>
-          <p>Next.js va Django asosida qurilgan.</p>
+          <p>{LANDING.footerCopyright}</p>
+          <p>{LANDING.footerBuiltWith}</p>
         </div>
       </div>
     </footer>

@@ -1,10 +1,9 @@
-"use client";
-
 import * as React from "react";
 import { Hash, Loader2, Lock, MessageSquarePlus, Plus, Send, Users } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
@@ -23,6 +22,7 @@ import {
   useSendMessage,
 } from "@/hooks/mutations";
 import { useChatChannel } from "@/hooks/use-chat-channel";
+import { CHAT, COMMON } from "@/i18n/uz";
 import { displayName, initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { ChatMessage, Conversation } from "@/types/api";
@@ -42,7 +42,7 @@ function Bubble({ message, mine }: { message: ChatMessage; mine: boolean }) {
       </Avatar>
       <div className={cn("min-w-0 max-w-[70%]", mine && "text-right")}>
         <p className="text-[11px] text-muted-foreground">
-          {author ? displayName(author) : "O'chirilgan hisob"}{" "}
+          {author ? displayName(author) : CHAT.deletedAuthor}{" "}
           <time dateTime={message.created_at}>
             {new Date(message.created_at).toLocaleTimeString("uz-UZ", {
               hour: "2-digit",
@@ -81,22 +81,20 @@ function NewChannelDialog({ workspaceId }: { workspaceId: string }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger
-        render={<Button variant="ghost" size="icon-sm" aria-label="Kanal qo'shish" />}
+        render={<Button variant="ghost" size="icon-sm" aria-label={CHAT.newChannelAria} />}
       >
         <Plus />
       </DialogTrigger>
       <DialogContent>
         <form onSubmit={submit}>
           <DialogHeader>
-            <DialogTitle>Yangi kanal</DialogTitle>
-            <DialogDescription>
-              Kanal ish maydonining barcha a&apos;zolariga ko&apos;rinadi.
-            </DialogDescription>
+            <DialogTitle>{CHAT.newChannelTitle}</DialogTitle>
+            <DialogDescription>{CHAT.newChannelDescription}</DialogDescription>
           </DialogHeader>
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="masalan: umumiy"
+            placeholder={CHAT.newChannelPlaceholder}
             className="my-4"
             autoFocus
             maxLength={80}
@@ -104,7 +102,7 @@ function NewChannelDialog({ workspaceId }: { workspaceId: string }) {
           <DialogFooter>
             <Button type="submit" disabled={!name.trim() || create.isPending}>
               {create.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
-              Yaratish
+              {CHAT.create}
             </Button>
           </DialogFooter>
         </form>
@@ -124,19 +122,19 @@ function PeoplePicker({ workspaceId }: { workspaceId: string }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger
-        render={<Button variant="ghost" size="icon-sm" aria-label="Yozishma boshlash" />}
+        render={<Button variant="ghost" size="icon-sm" aria-label={CHAT.directAria} />}
       >
         <MessageSquarePlus />
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Kimga yozasiz?</DialogTitle>
-          <DialogDescription>Ish maydoni a&apos;zolaridan birini tanlang.</DialogDescription>
+          <DialogTitle>{CHAT.directTitle}</DialogTitle>
+          <DialogDescription>{CHAT.directDescription}</DialogDescription>
         </DialogHeader>
         <ul className="mt-2 max-h-80 overflow-y-auto">
           {others.length === 0 ? (
             <li className="py-6 text-center text-sm text-muted-foreground">
-              Ish maydonida boshqa a&apos;zo yo&apos;q.
+              {CHAT.directEmpty}
             </li>
           ) : (
             others.map((member) => (
@@ -183,11 +181,9 @@ function Composer({
   if (!conversation.is_member) {
     return (
       <div className="flex items-center justify-between gap-3 border-t px-4 py-3">
-        <p className="text-sm text-muted-foreground">
-          Yozish uchun avval kanalga qo&apos;shiling.
-        </p>
+        <p className="text-sm text-muted-foreground">{CHAT.joinPrompt}</p>
         <Button size="sm" onClick={() => join.mutate(conversation.id)} disabled={join.isPending}>
-          Qo&apos;shilish
+          {COMMON.join}
         </Button>
       </div>
     );
@@ -227,7 +223,8 @@ function Composer({
 }
 
 export function ChatView({ workspaceId }: { workspaceId: string }) {
-  const { data: conversations, isPending } = useConversations(workspaceId);
+  const conversationsQuery = useConversations(workspaceId);
+  const { data: conversations, isPending, isError } = conversationsQuery;
   const { data: me } = useMe();
   const [activeId, setActiveId] = React.useState<string | null>(null);
 
@@ -236,7 +233,11 @@ export function ChatView({ workspaceId }: { workspaceId: string }) {
   // foydalanuvchini "nima bosishim kerak" holatida qoldirardi.
   const active = rows.find((c) => c.id === activeId) ?? rows[0] ?? null;
 
-  const { data: messages } = useChatMessages(active?.id ?? null);
+  // `isPending` / `isError` shu yerdan olinishi SHART: ularsiz tarmoq xatosi
+  // «hech narsa yo'q» bo'sh holati bo'lib ko'rinadi va foydalanuvchi
+  // xabarlari yo'qolgandek taassurot beradi.
+  const messagesQuery = useChatMessages(active?.id ?? null);
+  const { data: messages } = messagesQuery;
   const { connected } = useChatChannel(active?.id ?? null);
 
   // Tarix `-created_at` bilan keladi; ekranda eskisi tepada bo'lishi kerak.
@@ -255,11 +256,28 @@ export function ChatView({ workspaceId }: { workspaceId: string }) {
         </header>
         <ul className="min-h-0 flex-1 overflow-y-auto p-1.5">
           {isPending ? (
-            <li className="px-2 py-4 text-sm text-muted-foreground">Yuklanmoqda…</li>
+            <li className="space-y-1.5 px-1 py-1" aria-hidden>
+              {[0, 1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-8 w-full" />
+              ))}
+            </li>
+          ) : isError ? (
+            // Bo'sh holat EMAS: so'rov muvaffaqiyatsiz bo'lganda «suhbat yo'q»
+            // deyish yolg'on bo'lardi.
+            <li className="px-2 py-4">
+              <p className="text-sm text-danger">{CHAT.conversationsFailed}</p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                onClick={() => conversationsQuery.refetch()}
+              >
+                {COMMON.retry}
+              </Button>
+            </li>
           ) : rows.length === 0 ? (
             <li className="px-2 py-4 text-xs leading-relaxed text-muted-foreground">
-              Hali suhbat yo&apos;q. Yuqoridagi tugmalar bilan kanal oching yoki
-              hamkasbingizga yozing.
+              {CHAT.conversationsEmpty}
             </li>
           ) : (
             rows.map((conversation) => (
@@ -308,29 +326,55 @@ export function ChatView({ workspaceId }: { workspaceId: string }) {
                 <span
                   className={cn(
                     "size-1.5 rounded-full",
-                    connected ? "bg-status-closed" : "bg-muted-foreground/40",
+                    connected ? "bg-status-done" : "bg-muted-foreground/40",
                   )}
                 />
                 {connected ? "Jonli" : "Ulanmoqda…"}
               </span>
             </header>
 
-            <ul className="flex min-h-0 flex-1 flex-col-reverse gap-3 overflow-y-auto px-4 py-4">
-              {/* `flex-col-reverse` — yangi xabar kelganda ro'yxat o'zi
-                  pastda qoladi, qo'lda scroll qilish shart emas. */}
-              {[...ordered].reverse().map((message) => (
-                <Bubble
-                  key={message.id}
-                  message={message}
-                  mine={!!me && message.author?.id === me.id}
-                />
-              ))}
-              {ordered.length === 0 ? (
-                <li className="py-8 text-center text-sm text-muted-foreground">
-                  Hali xabar yo&apos;q — birinchi bo&apos;lib yozing.
-                </li>
-              ) : null}
-            </ul>
+            {messagesQuery.isError ? (
+              <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center">
+                <p className="text-sm text-danger">{CHAT.messagesFailed}</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => messagesQuery.refetch()}
+                >
+                  {COMMON.retry}
+                </Button>
+              </div>
+            ) : messagesQuery.isPending ? (
+              <div
+                className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-4 py-4"
+                aria-hidden
+              >
+                {[0, 1, 2, 3].map((i) => (
+                  <Skeleton
+                    key={i}
+                    className={cn("h-12 w-2/3 rounded-xl", i % 2 === 1 && "self-end")}
+                  />
+                ))}
+              </div>
+            ) : (
+              <ul className="flex min-h-0 flex-1 flex-col-reverse gap-3 overflow-y-auto px-4 py-4">
+                {/* `flex-col-reverse` — yangi xabar kelganda ro'yxat o'zi
+                    pastda qoladi, qo'lda scroll qilish shart emas. */}
+                {[...ordered].reverse().map((message) => (
+                  <Bubble
+                    key={message.id}
+                    message={message}
+                    mine={!!me && message.author?.id === me.id}
+                  />
+                ))}
+                {/* Bo'sh holat FAQAT so'rov muvaffaqiyatli tugagach ko'rinadi. */}
+                {ordered.length === 0 ? (
+                  <li className="py-8 text-center text-sm text-muted-foreground">
+                    {CHAT.messagesEmpty}
+                  </li>
+                ) : null}
+              </ul>
+            )}
 
             <Composer workspaceId={workspaceId} conversation={active} />
           </>

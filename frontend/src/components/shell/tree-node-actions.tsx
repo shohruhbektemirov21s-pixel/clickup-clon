@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import { MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,6 +16,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  COMMON,
+  ENTITY_DELETE_WARNING,
+  ENTITY_KIND_LABEL,
+  TREE_ACTIONS,
+} from "@/i18n/uz";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { ConfirmDeleteDialog } from "@/components/shared/confirm-delete-dialog";
 import {
@@ -29,18 +33,6 @@ import {
 } from "@/hooks/mutations";
 
 export type TreeEntityKind = "space" | "folder" | "list";
-
-const KIND_LABEL: Record<TreeEntityKind, string> = {
-  space: "Bo'lim",
-  folder: "Jild",
-  list: "Ro'yxat",
-};
-
-const DELETE_WARNING: Record<TreeEntityKind, string> = {
-  space: "ichidagi barcha jildlar, ro'yxatlar va vazifalar bilan birga o'chiriladi.",
-  folder: "o'chiriladi.",
-  list: "barcha vazifalari va kommentlari bilan birga o'chiriladi.",
-};
 
 /**
  * Hover "…" menu on a sidebar tree row: rename + delete.
@@ -152,13 +144,13 @@ export function TreeNodeActions({
               }}
             >
               <Pencil className="size-4" />
-              Nomini o&apos;zgartirish
+              {TREE_ACTIONS.rename}
             </DropdownMenuItem>
           ) : null}
           {canDelete ? (
             <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
               <Trash2 className="size-4" />
-              O&apos;chirish
+              {COMMON.delete}
             </DropdownMenuItem>
           ) : null}
         </DropdownMenuContent>
@@ -168,10 +160,10 @@ export function TreeNodeActions({
         <DialogContent className="sm:max-w-sm">
           <form onSubmit={onRenameSubmit} className="flex flex-col gap-4">
             <DialogHeader>
-              <DialogTitle>{KIND_LABEL[kind]} nomini o&apos;zgartirish</DialogTitle>
+              <DialogTitle>{TREE_ACTIONS.renameTitle(ENTITY_KIND_LABEL[kind])}</DialogTitle>
             </DialogHeader>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor={`rename-${id}`}>Nomi</Label>
+              <Label htmlFor={`rename-${id}`}>{COMMON.name}</Label>
               <Input
                 id={`rename-${id}`}
                 autoFocus
@@ -196,7 +188,7 @@ export function TreeNodeActions({
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
         entityName={name}
-        warning={DELETE_WARNING[kind]}
+        warning={ENTITY_DELETE_WARNING[kind]}
         // Spaces require the exact name per contract §6 (`confirm_name`).
         requireNameMatch={kind === "space"}
         pending={deleting}
@@ -204,7 +196,7 @@ export function TreeNodeActions({
       >
         {kind === "folder" ? (
           <div className="flex flex-col gap-2">
-            <Label>Ro&apos;yxatlar bilan nima qilinsin?</Label>
+            <Label>{TREE_ACTIONS.folderStrategyLabel}</Label>
             <RadioGroup
               value={strategy}
               onValueChange={(v) => setStrategy(v as FolderDeleteStrategy)}
@@ -213,17 +205,17 @@ export function TreeNodeActions({
               <label className="flex items-start gap-2 text-sm">
                 <RadioGroupItem value="cascade" className="mt-0.5" disabled={!canCascade} />
                 <span>
-                  Ichidagilari bilan o&apos;chirish
+                  {TREE_ACTIONS.folderCascade}
                   {!canCascade ? (
                     <span className="block text-xs text-muted-foreground">
-                      Buning uchun alohida ruxsat kerak
+                      {TREE_ACTIONS.folderCascadeDenied}
                     </span>
                   ) : null}
                 </span>
               </label>
               <label className="flex items-start gap-2 text-sm">
                 <RadioGroupItem value="detach" className="mt-0.5" />
-                <span>Ro&apos;yxatlarni bo&apos;limga chiqarish</span>
+                <span>{TREE_ACTIONS.folderDetach}</span>
               </label>
             </RadioGroup>
           </div>

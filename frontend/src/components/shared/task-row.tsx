@@ -1,27 +1,28 @@
-"use client";
-
-import Link from "next/link";
+import { Link } from "@/components/ui/link";
 import { MessageSquare } from "lucide-react";
 import { PriorityFlag, StatusDot } from "@/components/task/pickers";
 import { formatDueDate, PRIORITY_META } from "@/lib/format";
+import { STATUS_LABEL } from "@/i18n/uz";
 import { cn } from "@/lib/utils";
-import type { Status, Task } from "@/types/api";
+import type { Task } from "@/types/api";
 
 /**
  * One compact task line. Shared by the workspace dashboard and the member
  * profile so both read identically; clicking opens the task in its own list
  * page (`?task=` deep link), never a separate detail route.
+ *
+ * Holat vazifaning O'ZIDA keladi (`task.status`), shuning uchun chaqiruvchi
+ * uni alohida uzatmaydi — ilgari har bir ekran status'ni ro'yxat bo'yicha
+ * qidirib olishi kerak edi.
  */
 export function TaskRow({
   workspaceId,
   task,
-  status,
   listName,
   overdue,
 }: {
   workspaceId: string;
   task: Task;
-  status?: Status;
   listName?: string;
   overdue: boolean;
 }) {
@@ -30,12 +31,12 @@ export function TaskRow({
       href={`/w/${workspaceId}/l/${task.list_id}?task=${task.id}`}
       className="flex items-center gap-3 border-b px-3 py-2 last:border-b-0 hover:bg-muted/40"
     >
-      <StatusDot status={status} />
+      <StatusDot status={task.status} />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm">{task.title}</p>
         <p className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
-          {status ? <span>{status.name}</span> : null}
-          {status && listName ? <span aria-hidden>·</span> : null}
+          <span>{STATUS_LABEL[task.status]}</span>
+          {listName ? <span aria-hidden>·</span> : null}
           {listName ? <span className="truncate">{listName}</span> : null}
           {task.comment_count > 0 ? (
             <span className="flex items-center gap-0.5">

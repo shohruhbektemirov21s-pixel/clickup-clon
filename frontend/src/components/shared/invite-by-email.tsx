@@ -1,9 +1,8 @@
-"use client";
-
 import * as React from "react";
 import { AlertTriangle, CheckCircle2, HelpCircle, Loader2, UserPlus, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { INVITE_EMAIL } from "@/i18n/uz";
 import { api, isApiError } from "@/lib/api";
 import { useCreateInvitation } from "@/hooks/mutations";
 import type { EmailCheckResponse, EmailCheckStatus, InvitableRole } from "@/types/api";
@@ -24,7 +23,7 @@ const STATUS_STYLE: Record<
   EmailCheckStatus,
   { icon: React.ElementType; className: string }
 > = {
-  valid: { icon: CheckCircle2, className: "text-status-closed" },
+  valid: { icon: CheckCircle2, className: "text-status-done" },
   invalid: { icon: XCircle, className: "text-priority-urgent" },
   risky: { icon: AlertTriangle, className: "text-priority-high" },
   unknown: { icon: HelpCircle, className: "text-muted-foreground" },
@@ -76,11 +75,11 @@ export function InviteByEmail({
       setChecked(response);
     } catch (err) {
       if (isApiError(err) && err.code === "throttled") {
-        toast.error("Juda ko'p tekshiruv. Biroz kutib, qayta urinib ko'ring.");
+        toast.error(INVITE_EMAIL.throttled);
       } else if (isApiError(err) && err.code === "permission_denied") {
-        toast.error("Taklif yuborish huquqingiz yo'q.");
+        toast.error(INVITE_EMAIL.forbidden);
       } else {
-        toast.error("Manzilni tekshirib bo'lmadi.");
+        toast.error(INVITE_EMAIL.checkFailed);
       }
     } finally {
       setChecking(false);
@@ -114,7 +113,7 @@ export function InviteByEmail({
         </p>
       ) : (
         <p className="mt-1 text-[11px] text-muted-foreground">
-          Bu manzil ish maydonida yo&apos;q. Avval mavjudligini tekshiring.
+          {INVITE_EMAIL.notInWorkspace}
         </p>
       )}
 
@@ -127,7 +126,11 @@ export function InviteByEmail({
           disabled={checking}
         >
           {checking ? <Loader2 className="size-3.5 animate-spin" /> : null}
-          {checking ? "Tekshirilmoqda…" : result ? "Qayta tekshirish" : "Tekshirish"}
+          {checking
+            ? INVITE_EMAIL.checking
+            : result
+              ? INVITE_EMAIL.recheck
+              : INVITE_EMAIL.check}
         </Button>
         <Button
           size="sm"
@@ -148,14 +151,14 @@ export function InviteByEmail({
           ) : (
             <UserPlus className="size-3.5" />
           )}
-          {result?.membership === "invited" ? "Taklif yuborilgan" : "Taklif qilish"}
+          {result?.membership === "invited"
+            ? INVITE_EMAIL.alreadyInvited
+            : INVITE_EMAIL.invite}
         </Button>
       </div>
 
       {result?.status === "risky" || result?.status === "unknown" ? (
-        <p className="mt-1.5 text-[11px] text-muted-foreground">
-          Aniq javob olinmadi — taklif yuborish mumkin, lekin yetib borishiga kafolat yo&apos;q.
-        </p>
+        <p className="mt-1.5 text-[11px] text-muted-foreground">{INVITE_EMAIL.uncertain}</p>
       ) : null}
     </div>
   );

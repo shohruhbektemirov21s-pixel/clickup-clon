@@ -1,6 +1,4 @@
-"use client";
-
-import Link from "next/link";
+import { Link } from "@/components/ui/link";
 import { Users } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -8,7 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useMyPermissions, useSpaceMembers } from "@/hooks/queries";
 import { displayName, initials } from "@/lib/format";
 import { spacePermissionGate } from "@/lib/permissions";
-import { SPACE_ACCESS_LABEL } from "@/lib/roles";
+import { SPACE_ACCESS_LABEL, SPACE_MEMBERS } from "@/i18n/uz";
 
 const MAX_AVATARS = 5;
 
@@ -51,7 +49,7 @@ export function SpaceTeamStrip({
   return (
     <div className="flex items-center gap-1.5">
       {/* Rolsiz <div> dagi `aria-label` ni ba'zi ekran o'quvchilari o'qimaydi. */}
-      <div className="flex -space-x-1.5" role="group" aria-label="Bo'lim jamoasi">
+      <div className="flex -space-x-1.5" role="group" aria-label={SPACE_MEMBERS.teamAria}>
         {shown.map((row) => {
           // Mehmon ko'ruvchiga `email` `null` keladi (§4) — "null — Ko'ruvchi"
           // ko'rinmasin.

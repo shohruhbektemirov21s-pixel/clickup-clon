@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import {
   AlertTriangle,
@@ -56,8 +54,9 @@ import {
   useUpdateRolePermissions,
 } from "@/hooks/mutations";
 import { isApiError } from "@/lib/api";
+import { COMMON, PERMISSIONS_MATRIX, ROLE_LABEL } from "@/i18n/uz";
 import { can } from "@/lib/permissions";
-import { ROLE_COLUMNS, ROLE_LABEL } from "@/lib/roles";
+import { ROLE_COLUMNS } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 import type {
   AssignableRole,
@@ -72,7 +71,7 @@ type Draft = Partial<Record<AssignableRole, Partial<Record<PermissionCode, boole
 
 const EDITABLE_ROLES: AssignableRole[] = ["admin", "member", "guest"];
 
-const OWNER_LOCK_TOOLTIP = "Egasidan huquqlarni olib bo'lmaydi";
+const OWNER_LOCK_TOOLTIP = PERMISSIONS_MATRIX.ownerLockTooltip;
 
 function isEditableRole(role: Role): role is AssignableRole {
   return role !== "owner";
@@ -130,8 +129,7 @@ export function PermissionsMatrix({ workspaceId }: { workspaceId: string }) {
   if (catalog.isError || matrix.isError || !catalog.data || !matrix.data) {
     return (
       <div className="rounded-lg border border-danger/40 bg-danger/5 p-4 text-sm text-danger">
-        Huquqlar matritsasini yuklab bo&apos;lmadi. Sahifani yangilab, qayta urinib
-        ko&apos;ring.
+        {PERMISSIONS_MATRIX.loadFailed}
       </div>
     );
   }
@@ -228,11 +226,10 @@ function MatrixEditor({
         <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">
-              Huquqlar matritsasi
+              {PERMISSIONS_MATRIX.heading}
             </h2>
             <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-              Har bir rol nima qila olishini shu yerda boshqarasiz. O&apos;zgarishlar
-              darhol kuchga kiradi. Versiya: {matrix.version}
+              {PERMISSIONS_MATRIX.subtitle(matrix.version)}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -240,25 +237,25 @@ function MatrixEditor({
               <DropdownMenuTrigger
                 render={<Button variant="outline" size="sm" disabled={busy} />}
               >
-                <RotateCcw /> Standartga qaytarish
+                <RotateCcw /> {PERMISSIONS_MATRIX.resetMenu}
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 {EDITABLE_ROLES.map((role) => (
                   <DropdownMenuItem key={role} onClick={() => setResetTarget(role)}>
-                    {ROLE_LABEL[role]} rolini qaytarish
+                    {PERMISSIONS_MATRIX.resetRole(ROLE_LABEL[role])}
                   </DropdownMenuItem>
                 ))}
                 <DropdownMenuItem onClick={() => setResetTarget(null)}>
-                  Barcha rollarni qaytarish
+                  {PERMISSIONS_MATRIX.resetEveryRole}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
             <Button size="sm" disabled={dirtyCount === 0 || busy} onClick={save}>
               {update.isPending
-                ? "Saqlanmoqda…"
+                ? COMMON.saving
                 : dirtyCount > 0
-                  ? `Saqlash (${dirtyCount})`
-                  : "Saqlash"}
+                  ? PERMISSIONS_MATRIX.saveWithCount(dirtyCount)
+                  : COMMON.save}
             </Button>
           </div>
         </header>
@@ -359,7 +356,7 @@ function PermissionGroupCard({
         </span>
         {changedInGroup > 0 ? (
           <Badge variant="outline" className="ml-1">
-            {changedInGroup} o&apos;zgartirilgan
+            {PERMISSIONS_MATRIX.changedInGroup(changedInGroup)}
           </Badge>
         ) : null}
       </CollapsibleTrigger>
@@ -367,7 +364,7 @@ function PermissionGroupCard({
         <Table className="table-fixed border-t">
           <TableHeader>
             <TableRow>
-              <TableHead>Huquq</TableHead>
+              <TableHead>{PERMISSIONS_MATRIX.colPermission}</TableHead>
               {ROLE_COLUMNS.map((role) => (
                 <TableHead key={role} className="w-24 text-center">
                   <span className="inline-flex items-center gap-1">
@@ -427,22 +424,18 @@ function PermissionLabel({ perm }: { perm: PermissionDef }) {
         <Tooltip>
           <TooltipTrigger render={<span className="inline-flex" />}>
             <TriangleAlert className="size-3.5 text-amber-500" aria-hidden />
-            <span className="sr-only">Xavfli huquq</span>
+            <span className="sr-only">{PERMISSIONS_MATRIX.sensitiveLabel}</span>
           </TooltipTrigger>
-          <TooltipContent>
-            Xavfli huquq — qaytarib bo&apos;lmaydigan oqibatlarga olib kelishi mumkin.
-          </TooltipContent>
+          <TooltipContent>{PERMISSIONS_MATRIX.sensitiveTooltip}</TooltipContent>
         </Tooltip>
       ) : null}
       {perm.owner_only ? (
         <Tooltip>
           <TooltipTrigger render={<span className="inline-flex" />}>
             <Lock className="size-3.5 text-muted-foreground" aria-hidden />
-            <span className="sr-only">Faqat egasi uchun</span>
+            <span className="sr-only">{PERMISSIONS_MATRIX.ownerOnlyLabel}</span>
           </TooltipTrigger>
-          <TooltipContent>
-            Bu huquq faqat egasida bo&apos;ladi — boshqa rolga berib bo&apos;lmaydi.
-          </TooltipContent>
+          <TooltipContent>{PERMISSIONS_MATRIX.ownerOnlyTooltip}</TooltipContent>
         </Tooltip>
       ) : null}
       <code className="text-[11px] text-muted-foreground">{perm.code}</code>
@@ -494,8 +487,10 @@ function MatrixCell({
       />
       {changed || dirty ? (
         <span
-          aria-label={dirty ? "Saqlanmagan o'zgarish" : "O'zgartirilgan"}
-          title={dirty ? "Saqlanmagan o'zgarish" : "O'zgartirilgan (standartdan farqli)"}
+          aria-label={dirty ? PERMISSIONS_MATRIX.dirtyDot : PERMISSIONS_MATRIX.changedDot}
+          title={
+            dirty ? PERMISSIONS_MATRIX.dirtyDot : PERMISSIONS_MATRIX.changedDotTitle
+          }
           className={cn(
             "pointer-events-none absolute -top-1 -right-2 size-1.5 rounded-full",
             dirty ? "bg-amber-500" : "bg-primary",
@@ -511,19 +506,19 @@ function Legend() {
     <ul className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
       <li className="inline-flex items-center gap-1.5">
         <span className="size-1.5 rounded-full bg-primary" />
-        Standartdan farq qiladi (o&apos;zgartirilgan)
+        {PERMISSIONS_MATRIX.legendChanged}
       </li>
       <li className="inline-flex items-center gap-1.5">
         <span className="size-1.5 rounded-full bg-amber-500" />
-        Saqlanmagan o&apos;zgarish
+        {PERMISSIONS_MATRIX.dirtyDot}
       </li>
       <li className="inline-flex items-center gap-1.5">
         <TriangleAlert className="size-3.5 text-amber-500" />
-        Xavfli huquq
+        {PERMISSIONS_MATRIX.sensitiveLabel}
       </li>
       <li className="inline-flex items-center gap-1.5">
         <Lock className="size-3.5" />
-        Faqat egasi uchun / qulflangan
+        {PERMISSIONS_MATRIX.legendOwnerOnly}
       </li>
     </ul>
   );
@@ -543,23 +538,22 @@ function ResetDialog({
   const open = target !== undefined;
   const what =
     target === null || target === undefined
-      ? "barcha rollar"
-      : `«${ROLE_LABEL[target]}» roli`;
+      ? PERMISSIONS_MATRIX.resetTargetAll
+      : PERMISSIONS_MATRIX.resetTargetRole(ROLE_LABEL[target]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Standart huquqlarni tiklaysizmi?</DialogTitle>
+          <DialogTitle>{PERMISSIONS_MATRIX.resetTitle}</DialogTitle>
           <DialogDescription>
-            <span className="font-medium text-foreground">{what}</span> uchun barcha
-            qo&apos;lda kiritilgan o&apos;zgarishlar bekor qilinadi va standart holat
-            qaytariladi. Bu amal darhol kuchga kiradi.
+            <span className="font-medium text-foreground">{what}</span>{" "}
+            {PERMISSIONS_MATRIX.resetDescription}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-            Bekor qilish
+            {COMMON.cancel}
           </Button>
           <Button
             type="button"
@@ -567,7 +561,7 @@ function ResetDialog({
             disabled={pending}
             onClick={onConfirm}
           >
-            {pending ? "Tiklanmoqda…" : "Standartga qaytarish"}
+            {pending ? PERMISSIONS_MATRIX.resetting : PERMISSIONS_MATRIX.resetConfirm}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -596,7 +590,7 @@ function NotFoundView() {
   return (
     <div className="flex flex-col items-center justify-center gap-2 py-24 text-center">
       <p className="text-4xl font-semibold text-muted-foreground">404</p>
-      <p className="text-sm text-muted-foreground">Bunday sahifa topilmadi.</p>
+      <p className="text-sm text-muted-foreground">{PERMISSIONS_MATRIX.notFound}</p>
     </div>
   );
 }

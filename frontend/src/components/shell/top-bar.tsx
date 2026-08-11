@@ -1,8 +1,6 @@
-"use client";
-
 import * as React from "react";
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { Link } from "@/components/ui/link";
+import { useLocation, useNavigate } from "react-router";
 import {
   ArrowLeft,
   Check,
@@ -28,6 +26,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { NotificationBell } from "@/components/shell/notification-bell";
 import { useMe, useWorkspaces } from "@/hooks/queries";
 import { useLogout } from "@/hooks/use-logout";
 import { initials } from "@/lib/format";
@@ -40,14 +39,14 @@ export function TopBar({
   workspaceId: string;
   onToggleSidebar: () => void;
 }) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const [query, setQuery] = React.useState("");
 
   const onSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const q = query.trim();
     if (q.length >= 2) {
-      router.push(`/w/${workspaceId}/search?q=${encodeURIComponent(q)}`);
+      navigate(`/w/${workspaceId}/search?q=${encodeURIComponent(q)}`);
     }
   };
 
@@ -75,6 +74,7 @@ export function TopBar({
           />
         </div>
       </form>
+      <NotificationBell workspaceId={workspaceId} />
       <ThemeToggle />
       <AccountMenu workspaceId={workspaceId} />
     </header>
@@ -88,24 +88,24 @@ export function TopBar({
  * ortga qaytish foydalanuvchini ilovadan tashqariga (landing yoki kirish
  * sahifasiga) otib yuborardi.
  *
- * `router.back()` brauzer tarixiga tayanadi, tarix esa bo'sh bo'lishi mumkin
+ * `navigate(-1)` brauzer tarixiga tayanadi, tarix esa bo'sh bo'lishi mumkin
  * — masalan ro'yxat havolasi yangi ichki oynada ochilgan bo'lsa. Shuning
  * uchun tarix chuqurligi tekshiriladi va bo'lmasa ish maydoni bosh
  * sahifasiga qaytariladi, ya'ni tugma hech qachon "hech narsa qilmaydi"
  * holatida qolmaydi.
  */
 function BackButton({ workspaceId }: { workspaceId: string }) {
-  const router = useRouter();
-  const pathname = usePathname();
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
 
   if (pathname === `/w/${workspaceId}`) return null;
 
   const goBack = () => {
     if (typeof window !== "undefined" && window.history.length > 1) {
-      router.back();
+      navigate(-1);
       return;
     }
-    router.push(`/w/${workspaceId}`);
+    navigate(`/w/${workspaceId}`);
   };
 
   return (
@@ -170,7 +170,7 @@ function ThemeToggle() {
  * now lives here, so nothing is offered twice.
  */
 function AccountMenu({ workspaceId }: { workspaceId: string }) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const { data: me } = useMe();
   const { data: workspacesPage } = useWorkspaces();
   const onLogout = useLogout();
@@ -221,15 +221,15 @@ function AccountMenu({ workspaceId }: { workspaceId: string }) {
           </span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {/* router.push rather than render={<Link/>}: a MenuItem renders a
+        {/* navigate() rather than render={<Link/>}: a MenuItem renders a
             <div>, so composing an <a> into it relies on the anchor's native
             navigation surviving the menu close. An explicit push is
             unambiguous. */}
-        <DropdownMenuItem onClick={() => router.push("/settings/profile")}>
+        <DropdownMenuItem onClick={() => navigate("/settings/profile")}>
           <UserIcon className="size-4" />
           Profil
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => router.push(`/w/${workspaceId}/settings`)}>
+        <DropdownMenuItem onClick={() => navigate(`/w/${workspaceId}/settings`)}>
           <Settings className="size-4" />
           Ish maydoni sozlamalari
         </DropdownMenuItem>
@@ -246,7 +246,7 @@ function AccountMenu({ workspaceId }: { workspaceId: string }) {
                     ? `${w.name} — joriy ish maydoni`
                     : `${w.name} ish maydoniga o'tish`
                 }
-                onClick={() => router.push(`/w/${w.id}`)}
+                onClick={() => navigate(`/w/${w.id}`)}
               >
                 <span
                   aria-hidden

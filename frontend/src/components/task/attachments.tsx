@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import {
   Download,
@@ -87,7 +85,8 @@ function Thumbnail({ attachment }: { attachment: TaskAttachment }) {
 
   if (!url) return <IconFor attachment={attachment} />;
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- blob: URL, not a remote asset
+    // Oddiy `<img>` — manba `blob:` URL, tashqi rasm emas (ilgari bu yerda
+    // `next/image` qoidasini o'chiruvchi izoh turardi).
     <img
       src={url}
       alt={attachment.original_name}

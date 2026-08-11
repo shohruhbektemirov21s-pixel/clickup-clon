@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * S12 — global buyruqlar paneli (`Ctrl+K` / `Cmd+K`).
  *
@@ -11,7 +9,7 @@
  */
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router";
 import {
   ArrowRight,
   Clock,
@@ -34,8 +32,9 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusDot, PriorityFlag } from "@/components/task/pickers";
-import { useMembers, useStatusesByListIds, useWorkspaceTree } from "@/hooks/queries";
+import { useMembers, useWorkspaceTree } from "@/hooks/queries";
 import { initials, PRIORITY_META } from "@/lib/format";
+import { COMMON, SEARCH, STATUS_LABEL } from "@/i18n/uz";
 import { cn } from "@/lib/utils";
 import { Highlight } from "@/components/search/highlight";
 import { pushRecent, useRecentItems, type RecentItem } from "@/components/search/recent-items";
@@ -48,7 +47,12 @@ import {
   taskHref,
   taskPath,
 } from "@/components/search/tree-index";
-import { filterMembers, groupResults, useSearch } from "@/components/search/use-search";
+import {
+  filterMembers,
+  groupResults,
+  MIN_QUERY_LENGTH,
+  useSearch,
+} from "@/components/search/use-search";
 
 export function CommandPalette({ workspaceId }: { workspaceId: string }) {
   const [open, setOpen] = React.useState(false);
@@ -73,11 +77,8 @@ export function CommandPalette({ workspaceId }: { workspaceId: string }) {
         showCloseButton={false}
         className="top-[12vh] w-full max-w-[calc(100%-2rem)] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-2xl"
       >
-        <DialogTitle className="sr-only">Tezkor qidiruv</DialogTitle>
-        <DialogDescription className="sr-only">
-          Vazifa, ro&apos;yxat, bo&apos;lim yoki a&apos;zoni qidiring. Yurish uchun yuqori/quyi
-          o&apos;q, ochish uchun Enter, yopish uchun Esc.
-        </DialogDescription>
+        <DialogTitle className="sr-only">{SEARCH.title}</DialogTitle>
+        <DialogDescription className="sr-only">{SEARCH.dialogDescription}</DialogDescription>
         {/* Faqat panel ochiq bo'lganda mount bo'ladi: shu sababli qidiruv
             holati har safar toza boshlanadi va fokus effekti ishlaydi. */}
         {open ? <PaletteBody workspaceId={workspaceId} onClose={() => setOpen(false)} /> : null}
@@ -93,7 +94,7 @@ function PaletteBody({
   workspaceId: string;
   onClose: () => void;
 }) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [query, setQuery] = React.useState("");
 
@@ -110,12 +111,6 @@ function PaletteBody({
     [membersPage, search.resultQuery],
   );
 
-  const listIds = React.useMemo(
-    () => Array.from(new Set(groups.tasks.map((task) => task.list_id))),
-    [groups.tasks],
-  );
-  const { statusById } = useStatusesByListIds(listIds);
-
   const recent = useRecentItems(workspaceId);
 
   React.useEffect(() => {
@@ -128,9 +123,9 @@ function PaletteBody({
     (href: string, remember?: Omit<RecentItem, "at">) => {
       if (remember) pushRecent(remember);
       onClose();
-      router.push(href);
+      navigate(href);
     },
-    [onClose, router],
+    [onClose, navigate],
   );
 
   const trimmed = query.trim();
@@ -157,32 +152,32 @@ function PaletteBody({
       // cmdk o'zi filtrlamaydi — filtrlash serverda; bu yerda faqat tanlov
       // va klaviatura navigatsiyasi kerak.
       className="bg-transparent"
-      label="Tezkor qidiruv"
+      label={SEARCH.title}
     >
       <CommandInput
         ref={inputRef}
         value={query}
         onValueChange={setQuery}
-        placeholder="Vazifa, ro'yxat, bo'lim yoki a'zoni qidiring…"
+        placeholder={SEARCH.inputPlaceholder}
       />
 
       <CommandList className="max-h-[min(60vh,26rem)] px-1 pb-1">
         {/* --- qisqa so'rov --- */}
         {hasQuery && search.isTooShort ? (
-          <PaletteHint icon={<Search className="size-4" />} title="Kamida 2 belgi kiriting">
-            Qidiruv 2 ta belgidan boshlab ishlaydi.
+          <PaletteHint icon={<Search className="size-4" />} title={SEARCH.tooShortTitle(MIN_QUERY_LENGTH)}>
+            {SEARCH.tooShortHint(MIN_QUERY_LENGTH)}
           </PaletteHint>
         ) : null}
 
         {/* --- bo'sh so'rov: yaqinda ochilganlar --- */}
         {!hasQuery && !showRecent ? (
-          <PaletteHint icon={<Search className="size-4" />} title="Nimani qidiramiz?">
-            Vazifalar, ro&apos;yxatlar, bo&apos;limlar va a&apos;zolar bo&apos;yicha qidiring.
+          <PaletteHint icon={<Search className="size-4" />} title={SEARCH.idleTitle}>
+            {SEARCH.idleHint}
           </PaletteHint>
         ) : null}
 
         {showRecent ? (
-          <CommandGroup heading="Yaqinda ochilganlar">
+          <CommandGroup heading={SEARCH.recentHeading}>
             {recent.map((item) => (
               <CommandItem
                 key={`recent-${item.kind}-${item.id}`}
@@ -215,18 +210,17 @@ function PaletteBody({
 
         {search.isError ? (
           <div className="px-3 py-6 text-center text-sm text-danger">
-            Qidiruv amalga oshmadi.{" "}
+            {SEARCH.failed}{" "}
             <button type="button" className="underline" onClick={() => search.refetch()}>
-              Qayta urinish
+              {COMMON.retry}
             </button>
           </div>
         ) : null}
 
         <div className={cn(search.isStale && "opacity-60 transition-opacity")}>
           {groups.tasks.length > 0 ? (
-            <CommandGroup heading="Vazifalar">
+            <CommandGroup heading={SEARCH.groupTasks}>
               {groups.tasks.map((task) => {
-                const status = statusById.get(task.status_id);
                 const path = taskPath(index, task.list_id);
                 return (
                   <CommandItem
@@ -253,12 +247,10 @@ function PaletteBody({
                       </span>
                     ) : null}
                     <span className="ml-auto flex shrink-0 items-center gap-2 pl-3 text-xs text-muted-foreground">
-                      {status ? (
-                        <span className="flex items-center gap-1">
-                          <StatusDot status={status} />
-                          <span className="max-sm:hidden">{status.name}</span>
-                        </span>
-                      ) : null}
+                      <span className="flex items-center gap-1">
+                        <StatusDot status={task.status} />
+                        <span className="max-sm:hidden">{STATUS_LABEL[task.status]}</span>
+                      </span>
                       {path ? <span className="max-w-48 truncate max-sm:hidden">{path}</span> : null}
                     </span>
                   </CommandItem>
@@ -268,7 +260,7 @@ function PaletteBody({
           ) : null}
 
           {groups.lists.length > 0 ? (
-            <CommandGroup heading="Ro'yxatlar">
+            <CommandGroup heading={SEARCH.groupLists}>
               {groups.lists.map((list) => {
                 const path = joinPath(index.lists.get(list.id)?.path ?? []);
                 return (
@@ -300,7 +292,7 @@ function PaletteBody({
           ) : null}
 
           {groups.spaces.length > 0 || groups.folders.length > 0 ? (
-            <CommandGroup heading="Bo'limlar va jildlar">
+            <CommandGroup heading={SEARCH.groupContainers}>
               {groups.spaces.map((space) => {
                 const href = containerHref(
                   workspaceId,
@@ -322,7 +314,7 @@ function PaletteBody({
                       <Highlight text={space.name} query={search.resultQuery} />
                     </span>
                     <span className="ml-auto shrink-0 pl-3 text-xs text-muted-foreground">
-                      {href ? "Bo'lim" : "Bo'lim — ro'yxat yo'q"}
+                      {href ? SEARCH.space : SEARCH.spaceWithoutList}
                     </span>
                   </CommandItem>
                 );
@@ -342,7 +334,7 @@ function PaletteBody({
                       <Highlight text={folder.name} query={search.resultQuery} />
                     </span>
                     <span className="ml-auto truncate pl-3 text-xs text-muted-foreground">
-                      {joinPath(indexed?.path ?? []) || "Jild"}
+                      {joinPath(indexed?.path ?? []) || SEARCH.folder}
                     </span>
                   </CommandItem>
                 );
@@ -351,7 +343,7 @@ function PaletteBody({
           ) : null}
 
           {members.length > 0 ? (
-            <CommandGroup heading="A'zolar">
+            <CommandGroup heading={SEARCH.groupMembers}>
               {members.map((member) => (
                 <CommandItem
                   key={`member-${member.user.id}`}
@@ -385,9 +377,9 @@ function PaletteBody({
         {showEmpty ? (
           <PaletteHint
             icon={<Search className="size-4" />}
-            title={`«${search.resultQuery}» bo'yicha hech narsa topilmadi`}
+            title={SEARCH.emptyTitle(search.resultQuery)}
           >
-            Imloni tekshiring yoki qisqaroq so&apos;z bilan urinib ko&apos;ring.
+            {SEARCH.emptyHint}
           </PaletteHint>
         ) : null}
 
@@ -410,9 +402,7 @@ function PaletteBody({
                 }
               >
                 <ArrowRight className="size-4 text-muted-foreground" />
-                <span className="truncate">
-                  «{search.debouncedQuery}» bo&apos;yicha barcha natijalar
-                </span>
+                <span className="truncate">{SEARCH.seeAll(search.debouncedQuery)}</span>
               </CommandItem>
             </CommandGroup>
           </>
@@ -447,16 +437,16 @@ function PaletteFooter({ isSyncing }: { isSyncing: boolean }) {
     <div className="flex items-center gap-3 border-t px-3 py-1.5 text-[11px] text-muted-foreground">
       <span className="flex items-center gap-1">
         <Kbd>↑</Kbd>
-        <Kbd>↓</Kbd> tanlash
+        <Kbd>↓</Kbd> {SEARCH.hintSelect}
       </span>
       <span className="flex items-center gap-1">
         <Kbd>
           <CornerDownLeft className="size-2.5" />
         </Kbd>{" "}
-        ochish
+        {SEARCH.hintOpen}
       </span>
       <span className="flex items-center gap-1">
-        <Kbd>esc</Kbd> yopish
+        <Kbd>esc</Kbd> {SEARCH.hintClose}
       </span>
       <span className="ml-auto flex items-center gap-1">
         {isSyncing ? (
@@ -465,12 +455,12 @@ function PaletteFooter({ isSyncing }: { isSyncing: boolean }) {
               aria-hidden
               className="size-3 animate-spin rounded-full border-[1.5px] border-muted-foreground/30 border-t-muted-foreground"
             />
-            Qidirilmoqda…
+            {COMMON.searching}
           </>
         ) : (
           <>
             <Users className="size-3" />
-            Ish maydoni bo&apos;yicha
+            {SEARCH.scopeWorkspace}
           </>
         )}
       </span>

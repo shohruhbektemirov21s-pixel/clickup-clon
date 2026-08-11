@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import { ChevronDown, ChevronRight, MessageSquare, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,19 +17,18 @@ import {
   StatusPicker,
   TagPicker,
 } from "@/components/task/pickers";
-import type { Member, Status, Tag, Task } from "@/types/api";
+import { COMMON, isClosedStatus, LIST, STATUS_LABEL } from "@/i18n/uz";
+import type { Member, Tag, Task, TaskStatus } from "@/types/api";
 import { cn } from "@/lib/utils";
 
 export function ListView({
   workspaceId,
   listId,
-  statuses,
   onOpenTask,
   perms,
 }: {
   workspaceId: string;
   listId: string;
-  statuses: Status[];
   onOpenTask: (taskId: string) => void;
   perms: ListPermissions;
 }) {
@@ -50,40 +47,41 @@ export function ListView({
   if (isError) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 p-12 text-center">
-        <p className="text-sm text-muted-foreground">Vazifalarni yuklab bo&apos;lmadi.</p>
+        <p className="text-sm text-muted-foreground">{COMMON.tasksLoadFailed}</p>
         <Button variant="outline" size="sm" onClick={() => refetch()}>
-          Qayta urinish
+          {COMMON.retry}
         </Button>
       </div>
     );
   }
 
-  const orderedStatuses = [...statuses].sort((a, b) => a.order - b.order);
-  const groupsByStatus = new Map(data?.groups.map((g) => [g.status_id, g]) ?? []);
-  const total = data?.groups.reduce((sum, g) => sum + g.count, 0) ?? 0;
+  // Guruhlar SERVERDAN keladi va doim to'rttasi bor (§10.4) — bu yerda
+  // saralash ham, yig'ish ham qilinmaydi.
+  const groups = data?.groups ?? [];
+  const total = groups.reduce((sum, g) => sum + g.count, 0);
 
   return (
     <div className="flex-1 overflow-y-auto px-4 py-3">
-      {total === 0 && orderedStatuses.length === 0 ? (
-        <EmptyState canCreate={perms.canCreateTask} />
-      ) : (
-        orderedStatuses.map((status) => (
-          <StatusGroup
-            key={status.id}
-            listId={listId}
-            status={status}
-            statuses={orderedStatuses}
-            tasks={groupsByStatus.get(status.id)?.results ?? []}
-            count={groupsByStatus.get(status.id)?.count ?? 0}
-            members={members?.results ?? []}
-            tags={tags?.results ?? []}
-            onOpenTask={onOpenTask}
-            perms={perms}
-            workspaceId={workspaceId}
-            canInvite={canInvite}
-          />
-        ))
-      )}
+      {/* Ro'yxat butunlay bo'sh bo'lsa ham to'rtta guruh chiziladi (ular
+          serverdan keladi), shuning uchun bu blok ularni ALMASHTIRMAYDI —
+          faqat ustiga qisqa izoh qo'yadi. */}
+      {total === 0 ? <EmptyState canCreate={perms.canCreateTask} /> : null}
+      {groups.map((group) => (
+        <StatusGroup
+          key={group.status}
+          listId={listId}
+          status={group.status}
+          label={group.label || STATUS_LABEL[group.status]}
+          tasks={group.tasks}
+          count={group.count}
+          members={members?.results ?? []}
+          tags={tags?.results ?? []}
+          onOpenTask={onOpenTask}
+          perms={perms}
+          workspaceId={workspaceId}
+          canInvite={canInvite}
+        />
+      ))}
     </div>
   );
 }
@@ -91,11 +89,9 @@ export function ListView({
 function EmptyState({ canCreate }: { canCreate: boolean }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
-      <p className="text-sm font-medium">Hozircha vazifalar yo&apos;q.</p>
+      <p className="text-sm font-medium">{LIST.emptyTitle}</p>
       {canCreate ? (
-        <p className="text-sm text-muted-foreground">
-          Holat guruhi ostidagi “+ Vazifa qo&apos;shish” tugmasidan foydalaning.
-        </p>
+        <p className="text-sm text-muted-foreground">{LIST.emptyHint}</p>
       ) : null}
     </div>
   );
@@ -104,7 +100,7 @@ function EmptyState({ canCreate }: { canCreate: boolean }) {
 function StatusGroup({
   listId,
   status,
-  statuses,
+  label,
   tasks,
   count,
   members,
@@ -115,8 +111,8 @@ function StatusGroup({
   canInvite,
 }: {
   listId: string;
-  status: Status;
-  statuses: Status[];
+  status: TaskStatus;
+  label: string;
   tasks: Task[];
   count: number;
   members: Member[];
@@ -131,7 +127,7 @@ function StatusGroup({
   const canCreate = perms.canCreateTask;
 
   return (
-    <section className="mb-4" aria-label={status.name}>
+    <section className="mb-4" aria-label={label}>
       <div className="sticky top-0 z-10 flex h-8 items-center gap-2 bg-background">
         <button
           className="flex items-center gap-1.5 rounded-md px-1 py-0.5 hover:bg-muted"
@@ -144,9 +140,7 @@ function StatusGroup({
             <ChevronDown className="size-3.5 text-muted-foreground" />
           )}
           <StatusDot status={status} />
-          <span className="text-xs font-semibold tracking-wide uppercase">
-            {status.name}
-          </span>
+          <span className="text-xs font-semibold tracking-wide uppercase">{label}</span>
           <span className="text-xs text-muted-foreground">{count}</span>
         </button>
         {canCreate && !collapsed ? (
@@ -156,7 +150,7 @@ function StatusGroup({
             className="ml-auto text-muted-foreground"
             onClick={() => setComposing(true)}
           >
-            <Plus className="size-3.5" /> Vazifa qo&apos;shish
+            <Plus className="size-3.5" /> {COMMON.addTask}
           </Button>
         ) : null}
       </div>
@@ -164,22 +158,21 @@ function StatusGroup({
       {!collapsed ? (
         <div className="mt-1 overflow-hidden rounded-lg border">
           <div className="grid grid-cols-[minmax(240px,1fr)_140px_110px_90px_140px_40px] items-center gap-2 border-b bg-muted/50 px-3 py-1.5 text-xs font-medium text-muted-foreground max-lg:grid-cols-[minmax(200px,1fr)_110px_90px]">
-            <span>Nomi</span>
-            <span>Mas&apos;ullar</span>
-            <span>Muddat</span>
-            <span className="max-lg:hidden">Muhimlik</span>
-            <span className="max-lg:hidden">Teglar</span>
+            <span>{COMMON.name}</span>
+            <span>{LIST.colAssignees}</span>
+            <span>{LIST.colDue}</span>
+            <span className="max-lg:hidden">{LIST.colPriority}</span>
+            <span className="max-lg:hidden">{LIST.colTags}</span>
             <span className="max-lg:hidden" />
           </div>
           {tasks.length === 0 && !composing ? (
-            <div className="px-3 py-2.5 text-xs text-muted-foreground">Vazifalar yo&apos;q</div>
+            <div className="px-3 py-2.5 text-xs text-muted-foreground">{LIST.groupEmpty}</div>
           ) : (
             tasks.map((task) => (
               <TaskRow
                 key={task.id}
                 listId={listId}
                 task={task}
-                statuses={statuses}
                 members={members}
                 tags={tags}
                 onOpen={() => onOpenTask(task.id)}
@@ -193,7 +186,7 @@ function StatusGroup({
             composing ? (
               <InlineComposer
                 listId={listId}
-                statusId={status.id}
+                status={status}
                 onDone={() => setComposing(false)}
               />
             ) : (
@@ -201,7 +194,7 @@ function StatusGroup({
                 className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs text-muted-foreground hover:bg-muted/50"
                 onClick={() => setComposing(true)}
               >
-                <Plus className="size-3.5" /> Vazifa qo&apos;shish
+                <Plus className="size-3.5" /> {COMMON.addTask}
               </button>
             )
           ) : null}
@@ -214,7 +207,6 @@ function StatusGroup({
 function TaskRow({
   listId,
   task,
-  statuses,
   members,
   tags,
   onOpen,
@@ -224,7 +216,6 @@ function TaskRow({
 }: {
   listId: string;
   task: Task;
-  statuses: Status[];
   members: Member[];
   tags: Tag[];
   onOpen: () => void;
@@ -233,8 +224,7 @@ function TaskRow({
   canInvite: boolean;
 }) {
   const updateTask = useUpdateTask(listId);
-  const status = statuses.find((s) => s.id === task.status_id);
-  const closed = status?.type === "closed";
+  const closed = isClosedStatus(task.status);
 
   // Qator bo'yicha qaror: `task.update`, yoki o'ziga biriktirilgan bo'lsa
   // `task.update_assigned`. Mas'ullarni almashtirish alohida `task.assign`
@@ -251,17 +241,16 @@ function TaskRow({
     <div className="group grid h-9 grid-cols-[minmax(240px,1fr)_140px_110px_90px_140px_40px] items-center gap-2 border-b px-3 last:border-b-0 hover:bg-muted/40 max-lg:grid-cols-[minmax(200px,1fr)_110px_90px]">
       <div className="flex min-w-0 items-center gap-2">
         <StatusPicker
-          value={task.status_id}
-          statuses={statuses}
+          value={task.status}
           disabled={!canEdit}
-          onChange={(statusId) => patch({ status_id: statusId })}
+          onChange={(status) => patch({ status })}
           trigger={
             <button
               className="shrink-0 rounded-full p-0.5 hover:bg-muted"
-              aria-label={`Holat: ${status?.name ?? "noma'lum"}`}
+              aria-label={`Holat: ${STATUS_LABEL[task.status]}`}
               title={editHint}
             >
-              <StatusDot status={status} />
+              <StatusDot status={task.status} />
             </button>
           }
         />
@@ -346,11 +335,11 @@ function TaskRow({
 
 function InlineComposer({
   listId,
-  statusId,
+  status,
   onDone,
 }: {
   listId: string;
-  statusId: string;
+  status: TaskStatus;
   onDone: () => void;
 }) {
   const [title, setTitle] = React.useState("");
@@ -359,7 +348,7 @@ function InlineComposer({
   const submit = () => {
     const trimmed = title.trim();
     if (!trimmed) return;
-    createTask.mutate({ title: trimmed, status_id: statusId });
+    createTask.mutate({ title: trimmed, status });
     setTitle("");
   };
 

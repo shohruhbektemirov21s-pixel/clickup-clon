@@ -1,17 +1,15 @@
-"use client";
-
 import * as React from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { Link } from "@/components/ui/link";
+import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RegisterForm } from "@/components/auth/auth-form";
 import { useInvitationLookup } from "@/hooks/queries";
+import { INVITE, ROLE_LABEL } from "@/i18n/uz";
 import { api } from "@/lib/api";
 import { keys } from "@/lib/keys";
-import { ROLE_LABEL } from "@/lib/roles";
 import { useAuthStore } from "@/stores/auth-store";
 import type { AcceptInvitationResponse } from "@/types/api";
 
@@ -98,7 +96,7 @@ function InviteProblem({ title, hint }: { title: string; hint: string }) {
     <div className="flex w-full flex-col gap-4 text-center">
       <h1 className="text-lg font-semibold">{title}</h1>
       <p className="text-sm text-muted-foreground">{hint}</p>
-      <Button render={<Link href="/login" />}>Kirish sahifasiga o&apos;tish</Button>
+      <Button render={<Link href="/login" />}>{INVITE.goToLogin}</Button>
     </div>
   );
 }
@@ -117,7 +115,7 @@ function InviteProblem({ title, hint }: { title: string; hint: string }) {
  *  * Token yaroqsiz bo'lsa ish maydoni nomi umuman ko'rsatilmaydi.
  */
 export function InviteView({ token: tokenParam }: { token: string }) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   // Manzildagi bo'lak `/login` dan qaytishda sentinel bo'ladi — birinchi
   // renderdayoq haqiqiy tokenga aylantiramiz, so'rov to'g'ri ketsin.
@@ -143,10 +141,7 @@ export function InviteView({ token: tokenParam }: { token: string }) {
   // yopilgan sessiya yoki o'chirilgan storage.
   if (!token) {
     return (
-      <InviteProblem
-        title="Taklif havolasi topilmadi"
-        hint="Xavfsizlik uchun taklif kodi manzil qatorida saqlanmaydi. Emaildagi havolani shu brauzerda qaytadan oching."
-      />
+      <InviteProblem title={INVITE.missingLinkTitle} hint={INVITE.missingLinkHint} />
     );
   }
 
@@ -165,10 +160,7 @@ export function InviteView({ token: tokenParam }: { token: string }) {
   if (isError || !data) {
     // Ish maydoni nomi OSHKOR QILINMAYDI.
     return (
-      <InviteProblem
-        title="Taklif muddati tugagan yoki bekor qilingan"
-        hint="Havola ishlamayapti. Ish maydoni administratoridan yangi taklif so'rang."
-      />
+      <InviteProblem title={INVITE.expiredTitle} hint={INVITE.expiredHint} />
     );
   }
 
@@ -185,28 +177,27 @@ export function InviteView({ token: tokenParam }: { token: string }) {
       const res = await api.post<AcceptInvitationResponse>("invitations/accept/", { token });
       clearHandoff();
       await queryClient.invalidateQueries({ queryKey: keys.workspaces });
-      router.replace(`/w/${res.workspace_id}`);
+      navigate(`/w/${res.workspace_id}`, { replace: true });
     } catch {
-      setJoinError("Taklifni qabul qilib bo'lmadi. Havola eskirgan bo'lishi mumkin.");
+      setJoinError(INVITE.acceptFailed);
       setJoining(false);
     }
   };
 
   const header = (
     <div className="flex flex-col gap-2">
-      <h1 className="text-lg font-semibold">
-        Siz &laquo;{data.workspace_name}&raquo; ish maydoniga taklif qilingansiz
-      </h1>
+      <h1 className="text-lg font-semibold">{INVITE.heading(data.workspace_name)}</h1>
       <p className="text-sm text-muted-foreground">
-        Taklif <span className="font-medium text-foreground">{data.email}</span> manziliga
-        yuborilgan.
+        {INVITE.sentToPrefix}
+        <span className="font-medium text-foreground">{data.email}</span>
+        {INVITE.sentToSuffix}
       </p>
       <p className="flex items-center gap-2 text-sm text-muted-foreground">
-        Sizga <Badge variant="secondary">{roleLabel}</Badge> roli berilgan
+        {INVITE.roleGivenPrefix}
+        <Badge variant="secondary">{roleLabel}</Badge>
+        {INVITE.roleGivenSuffix}
       </p>
-      <p className="text-xs text-muted-foreground">
-        Rolni administrator belgilaydi — uni bu yerda o&apos;zgartirib bo&apos;lmaydi.
-      </p>
+      <p className="text-xs text-muted-foreground">{INVITE.roleReadOnly}</p>
     </div>
   );
 
@@ -216,7 +207,7 @@ export function InviteView({ token: tokenParam }: { token: string }) {
       <div className="flex w-full flex-col gap-5">
         {header}
         <Button onClick={onJoin} disabled={joining} aria-busy={joining}>
-          {joining ? "Qo'shilmoqda…" : "Ish maydoniga qo'shilish"}
+          {joining ? INVITE.joining : INVITE.joinWorkspace}
         </Button>
         {joinError ? (
           <p role="alert" className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">
@@ -233,10 +224,12 @@ export function InviteView({ token: tokenParam }: { token: string }) {
       <div className="flex w-full flex-col gap-5">
         {header}
         <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
-          Siz hozir <span className="font-medium text-foreground">{me.email}</span> hisobi
-          bilan kirgansiz. Taklifni qabul qilish uchun {data.email} hisobiga kiring.
+          {INVITE.signedInPrefix}
+          <span className="font-medium text-foreground">{me.email}</span>
+          {INVITE.signedInSuffix}
+          {INVITE.invitedAccountHint(data.email)}
         </p>
-        <Button render={<Link href={LOGIN_HREF} />}>Boshqa hisob bilan kirish</Button>
+        <Button render={<Link href={LOGIN_HREF} />}>{INVITE.loginWithOtherAccount}</Button>
       </div>
     );
   }
@@ -246,7 +239,7 @@ export function InviteView({ token: tokenParam }: { token: string }) {
     return (
       <div className="flex w-full flex-col gap-5">
         {header}
-        <Button render={<Link href={LOGIN_HREF} />}>Kirish va qo&apos;shilish</Button>
+        <Button render={<Link href={LOGIN_HREF} />}>{INVITE.loginAndJoin}</Button>
       </div>
     );
   }

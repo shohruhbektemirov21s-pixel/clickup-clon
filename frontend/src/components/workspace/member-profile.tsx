@@ -1,7 +1,5 @@
-"use client";
-
 import * as React from "react";
-import Link from "next/link";
+import { Link } from "@/components/ui/link";
 import { format } from "date-fns";
 import { uz } from "date-fns/locale";
 import {
@@ -35,16 +33,21 @@ import {
   useMemberProfile,
   useMemberTasks,
   useMyPermissions,
-  useStatusesByListIds,
   useWorkspaceActivity,
   useWorkspaceTree,
 } from "@/hooks/queries";
 import { displayName, formatDueDate, initials, PRIORITY_META, timeAgo } from "@/lib/format";
+import {
+  ACTIVITY,
+  MEMBER_PROFILE,
+  PROFESSION_LABEL,
+  ROLE_LABEL,
+  STATUS_LABEL,
+} from "@/i18n/uz";
 import { can } from "@/lib/permissions";
-import { PROFESSION_LABEL, ROLE_LABEL } from "@/lib/roles";
 import { BUCKET_LABEL, BUCKET_ORDER, groupByDue } from "@/lib/task-buckets";
 import { cn } from "@/lib/utils";
-import type { ActivityVerb, Priority, WorkspaceActivity } from "@/types/api";
+import type { ActivityVerb, Priority, TaskStatus, WorkspaceActivity } from "@/types/api";
 
 type ProfileTab = "tasks" | "activity" | "spaces";
 
@@ -78,6 +81,17 @@ function priorityLabel(value: string | null): string {
   return meta ? meta.label.toLowerCase() : value;
 }
 
+/**
+ * `status_changed` / `completed` qatorlarining `from_value`/`to_value` si —
+ * v1.4.0 dan boshlab KOD (`in_progress`), ilgarigi ko'rinadigan status nomi
+ * emas. Tarixiy qatorlarda eski nom ham uchrashi mumkin, shuning uchun
+ * noma'lum qiymat o'zgarishsiz chiziladi.
+ */
+function statusLabel(value: string | null): string {
+  if (!value) return "noma'lum";
+  return STATUS_LABEL[value as TaskStatus] ?? value;
+}
+
 function dateLabel(iso: string | null): string {
   if (!iso) return "muddatsiz";
   const parsed = new Date(iso);
@@ -93,81 +107,90 @@ function activitySentence(row: WorkspaceActivity, title: React.ReactNode): React
   const quoted = <>«{title}»</>;
   switch (row.verb) {
     case "created":
-      return <>{quoted} vazifasini yaratdi</>;
+      return <>{quoted} {ACTIVITY.created}</>;
     case "status_changed":
       return (
         <>
-          {quoted} vazifasini <strong className="font-medium">{row.to_value}</strong> ga
-          o&apos;tkazdi
+          {quoted} {ACTIVITY.statusChangedPrefix}{" "}
+          <strong className="font-medium">{statusLabel(row.to_value)}</strong>{" "}
+          {ACTIVITY.statusChangedSuffix}
         </>
       );
     case "completed":
-      return <>{quoted} vazifasini bajardi</>;
+      return <>{quoted} {ACTIVITY.completed}</>;
     case "assignee_added":
       return (
         <>
-          {quoted} vazifasini <strong className="font-medium">{row.to_value}</strong> ga
-          biriktirdi
+          {quoted} {ACTIVITY.assigneeAddedPrefix}{" "}
+          <strong className="font-medium">{row.to_value}</strong>{" "}
+          {ACTIVITY.assigneeAddedSuffix}
         </>
       );
     case "assignee_removed":
       return (
         <>
-          {quoted} vazifasidan <strong className="font-medium">{row.from_value}</strong>{" "}
-          ni olib tashladi
+          {quoted} {ACTIVITY.assigneeRemovedPrefix}{" "}
+          <strong className="font-medium">{row.from_value}</strong>{" "}
+          {ACTIVITY.assigneeRemovedSuffix}
         </>
       );
     case "priority_changed":
       return (
         <>
-          {quoted} muhimligini{" "}
-          <strong className="font-medium">{priorityLabel(row.to_value)}</strong> qildi
+          {quoted} {ACTIVITY.priorityChangedPrefix}{" "}
+          <strong className="font-medium">{priorityLabel(row.to_value)}</strong>{" "}
+          {ACTIVITY.priorityChangedSuffix}
         </>
       );
     case "due_date_changed":
       return (
         <>
-          {quoted} muddatini{" "}
-          <strong className="font-medium">{dateLabel(row.to_value)}</strong> ga
-          o&apos;zgartirdi
+          {quoted} {ACTIVITY.dueChangedPrefix}{" "}
+          <strong className="font-medium">{dateLabel(row.to_value)}</strong>{" "}
+          {ACTIVITY.dueChangedSuffix}
         </>
       );
     case "renamed":
       return (
         <>
-          {quoted} vazifasining nomini o&apos;zgartirdi
+          {quoted} {ACTIVITY.renamed}
           {row.from_value ? (
-            <span className="text-muted-foreground"> (avval «{row.from_value}»)</span>
+            <span className="text-muted-foreground">
+              {ACTIVITY.renamedFrom(row.from_value)}
+            </span>
           ) : null}
         </>
       );
     case "moved":
       return (
         <>
-          {quoted} vazifasini <strong className="font-medium">{row.to_value}</strong>{" "}
-          ro&apos;yxatiga ko&apos;chirdi
+          {quoted} {ACTIVITY.movedPrefix}{" "}
+          <strong className="font-medium">{row.to_value}</strong>{" "}
+          {ACTIVITY.movedSuffix}
         </>
       );
     case "deleted":
-      return <>{quoted} vazifasini o&apos;chirdi</>;
+      return <>{quoted} {ACTIVITY.deleted}</>;
     case "attachment_added":
       return (
         <>
-          {quoted} vazifasiga <strong className="font-medium">{row.to_value}</strong>{" "}
-          faylini biriktirdi
+          {quoted} {ACTIVITY.attachmentAddedPrefix}{" "}
+          <strong className="font-medium">{row.to_value}</strong>{" "}
+          {ACTIVITY.attachmentAddedSuffix}
         </>
       );
     case "attachment_removed":
       return (
         <>
-          {quoted} vazifasidan <strong className="font-medium">{row.from_value}</strong>{" "}
-          faylini o&apos;chirdi
+          {quoted} {ACTIVITY.attachmentRemovedPrefix}{" "}
+          <strong className="font-medium">{row.from_value}</strong>{" "}
+          {ACTIVITY.attachmentRemovedSuffix}
         </>
       );
     case "restored":
-      return <>{quoted} vazifasini tikladi</>;
+      return <>{quoted} {ACTIVITY.restored}</>;
     default:
-      return <>{quoted} vazifasini yangiladi</>;
+      return <>{quoted} {ACTIVITY.updated}</>;
   }
 }
 
@@ -281,7 +304,7 @@ export function MemberProfile({
             ) : null}
             <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
               <span>
-                Qo&apos;shilgan:{" "}
+                {MEMBER_PROFILE.joinedLabel}{" "}
                 {format(new Date(joined_at), "d MMMM yyyy", { locale: uz })}
               </span>
               <span aria-hidden>·</span>
@@ -332,9 +355,9 @@ export function MemberProfile({
         <div className="space-y-3">
           <Tabs value={tab} onValueChange={(value) => setTab(value as ProfileTab)}>
             <TabsList>
-              <TabsTrigger value="tasks">Vazifalar</TabsTrigger>
-              <TabsTrigger value="activity">Faoliyat</TabsTrigger>
-              <TabsTrigger value="spaces">Bo&apos;limlar</TabsTrigger>
+              <TabsTrigger value="tasks">{MEMBER_PROFILE.tabTasks}</TabsTrigger>
+              <TabsTrigger value="activity">{MEMBER_PROFILE.tabActivity}</TabsTrigger>
+              <TabsTrigger value="spaces">{MEMBER_PROFILE.tabSpaces}</TabsTrigger>
             </TabsList>
           </Tabs>
 
@@ -382,11 +405,6 @@ function TasksTab({
     [tasks.data],
   );
   const buckets = React.useMemo(() => groupByDue(open), [open]);
-  const listIds = React.useMemo(
-    () => Array.from(new Set(open.map((t) => t.list_id))),
-    [open],
-  );
-  const { statusById } = useStatusesByListIds(listIds);
   const tree = useWorkspaceTree(workspaceId);
   const listNames = React.useMemo(() => {
     const names = new Map<string, string>();
@@ -437,7 +455,6 @@ function TasksTab({
                 key={task.id}
                 workspaceId={workspaceId}
                 task={task}
-                status={statusById.get(task.status_id)}
                 listName={listNames.get(task.list_id)}
                 overdue={key === "overdue"}
               />
@@ -518,7 +535,7 @@ function ActivityTab({
       </ol>
       {feed.data && feed.data.count > rows.length ? (
         <p className="mt-2 text-xs text-muted-foreground">
-          Oxirgi {rows.length} ta yozuv ko&apos;rsatildi (jami {feed.data.count} ta).
+          {MEMBER_PROFILE.feedTruncated(rows.length, feed.data.count)}
         </p>
       ) : null}
     </section>

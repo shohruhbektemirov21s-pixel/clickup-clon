@@ -1,7 +1,5 @@
-"use client";
-
 import * as React from "react";
-import Link from "next/link";
+import { Link } from "@/components/ui/link";
 import { ArrowLeft, Check, Lock, Search, UserPlus, Users, X } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -25,19 +23,18 @@ import { useBulkSpaceMembers } from "@/hooks/mutations";
 import { displayName, initials } from "@/lib/format";
 import { can, spacePermissionGate } from "@/lib/permissions";
 import { InviteByEmail, looksLikeEmail } from "@/components/shared/invite-by-email";
-import { PROFESSION_LABEL, SPACE_ACCESS_LABEL } from "@/lib/roles";
+import {
+  COMMON,
+  PROFESSION_LABEL,
+  SPACE_ACCESS_HINT,
+  SPACE_ACCESS_LABEL,
+  SPACE_MEMBERS,
+} from "@/i18n/uz";
 import { cn } from "@/lib/utils";
 import type { Member, SpaceAccess, SpaceMember, UserSummary } from "@/types/api";
 
 /** Select order — least privilege first, so the safe choice is the near one. */
 const ACCESS_OPTIONS: SpaceAccess[] = ["viewer", "contributor", "manager"];
-
-/** One line of help per level; "PM" and "faqat ko'radi" do the work. */
-const ACCESS_HINT: Record<SpaceAccess, string> = {
-  viewer: "Faqat ko'radi — bo'lim ichida hech narsa yoza olmaydi.",
-  contributor: "Ish maydonidagi roli bo'yicha ishlaydi.",
-  manager: "Loyiha menejeri — shu bo'lim ichida jamoani va mazmunni boshqaradi.",
-};
 
 function UserCell({ user, subtitle }: { user: UserSummary; subtitle?: string }) {
   // Mehmon ko'ruvchiga `email` `null` keladi (§4): ikkinchi qator bo'sh
@@ -225,16 +222,14 @@ export function SpaceMembersPanel({
     // 404 is the honest answer for an invisible space — never reveal it exists.
     return (
       <div className="mx-auto w-full max-w-5xl p-8">
-        <p className="text-sm text-muted-foreground">
-          Bu bo&apos;lim topilmadi yoki sizda unga kirish huquqi yo&apos;q.
-        </p>
+        <p className="text-sm text-muted-foreground">{SPACE_MEMBERS.notFound}</p>
         <Button
           variant="outline"
           size="sm"
           className="mt-3"
           render={<Link href={`/w/${workspaceId}`} />}
         >
-          <ArrowLeft className="size-3.5" /> Ish maydoniga qaytish
+          <ArrowLeft className="size-3.5" /> {SPACE_MEMBERS.backToWorkspace}
         </Button>
       </div>
     );
@@ -248,7 +243,7 @@ export function SpaceMembersPanel({
             href={`/w/${workspaceId}`}
             className="mb-1 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
           >
-            <ArrowLeft className="size-3" /> Ish maydoni
+            <ArrowLeft className="size-3" /> {SPACE_MEMBERS.workspaceCrumb}
           </Link>
           <h1 className="flex items-center gap-2 text-xl font-semibold">
             {space ? (
@@ -257,18 +252,18 @@ export function SpaceMembersPanel({
                 style={{ backgroundColor: space.color || "#7B68EE" }}
               />
             ) : null}
-            <span className="truncate">{space?.name ?? "Bo'lim"}</span>
-            <span className="font-normal text-muted-foreground">— jamoa</span>
+            <span className="truncate">{space?.name ?? SPACE_MEMBERS.spaceFallback}</span>
+            <span className="font-normal text-muted-foreground">
+              {SPACE_MEMBERS.teamSuffix}
+            </span>
             {space?.is_private ? (
               <Badge variant="secondary" className="gap-1">
-                <Lock className="size-3" /> Yopiq
+                <Lock className="size-3" /> {SPACE_MEMBERS.privateBadge}
               </Badge>
             ) : null}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {canManage
-              ? "Loyihaga mos odamlarni tanlang va ularning darajasini belgilang."
-              : "Bu bo'limda kim ishlayapti. O'zgartirish uchun bo'lim menejeriga murojaat qiling."}
+            {canManage ? SPACE_MEMBERS.manageHint : SPACE_MEMBERS.readOnlyHint}
           </p>
         </div>
 
@@ -281,12 +276,12 @@ export function SpaceMembersPanel({
                 onClick={() => setDraft(null)}
                 disabled={bulk.isPending}
               >
-                Bekor qilish
+                {COMMON.cancel}
               </Button>
             ) : null}
             <Button size="sm" onClick={save} disabled={!dirty || bulk.isPending}>
               <Check className="size-3.5" />
-              {bulk.isPending ? "Saqlanmoqda…" : "Saqlash"}
+              {bulk.isPending ? COMMON.saving : COMMON.save}
             </Button>
           </div>
         ) : null}
@@ -294,8 +289,7 @@ export function SpaceMembersPanel({
 
       {dirty ? (
         <p className="mb-4 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
-          Saqlanmagan o&apos;zgarishlar: {add.length} ta qo&apos;shish/o&apos;zgartirish,{" "}
-          {remove.length} ta olib tashlash.
+          {SPACE_MEMBERS.unsavedChanges(add.length, remove.length)}
         </p>
       ) : null}
 
@@ -304,7 +298,7 @@ export function SpaceMembersPanel({
         <section className="rounded-xl border">
           <header className="flex items-center gap-2 border-b px-4 py-3">
             <Users className="size-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">Ish maydoni a&apos;zolari</h2>
+            <h2 className="text-sm font-semibold">{SPACE_MEMBERS.rosterHeading}</h2>
             <span className="ml-auto text-xs text-muted-foreground">
               {candidates.length}
             </span>
@@ -315,9 +309,9 @@ export function SpaceMembersPanel({
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Ism yoki email bo'yicha qidirish"
+                placeholder={SPACE_MEMBERS.searchPlaceholder}
                 className="pl-8"
-                aria-label="Ish maydoni a'zolarini qidirish"
+                aria-label={SPACE_MEMBERS.searchAria}
               />
             </div>
           </div>
@@ -331,9 +325,7 @@ export function SpaceMembersPanel({
           <ul className="max-h-[26rem] overflow-y-auto">
             {candidates.length === 0 ? (
               <li className="px-4 py-6 text-center text-sm text-muted-foreground">
-                {looksLikeEmail(query)
-                  ? "Ish maydonida bunday a'zo yo'q."
-                  : "Mos a'zo topilmadi."}
+                {looksLikeEmail(query) ? SPACE_MEMBERS.noSuchMember : SPACE_MEMBERS.noMatch}
               </li>
             ) : (
               candidates.map((member) => {
@@ -356,16 +348,16 @@ export function SpaceMembersPanel({
                     ) : null}
                     {inSpace ? (
                       <span className="shrink-0 text-xs text-muted-foreground">
-                        Bo&apos;limda
+                        {SPACE_MEMBERS.inSpace}
                       </span>
                     ) : canManage ? (
                       <Button
                         variant="outline"
                         size="xs"
                         onClick={() => setAccess(member.user.id, "contributor")}
-                        aria-label={`${displayName(member.user)} ni bo'limga qo'shish`}
+                        aria-label={SPACE_MEMBERS.addToSpaceAria(displayName(member.user))}
                       >
-                        <UserPlus className="size-3" /> Qo&apos;shish
+                        <UserPlus className="size-3" /> {COMMON.add}
                       </Button>
                     ) : null}
                   </li>
@@ -379,13 +371,13 @@ export function SpaceMembersPanel({
         <section className="rounded-xl border">
           <header className="flex items-center gap-2 border-b px-4 py-3">
             <Users className="size-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">Bo&apos;lim jamoasi</h2>
+            <h2 className="text-sm font-semibold">{SPACE_MEMBERS.teamHeading}</h2>
             <span className="ml-auto text-xs text-muted-foreground">{team.length}</span>
           </header>
           <ul className="max-h-[30rem] overflow-y-auto">
             {team.length === 0 ? (
               <li className="px-4 py-8 text-center text-sm text-muted-foreground">
-                Hozircha hech kim biriktirilmagan.
+                {SPACE_MEMBERS.teamEmpty}
               </li>
             ) : (
               team.map(({ userId, user }) => {
@@ -394,7 +386,7 @@ export function SpaceMembersPanel({
                 const isNew = !(userId in serverState);
                 const changed = !isNew && serverState[userId] !== access;
                 // Ekran o'quvchisiga UUID ham, "null" ham o'qilmasin.
-                const label = user ? displayName(user) : "Noma'lum foydalanuvchi";
+                const label = user ? displayName(user) : SPACE_MEMBERS.unknownUser;
                 return (
                   <li
                     key={userId}
@@ -409,9 +401,9 @@ export function SpaceMembersPanel({
                           user={user}
                           subtitle={
                             row?.source === "auto_assignee"
-                              ? "Vazifa biriktirilgani uchun avtomatik qo'shilgan"
+                              ? SPACE_MEMBERS.autoAssignee
                               : row?.source === "auto_creator"
-                                ? "Bo'lim yaratuvchisi"
+                                ? SPACE_MEMBERS.autoCreator
                                 : undefined
                           }
                         />
@@ -428,13 +420,13 @@ export function SpaceMembersPanel({
                         <AccessSelect
                           value={access}
                           onChange={(next) => setAccess(userId, next)}
-                          label={`${label} darajasi`}
+                          label={SPACE_MEMBERS.accessAria(label)}
                         />
                         <Button
                           variant="ghost"
                           size="icon-xs"
                           className="text-danger"
-                          aria-label={`${label} ni bo'limdan olib tashlash`}
+                          aria-label={SPACE_MEMBERS.removeAria(label)}
                           onClick={() => removeUser(userId)}
                         >
                           <X />
@@ -455,7 +447,7 @@ export function SpaceMembersPanel({
                   <span className="font-medium text-foreground">
                     {SPACE_ACCESS_LABEL[access]}
                   </span>{" "}
-                  — {ACCESS_HINT[access]}
+                  — {SPACE_ACCESS_HINT[access]}
                 </p>
               ))}
             </div>

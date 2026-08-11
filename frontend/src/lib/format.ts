@@ -1,6 +1,7 @@
 import { format, formatDistanceToNow, isPast, isToday } from "date-fns";
 import { uz } from "date-fns/locale";
-import type { Priority, StatusType } from "@/types/api";
+import { isClosedStatus, PRIORITY_CLASS, PRIORITY_LABEL, PRIORITY_ORDER } from "@/i18n/uz";
+import type { Priority, TaskStatus } from "@/types/api";
 
 /**
  * Ekranda ko'rsatiladigan ism.
@@ -32,9 +33,13 @@ export function formatDueDate(iso: string | null): string {
   });
 }
 
-export function isOverdue(iso: string | null, statusType?: StatusType): boolean {
+/**
+ * Muddat o'tganmi. Yopilgan vazifa hech qachon "kechikkan" emas — v1.4.0 dan
+ * buni `status === "done"` hal qiladi; holat turi degan alohida maydon yo'q.
+ */
+export function isOverdue(iso: string | null, status?: TaskStatus): boolean {
   if (!iso) return false;
-  if (statusType === "closed") return false;
+  if (status && isClosedStatus(status)) return false;
   const d = new Date(iso);
   return isPast(d) && !isToday(d);
 }
@@ -62,21 +67,17 @@ export function formatFileSize(bytes: number): string {
   return `${String(rounded).replace(".", ",")} ${units[unit]}`;
 }
 
-export const PRIORITIES: Priority[] = ["urgent", "high", "normal", "low", "none"];
+/**
+ * Muhimlik yorliqlari YAGONA manbadan — `src/i18n/uz.ts`. Bu yerda faqat
+ * qayta eksport turadi, chunki chaqiruvchilar tarixan `@/lib/format` dan
+ * o'qiydi; ikkinchi ta'rif YOZILMASIN.
+ */
+export const PRIORITIES: readonly Priority[] = PRIORITY_ORDER;
 
-export const PRIORITY_META: Record<Priority, { label: string; className: string }> = {
-  urgent: { label: "Juda muhim", className: "text-priority-urgent" },
-  high: { label: "Yuqori", className: "text-priority-high" },
-  normal: { label: "O'rtacha", className: "text-priority-normal" },
-  low: { label: "Past", className: "text-priority-low" },
-  none: { label: "Muhimlik yo'q", className: "text-priority-none" },
-};
-
-export const STATUS_TYPE_COLOR: Record<StatusType, string> = {
-  open: "#87909E",
-  active: "#4194F6",
-  closed: "#6BC950",
-};
+export const PRIORITY_META: Record<Priority, { label: string; className: string }> =
+  Object.fromEntries(
+    PRIORITY_ORDER.map((p) => [p, { label: PRIORITY_LABEL[p], className: PRIORITY_CLASS[p] }]),
+  ) as Record<Priority, { label: string; className: string }>;
 
 /** Plain text → minimal rich-text pair (both fields must travel together). */
 export function textToRichBody(text: string): {

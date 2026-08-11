@@ -1,8 +1,7 @@
-"use client";
-
 import * as React from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { AUTH } from "@/i18n/uz";
 import { cn } from "@/lib/utils";
 
 /**
@@ -27,7 +26,7 @@ export function PasswordInput({
       <button
         type="button"
         onClick={() => setVisible((v) => !v)}
-        aria-label={visible ? "Parolni yashirish" : "Parolni ko'rsatish"}
+        aria-label={visible ? AUTH.passwordHide : AUTH.passwordShow}
         aria-pressed={visible}
         // WCAG 2.1.1 (A): tugma klaviatura bilan ham topilishi shart —
         // `tabIndex={-1}` uni faqat sichqoncha uchun qoldirar edi.

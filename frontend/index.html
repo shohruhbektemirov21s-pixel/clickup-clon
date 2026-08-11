@@ -1,0 +1,26 @@
+<!doctype html>
+<!--
+  SPA qobig'i. Ilgari bu markup `src/app/layout.tsx` da edi; `html`/`body`
+  sinflari AYNAN o'sha holicha ko'chirildi, aks holda `h-full`/`min-h-full`
+  ga tayangan ekranlar (auth kartasi, `AppShell`) buzilardi.
+
+  `#root` ga `contents` berilgan: React ildizi qo'shimcha flex qatlami
+  yaratmasin — `body` ning bevosita farzandi ilgarigidek sahifa daraxti
+  bo'lib qoladi.
+-->
+<html lang="uz" class="h-full antialiased">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <meta
+      name="description"
+      content="Jamoangiz uchun vazifalar, ro'yxatlar va doskalar."
+    />
+    <title>UzWork</title>
+  </head>
+  <body class="flex min-h-full flex-col">
+    <div id="root" class="contents"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

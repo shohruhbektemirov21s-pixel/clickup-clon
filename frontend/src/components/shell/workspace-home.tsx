@@ -1,7 +1,5 @@
-"use client";
-
 import * as React from "react";
-import Link from "next/link";
+import { Link } from "@/components/ui/link";
 import { ListFilter, CalendarDays, CircleAlert, ListChecks, Plus, Users, X } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -13,18 +11,17 @@ import {
   useMembers,
   useMyPermissions,
   useMyTasks,
-  useStatusesByListIds,
   useWorkspace,
   useWorkspaceTasks,
   useWorkspaceTree,
 } from "@/hooks/queries";
-import { useWorkspaceChannel } from "@/hooks/use-workspace-channel";
 import type { WorkspaceConnectionStatus } from "@/hooks/use-workspace-channel";
+import { useWorkspaceConnection } from "@/components/shell/workspace-realtime";
 import { CreateEntityDialog } from "@/components/shell/create-entity-dialog";
 import { TaskRow } from "@/components/shared/task-row";
 import { initials } from "@/lib/format";
+import { COMMON, ROLE_LABEL, WORKSPACE_HOME } from "@/i18n/uz";
 import { can, canInSpace } from "@/lib/permissions";
-import { ROLE_LABEL } from "@/lib/roles";
 import {
   BUCKET_LABEL,
   BUCKET_ORDER,
@@ -155,8 +152,9 @@ export function WorkspaceHome({ workspaceId }: { workspaceId: string }) {
   // Single workspace-wide page shared by the team tab AND the member counters.
   const teamTasks = useWorkspaceTasks(workspaceId, canReadTasks);
 
-  // Live workspace channel: task.* / list.updated / permission.updated.
-  const connection = useWorkspaceChannel(workspaceId);
+  // Soket shell darajasida ochilgan (`WorkspaceRealtimeProvider`) — bu yerda
+  // faqat holati o'qiladi, aks holda ikkinchi ulanish paydo bo'lardi.
+  const connection = useWorkspaceConnection();
 
   const [view, setView] = React.useState<HomeView>("mine");
   const [assigneeFilter, setAssigneeFilter] = React.useState<string | null>(null);
@@ -201,11 +199,9 @@ export function WorkspaceHome({ workspaceId }: { workspaceId: string }) {
   if (treeError) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 p-12 text-center">
-        <p className="text-sm text-muted-foreground">
-          Ish maydonini yuklab bo&apos;lmadi.
-        </p>
+        <p className="text-sm text-muted-foreground">{WORKSPACE_HOME.loadFailed}</p>
         <Button variant="outline" size="sm" onClick={() => refetchTree()}>
-          Qayta urinish
+          {COMMON.retry}
         </Button>
       </div>
     );
@@ -238,10 +234,12 @@ export function WorkspaceHome({ workspaceId }: { workspaceId: string }) {
         <header className="flex items-start gap-3">
           <div className="min-w-0">
             <h1 className="text-xl font-semibold">
-              {firstName ? `Salom, ${firstName}!` : "Salom!"}
+              {firstName
+                ? WORKSPACE_HOME.greeting(firstName)
+                : WORKSPACE_HOME.greetingAnon}
             </h1>
             <p className="text-sm text-muted-foreground">
-              {workspace?.name ?? "Ish maydoni"} — kunlik ko&apos;rinish
+              {workspace?.name ?? COMMON.workspaceFallback} {WORKSPACE_HOME.subtitleSuffix}
             </p>
           </div>
           <LiveBadge status={connection} />
@@ -432,14 +430,6 @@ function MyTasksSection({
   isError: boolean;
   onRetry: () => void;
 }) {
-  // Tasks carry only `status_id`; resolve names/colors from the status sets of
-  // the lists actually shown (cached and shared with the list pages).
-  const listIds = React.useMemo(
-    () => Array.from(new Set(tasks.map((t) => t.list_id))),
-    [tasks],
-  );
-  const { statusById } = useStatusesByListIds(listIds);
-
   return (
     <section aria-label="Mening vazifalarim">
       {/* The visible label is the tab; the section still needs its own heading. */}
@@ -452,21 +442,16 @@ function MyTasksSection({
         </div>
       ) : isError ? (
         <div className="flex flex-col items-start gap-2 rounded-lg border p-4">
-          <p className="text-sm text-danger">
-            Vazifalaringizni yuklab bo&apos;lmadi.
-          </p>
+          <p className="text-sm text-danger">{WORKSPACE_HOME.myTasksFailed}</p>
           <Button variant="outline" size="sm" onClick={onRetry}>
-            Qayta urinish
+            {COMMON.retry}
           </Button>
         </div>
       ) : tasks.length === 0 ? (
         <div className="rounded-lg border p-8 text-center">
-          <p className="text-sm font-medium">
-            Sizga biriktirilgan ochiq vazifa yo&apos;q.
-          </p>
+          <p className="text-sm font-medium">{WORKSPACE_HOME.myTasksEmptyTitle}</p>
           <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
-            Ro&apos;yxatdan o&apos;zingizga vazifa biriktiring — u shu yerda
-            darhol paydo bo&apos;ladi.
+            {WORKSPACE_HOME.myTasksEmptyHint}
           </p>
           <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
             {firstListId ? (
@@ -476,12 +461,12 @@ function MyTasksSection({
                 render={<Link href={`/w/${workspaceId}/l/${firstListId}`} />}
               >
                 <Plus className="size-4" />
-                Vazifa yaratish
+                {COMMON.createTask}
               </Button>
             ) : null}
             {canSeeTeam ? (
               <Button size="sm" variant="outline" onClick={onShowTeam}>
-                Jamoa vazifalarini ko&apos;rish
+                {WORKSPACE_HOME.showTeamTasks}
               </Button>
             ) : null}
           </div>
@@ -509,7 +494,6 @@ function MyTasksSection({
                     key={task.id}
                     workspaceId={workspaceId}
                     task={task}
-                    status={statusById.get(task.status_id)}
                     listName={listNames.get(task.list_id)}
                     overdue={key === "overdue"}
                   />
@@ -554,11 +538,6 @@ function TeamTasksSection({
 }) {
   // Same cache entry the team grid reads — no second request.
   const members = useMembers(workspaceId);
-  const listIds = React.useMemo(
-    () => Array.from(new Set(tasks.map((t) => t.list_id))),
-    [tasks],
-  );
-  const { statusById } = useStatusesByListIds(listIds);
 
   const groups = React.useMemo(
     () => groupByAssignee(tasks, members.data?.results ?? []),
@@ -602,21 +581,16 @@ function TeamTasksSection({
         </div>
       ) : isError ? (
         <div className="flex flex-col items-start gap-2 rounded-lg border p-4">
-          <p className="text-sm text-danger">
-            Jamoa vazifalarini yuklab bo&apos;lmadi.
-          </p>
+          <p className="text-sm text-danger">{WORKSPACE_HOME.teamTasksFailed}</p>
           <Button variant="outline" size="sm" onClick={onRetry}>
-            Qayta urinish
+            {COMMON.retry}
           </Button>
         </div>
       ) : tasks.length === 0 ? (
         <div className="rounded-lg border p-8 text-center">
-          <p className="text-sm font-medium">
-            Ish maydonida hali vazifa yo&apos;q — birinchisini yarating.
-          </p>
+          <p className="text-sm font-medium">{WORKSPACE_HOME.teamTasksEmptyTitle}</p>
           <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
-            Vazifa yaratilgach, u kim bajarayotganiga qarab shu yerda
-            guruhlanadi.
+            {WORKSPACE_HOME.teamTasksEmptyHint}
           </p>
           <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
             {firstListId ? (
@@ -626,26 +600,24 @@ function TeamTasksSection({
                 render={<Link href={`/w/${workspaceId}/l/${firstListId}`} />}
               >
                 <Plus className="size-4" />
-                Birinchi vazifani yaratish
+                {WORKSPACE_HOME.createFirstTask}
               </Button>
             ) : null}
             <Button size="sm" variant="outline" onClick={onShowMine}>
-              Mening vazifalarim
+              {WORKSPACE_HOME.showMyTasks}
             </Button>
           </div>
         </div>
       ) : visible.length === 0 ? (
         <div className="rounded-lg border p-6 text-center">
-          <p className="text-sm font-medium">
-            Bu a&apos;zoga biriktirilgan ochiq vazifa yo&apos;q.
-          </p>
+          <p className="text-sm font-medium">{WORKSPACE_HOME.memberEmpty}</p>
           <Button
             className="mt-3"
             size="sm"
             variant="outline"
             onClick={onClearFilter}
           >
-            Filtrni tozalash
+            {WORKSPACE_HOME.clearFilter}
           </Button>
         </div>
       ) : (
@@ -704,7 +676,6 @@ function TeamTasksSection({
                     key={`${group.key}:${task.id}`}
                     workspaceId={workspaceId}
                     task={task}
-                    status={statusById.get(task.status_id)}
                     listName={listNames.get(task.list_id)}
                     overdue={!!task.due_date && new Date(task.due_date) < now}
                   />
@@ -766,11 +737,9 @@ function TeamSection({
         </div>
       ) : members.isError ? (
         <div className="flex flex-col items-start gap-2 rounded-lg border p-4">
-          <p className="text-sm text-danger">
-            Jamoa a&apos;zolarini yuklab bo&apos;lmadi.
-          </p>
+          <p className="text-sm text-danger">{WORKSPACE_HOME.membersFailed}</p>
           <Button variant="outline" size="sm" onClick={() => members.refetch()}>
-            Qayta urinish
+            {COMMON.retry}
           </Button>
         </div>
       ) : (
@@ -878,14 +847,13 @@ function EmptyWorkspace({
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-2 p-16 text-center">
-      <h2 className="text-lg font-semibold">Ish maydoningizga xush kelibsiz</h2>
+      <h2 className="text-lg font-semibold">{WORKSPACE_HOME.emptyTitle}</h2>
       <p className="max-w-sm text-sm text-muted-foreground">
-        Vazifa qo&apos;shishni boshlash uchun yon paneldan bo&apos;lim va
-        ro&apos;yxat yarating.
+        {WORKSPACE_HOME.emptyHint}
       </p>
       {canCreate ? (
         <Button className="mt-2" onClick={() => setCreating(true)}>
-          {firstSpaceId ? "Ro'yxat yaratish" : "Bo'lim yaratish"}
+          {firstSpaceId ? WORKSPACE_HOME.createList : WORKSPACE_HOME.createSpace}
         </Button>
       ) : null}
       {creating ? (

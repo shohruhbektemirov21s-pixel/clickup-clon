@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import { CalendarIcon, Check, Flag, Tag as TagIcon, UserPlus, X } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -30,42 +28,54 @@ import {
   isOverdue,
   PRIORITIES,
   PRIORITY_META,
-  STATUS_TYPE_COLOR,
 } from "@/lib/format";
-import { ROLE_LABEL } from "@/lib/roles";
+import {
+  ROLE_LABEL,
+  STATUS_COLOR,
+  STATUS_LABEL,
+  STATUS_ORDER,
+  TASK,
+} from "@/i18n/uz";
 import { cn } from "@/lib/utils";
-import type { Member, Priority, Status, Tag, UserSummary } from "@/types/api";
+import type { Member, Priority, Tag, TaskStatus, UserSummary } from "@/types/api";
 
 // ---------------------------------------------------------------------------
 // Status
 // ---------------------------------------------------------------------------
 
-export function StatusDot({ status, className }: { status?: Status; className?: string }) {
-  const color = status?.color || (status ? STATUS_TYPE_COLOR[status.type] : "#87909E");
+/**
+ * Holat nuqtasi. Rang endi bazadan emas — `src/i18n/uz.ts` dagi lug'atdan
+ * (§9: DB'da status nomi ham, rangi ham saqlanmaydi).
+ */
+export function StatusDot({
+  status,
+  className,
+}: {
+  status?: TaskStatus;
+  className?: string;
+}) {
   return (
     <span
       className={cn("inline-block size-2.5 shrink-0 rounded-full", className)}
-      style={{ backgroundColor: color }}
+      style={{ backgroundColor: status ? STATUS_COLOR[status] : STATUS_COLOR.todo }}
       aria-hidden
     />
   );
 }
 
+/** To'rtta qat'iy kod — ro'yxat `STATUS_ORDER` dan, serverdan so'ralmaydi. */
 export function StatusPicker({
   value,
-  statuses,
   onChange,
   disabled,
   trigger,
 }: {
-  value: string;
-  statuses: Status[];
-  onChange: (statusId: string) => void;
+  value: TaskStatus;
+  onChange: (status: TaskStatus) => void;
   disabled?: boolean;
   trigger?: React.ReactElement;
 }) {
   const [open, setOpen] = React.useState(false);
-  const current = statuses.find((s) => s.id === value);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -79,8 +89,8 @@ export function StatusPicker({
       >
         {trigger ? null : (
           <>
-            <StatusDot status={current} />
-            <span className="truncate text-xs">{current?.name ?? "Holat"}</span>
+            <StatusDot status={value} />
+            <span className="truncate text-xs">{STATUS_LABEL[value]}</span>
           </>
         )}
       </PopoverTrigger>
@@ -90,19 +100,18 @@ export function StatusPicker({
           <CommandList>
             <CommandEmpty>Holat topilmadi.</CommandEmpty>
             <CommandGroup>
-              {statuses.map((status) => (
+              {STATUS_ORDER.map((status) => (
                 <CommandItem
-                  key={status.id}
-                  // Ikki holat bir xil nomlansa cmdk ularni farqlay olmaydi.
-                  value={commandValue(status.name, status.id)}
+                  key={status}
+                  value={commandValue(STATUS_LABEL[status], status)}
                   onSelect={() => {
                     setOpen(false);
-                    if (status.id !== value) onChange(status.id);
+                    if (status !== value) onChange(status);
                   }}
                 >
                   <StatusDot status={status} />
-                  {status.name}
-                  {status.id === value ? <Check className="ml-auto size-4" /> : null}
+                  {STATUS_LABEL[status]}
+                  {status === value ? <Check className="ml-auto size-4" /> : null}
                 </CommandItem>
               ))}
             </CommandGroup>
@@ -512,9 +521,9 @@ export function TagPicker({
       </PopoverTrigger>
       <PopoverContent className="w-56 p-0" align="start">
         <Command>
-          <CommandInput placeholder="Teg qo'shish…" />
+          <CommandInput placeholder={TASK.tagPlaceholder} />
           <CommandList>
-            <CommandEmpty>Bu ish maydonida teglar yo&apos;q.</CommandEmpty>
+            <CommandEmpty>{TASK.tagsEmpty}</CommandEmpty>
             <CommandGroup>
               {tags.map((tag) => (
                 <CommandItem

@@ -1,12 +1,11 @@
-"use client";
-
 import * as React from "react";
-import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { Link } from "@/components/ui/link";
+import { useLocation } from "react-router";
 import { MailPlus, ShieldCheck, SlidersHorizontal, Users } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useMyPermissions, useWorkspace } from "@/hooks/queries";
 import { can } from "@/lib/permissions";
+import { SETTINGS_SHELL } from "@/i18n/uz";
 import { cn } from "@/lib/utils";
 import type { PermissionCode } from "@/types/api";
 
@@ -47,7 +46,7 @@ export function SettingsShell({
   workspaceId: string;
   children: React.ReactNode;
 }) {
-  const pathname = usePathname();
+  const { pathname } = useLocation();
   const { data: workspace } = useWorkspace(workspaceId);
   const { data: my, isPending } = useMyPermissions(workspaceId);
 
@@ -57,7 +56,7 @@ export function SettingsShell({
   return (
     <div className="flex flex-1 overflow-hidden">
       <nav
-        aria-label="Sozlamalar bo'limlari"
+        aria-label={SETTINGS_SHELL.navAria}
         className="hidden w-56 shrink-0 flex-col gap-0.5 overflow-y-auto border-r p-3 md:flex"
       >
         <p className="mb-2 px-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
@@ -101,7 +100,7 @@ export function SettingsShell({
           </h1>
           {/* Section rail collapses on narrow screens — keep links reachable. */}
           <nav
-            aria-label="Sozlamalar bo'limlari"
+            aria-label={SETTINGS_SHELL.navAria}
             className="mb-6 flex flex-wrap gap-1.5 md:hidden"
           >
             {visible.map((section) => {

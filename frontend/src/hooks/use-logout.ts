@@ -1,7 +1,5 @@
-"use client";
-
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { logout, markIntentionalLogout } from "@/lib/auth";
 import { clearAllRecent } from "@/components/search/recent-items";
@@ -23,7 +21,7 @@ import { clearAllRecent } from "@/components/search/recent-items";
  * would send whoever logs in next straight into the previous user's workspace.
  */
 export function useLogout() {
-  const router = useRouter();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   return React.useCallback(async () => {
@@ -31,6 +29,6 @@ export function useLogout() {
     await logout();
     queryClient.clear();
     clearAllRecent();
-    router.replace("/login");
-  }, [queryClient, router]);
+    navigate("/login", { replace: true });
+  }, [queryClient, navigate]);
 }

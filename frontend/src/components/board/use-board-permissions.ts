@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import { useMe, useMyPermissions } from "@/hooks/queries";
 import { contentPermissions, type ContentPermissions } from "@/lib/permissions";

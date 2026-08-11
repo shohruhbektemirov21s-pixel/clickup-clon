@@ -1,10 +1,9 @@
-"use client";
-
 import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { useParams } from "next/navigation";
+import { useParams } from "react-router";
 import { toast } from "sonner";
 import { api, isApiError } from "@/lib/api";
 import { keys } from "@/lib/keys";
+import { COMMON, MUTATIONS } from "@/i18n/uz";
 import {
   applyLocalMove,
   removeTaskFromGroups,
@@ -12,6 +11,8 @@ import {
   writeTaskEverywhere,
 } from "@/lib/task-cache";
 import type {
+  AddMemberRequest,
+  AppNotification,
   ChatMessage,
   Conversation,
   CreateChannelRequest,
@@ -34,6 +35,7 @@ import type {
   SpaceMember,
   Task,
   TaskAttachment,
+  TaskStatus,
   TaskWriteRequest,
   UpdateRolePermissionsRequest,
   Workspace,
@@ -43,16 +45,16 @@ function errorMessage(err: unknown): string {
   if (isApiError(err)) {
     switch (err.code) {
       case "permission_denied":
-        return "Sizda bu amal uchun ruxsat yo'q.";
+        return MUTATIONS.errPermissionDenied;
       case "not_found":
-        return "Topilmadi — u allaqachon o'chirilgan bo'lishi mumkin.";
+        return MUTATIONS.errNotFound;
       case "throttled":
-        return "Urinishlar juda ko'p. Biroz kutib, qayta urinib ko'ring.";
+        return COMMON.errThrottled;
       default:
         return err.message;
     }
   }
-  return "Nimadir xato ketdi. Internet aloqasini tekshirib, qayta urinib ko'ring.";
+  return COMMON.errNetwork;
 }
 
 // ---------------------------------------------------------------------------
@@ -133,13 +135,16 @@ function scheduleWorkspaceRollup(
 
 /**
  * The workspace a task mutation happens in. Every task surface lives under
- * `/w/[workspaceId]/…`, so the route already carries the id and no call site
+ * `/w/:workspaceId/…`, so the route already carries the id and no call site
  * has to pass it; outside that segment it is `null` and the rollup is skipped.
+ *
+ * Next'da `useParams` catch-all segment uchun massiv ham qaytarardi va bu
+ * yerda massiv shoxobchasi bor edi; React Router'da segment doim satr,
+ * shuning uchun u shoxobcha olib tashlandi.
  */
 function useRouteWorkspaceId(): string | null {
-  const params = useParams<{ workspaceId?: string | string[] }>();
-  const raw = params?.workspaceId;
-  return (Array.isArray(raw) ? raw[0] : raw) ?? null;
+  const params = useParams<{ workspaceId?: string }>();
+  return params.workspaceId ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -184,7 +189,7 @@ export function useUpdateTask(listId: string) {
       // since the request only carries ids.
       const scalarPatch: Partial<Task> = {};
       if (patch.title !== undefined) scalarPatch.title = patch.title;
-      if (patch.status_id !== undefined) scalarPatch.status_id = patch.status_id;
+      if (patch.status !== undefined) scalarPatch.status = patch.status;
       if (patch.priority !== undefined) scalarPatch.priority = patch.priority;
       if (patch.due_date !== undefined) scalarPatch.due_date = patch.due_date;
       if (patch.start_date !== undefined) scalarPatch.start_date = patch.start_date;
@@ -199,7 +204,7 @@ export function useUpdateTask(listId: string) {
       }
       if (previousGrouped) {
         const current = previousGrouped.groups
-          .flatMap((g) => g.results)
+          .flatMap((g) => g.tasks)
           .find((t) => t.id === taskId);
         if (current) {
           queryClient.setQueryData<GroupedTasksResponse>(
@@ -217,12 +222,7 @@ export function useUpdateTask(listId: string) {
       if (ctx?.previousTask) {
         queryClient.setQueryData(keys.task(taskId), ctx.previousTask);
       }
-      if (isApiError(err) && err.code === "invalid_status_for_list") {
-        toast.error("Bu holat ushbu ro'yxatda mavjud emas.");
-        queryClient.invalidateQueries({ queryKey: keys.statusSet(listId) });
-      } else {
-        toast.error(errorMessage(err));
-      }
+      toast.error(errorMessage(err));
     },
     onSuccess: (task) => {
       writeTaskEverywhere(queryClient, task);
@@ -255,7 +255,7 @@ export function useDeleteTask(listId: string) {
     onSuccess: (_data, taskId) => {
       queryClient.removeQueries({ queryKey: keys.task(taskId) });
       scheduleWorkspaceRollup(queryClient, workspaceId);
-      toast.success("Vazifa o'chirildi");
+      toast.success(MUTATIONS.taskDeleted);
     },
   });
 }
@@ -272,7 +272,8 @@ export interface UpdateTaskVars {
 
 export interface MoveIntent {
   taskId: string;
-  toStatusId: string;
+  /** Maqsad ustunining kodi — `move/` da MAJBURIY maydon (§10.3). */
+  toStatus: TaskStatus;
   /** Index inside the destination column after removal of the dragged item. */
   toIndex: number;
   beforeId: string | null;
@@ -291,7 +292,7 @@ export function useMoveTask(listId: string) {
     mutationFn: (intent: MoveIntent) =>
       api.patch<MoveTaskResponse>(`tasks/${intent.taskId}/move/`, {
         list_id: listId,
-        status_id: intent.toStatusId,
+        status: intent.toStatus,
         before_id: intent.beforeId,
         after_id: intent.afterId,
       } satisfies MoveTaskRequest),
@@ -302,7 +303,7 @@ export function useMoveTask(listId: string) {
       queryClient.setQueryData<GroupedTasksResponse>(
         groupedKey,
         (old) =>
-          applyLocalMove(old, intent.taskId, intent.toStatusId, intent.toIndex) ?? old,
+          applyLocalMove(old, intent.taskId, intent.toStatus, intent.toIndex) ?? old,
       );
       return { previous };
     },
@@ -327,11 +328,6 @@ export function useMoveTask(listId: string) {
         // Stale neighbours — silent recovery via refetch.
         queryClient.invalidateQueries({ queryKey: keys.tasksRoot(listId) });
         return;
-      }
-      if (isApiError(err) && err.code === "invalid_status_for_list") {
-        queryClient.invalidateQueries({ queryKey: keys.statusSet(listId) });
-        toast.error("Bu holat ushbu ro'yxatda mavjud emas.");
-        return; // rollback already applied above
       }
       toast.error(errorMessage(err));
     },
@@ -416,7 +412,7 @@ export function attachmentErrorMessage(err: unknown): string {
       if (fieldError) return fieldError;
     }
     if (err.code === "throttled") {
-      return "Juda ko'p fayl yuklandi. Biroz kutib, qayta urinib ko'ring.";
+      return MUTATIONS.errUploadThrottled;
     }
     if (err.status === 0) return err.message; // network error from the XHR path
   }
@@ -476,7 +472,7 @@ export function useDeleteAttachment(taskId: string) {
             : old,
       );
       queryClient.invalidateQueries({ queryKey: keys.task(taskId) });
-      toast.success("Fayl o'chirildi");
+      toast.success(MUTATIONS.fileDeleted);
     },
     onError: (err) => toast.error(attachmentErrorMessage(err)),
   });
@@ -495,7 +491,7 @@ export function useRenameWorkspace(workspaceId: string) {
       queryClient.setQueryData(keys.workspace(workspaceId), workspace);
       queryClient.invalidateQueries({ queryKey: keys.workspaces });
       queryClient.invalidateQueries({ queryKey: keys.tree(workspaceId) });
-      toast.success("Ish maydoni yangilandi");
+      toast.success(MUTATIONS.workspaceUpdated);
     },
     onError: (err) => toast.error(errorMessage(err)),
   });
@@ -535,7 +531,7 @@ export function useRemoveMember(workspaceId: string) {
             }
           : old,
       );
-      toast.success("A'zo chiqarildi");
+      toast.success(MUTATIONS.memberRemoved);
     },
     onError: (err) => toast.error(errorMessage(err)),
   });
@@ -550,17 +546,17 @@ export function useCreateInvitation(workspaceId: string) {
       queryClient.invalidateQueries({ queryKey: keys.invitations(workspaceId) });
       // The roster changes as soon as an invite is accepted; refresh both.
       queryClient.invalidateQueries({ queryKey: keys.members(workspaceId) });
-      toast.success("Taklif yuborildi");
+      toast.success(MUTATIONS.invitationSent);
     },
     onError: (err) => {
       if (isApiError(err)) {
         // §5: duplicate pending invite / already a member / send cap reached.
         if (err.code === "conflict") {
-          toast.error("Bu foydalanuvchi allaqachon a'zo yoki taklifi yuborilgan.");
+          toast.error(MUTATIONS.errAlreadyMemberOrInvited);
           return;
         }
         if (err.code === "throttled") {
-          toast.error("Juda ko'p taklif yuborildi. Biroz kutib, qayta urinib ko'ring.");
+          toast.error(MUTATIONS.errInviteThrottled);
           return;
         }
         const emailError = err.fieldError("email") ?? err.fieldError("role");
@@ -574,13 +570,128 @@ export function useCreateInvitation(workspaceId: string) {
   });
 }
 
+/**
+ * `POST workspaces/{id}/members/` — ro'yxatdan o'tgan odamni to'g'ridan-to'g'ri
+ * jamoaga qo'shish. Taklifdan farqi: a'zolik SHU ZAHOTI paydo bo'ladi, ya'ni
+ * roster darhol yangilanadi va qo'shilgan odam bildirishnoma oladi.
+ *
+ * `invitations` keshi ham bekor qilinadi: server shu emailga qolgan «pending»
+ * taklifni `accepted` qiladi (aks holda u abadiy osilib qolardi).
+ */
+export function useAddExistingMember(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: AddMemberRequest) =>
+      api.post<Member>(`workspaces/${workspaceId}/members/`, body),
+    onSuccess: (member) => {
+      queryClient.invalidateQueries({ queryKey: keys.members(workspaceId) });
+      queryClient.invalidateQueries({ queryKey: keys.invitations(workspaceId) });
+      // Roster o'zgardi → `member_count` ham. Ish maydoni kartasi shundan o'qiydi.
+      queryClient.invalidateQueries({ queryKey: keys.workspace(workspaceId) });
+      queryClient.invalidateQueries({ queryKey: keys.workspaces });
+      const name = member.user.full_name || member.user.email;
+      toast.success(MUTATIONS.memberAdded(name));
+    },
+    onError: (err) => {
+      if (isApiError(err)) {
+        if (err.code === "conflict") {
+          toast.error(MUTATIONS.errAlreadyInTeam);
+          return;
+        }
+        const fieldError = err.fieldError("user_id") ?? err.fieldError("role");
+        if (fieldError) {
+          toast.error(fieldError);
+          return;
+        }
+      }
+      toast.error(errorMessage(err));
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// §19 Bildirishnomalar
+// ---------------------------------------------------------------------------
+
+/**
+ * Bitta bildirishnomani o'qilgan deb belgilaydi.
+ *
+ * Kesh optimistik yangilanadi: qo'ng'iroqcha bosilganda foydalanuvchi allaqachon
+ * boshqa sahifaga o'tib ketgan bo'ladi, ya'ni javobni kutib nishonni ushlab
+ * turish "bosdim, lekin hech nima o'zgarmadi" hissini beradi. Xato bo'lsa
+ * server holati bekor qilish orqali qaytariladi.
+ */
+export function useMarkNotificationRead(workspaceId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (notificationId: string) =>
+      api.post<AppNotification>(`notifications/${notificationId}/read/`),
+    onMutate: async (notificationId) => {
+      await queryClient.cancelQueries({ queryKey: keys.notifications(workspaceId) });
+      const previous = queryClient.getQueryData<Paginated<AppNotification>>(
+        keys.notifications(workspaceId),
+      );
+      const wasUnread = previous?.results.some(
+        (n) => n.id === notificationId && !n.is_read,
+      );
+      if (previous) {
+        queryClient.setQueryData<Paginated<AppNotification>>(
+          keys.notifications(workspaceId),
+          {
+            ...previous,
+            results: previous.results.map((n) =>
+              n.id === notificationId ? { ...n, is_read: true } : n,
+            ),
+          },
+        );
+      }
+      if (wasUnread) {
+        queryClient.setQueryData<{ count: number }>(
+          keys.notificationsUnread(workspaceId),
+          (old) => (old ? { count: Math.max(0, old.count - 1) } : old),
+        );
+      }
+      return { previous, wasUnread };
+    },
+    onError: (_err, _id, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(keys.notifications(workspaceId), context.previous);
+      }
+      if (context?.wasUnread) {
+        queryClient.setQueryData<{ count: number }>(
+          keys.notificationsUnread(workspaceId),
+          (old) => (old ? { count: old.count + 1 } : old),
+        );
+      }
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: keys.notificationsRoot });
+    },
+  });
+}
+
+/** `POST notifications/read-all/` — joriy ish maydoni doirasida. */
+export function useMarkAllNotificationsRead(workspaceId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ updated: number }>("notifications/read-all/", {
+        workspace: workspaceId ?? undefined,
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: keys.notificationsRoot });
+    },
+    onError: (err) => toast.error(errorMessage(err)),
+  });
+}
+
 export function useRevokeInvitation(workspaceId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (invitationId: string) => api.delete(`invitations/${invitationId}/`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: keys.invitations(workspaceId) });
-      toast.success("Taklif bekor qilindi");
+      toast.success(MUTATIONS.invitationRevoked);
     },
     onError: (err) => toast.error(errorMessage(err)),
   });
@@ -593,12 +704,12 @@ export function useResendInvitation(workspaceId: string) {
       api.post<Invitation>(`invitations/${invitationId}/resend/`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: keys.invitations(workspaceId) });
-      toast.success("Taklif qayta yuborildi");
+      toast.success(MUTATIONS.invitationResent);
     },
     onError: (err) => {
       // §5: resend is throttled 1/5min and capped at 5 sends.
       if (isApiError(err) && err.code === "conflict") {
-        toast.error("Bu taklif uchun yuborish chegarasi tugagan.");
+        toast.error(MUTATIONS.errResendLimit);
         return;
       }
       toast.error(errorMessage(err));
@@ -611,8 +722,7 @@ export function useResendInvitation(workspaceId: string) {
 // ---------------------------------------------------------------------------
 
 /** Uzbek message for a 409 on the matrix — someone else saved in between. */
-export const MATRIX_CONFLICT_MESSAGE =
-  "Boshqa admin matritsani o'zgartirdi. Eng so'nggi holat qayta yuklandi — o'zgarishlaringizni ko'rib chiqing va qaytadan saqlang.";
+export const MATRIX_CONFLICT_MESSAGE = MUTATIONS.matrixConflict;
 
 /**
  * Writes a sparse patch of the matrix. `expected_version` is mandatory: the
@@ -632,7 +742,7 @@ export function useUpdateRolePermissions(workspaceId: string) {
       // Own affordances and the workspace `permissions_version` both move.
       queryClient.invalidateQueries({ queryKey: keys.myPermissions(workspaceId) });
       queryClient.invalidateQueries({ queryKey: keys.workspace(workspaceId) });
-      toast.success("Huquqlar saqlandi");
+      toast.success(MUTATIONS.permissionsSaved);
     },
     onError: (err) => {
       if (isApiError(err) && err.code === "conflict") {
@@ -666,7 +776,7 @@ export function useResetRolePermissions(workspaceId: string) {
       queryClient.setQueryData(keys.rolePermissions(workspaceId), matrix);
       queryClient.invalidateQueries({ queryKey: keys.myPermissions(workspaceId) });
       queryClient.invalidateQueries({ queryKey: keys.workspace(workspaceId) });
-      toast.success("Standart huquqlar tiklandi");
+      toast.success(MUTATIONS.permissionsReset);
     },
     onError: (err) => {
       if (isApiError(err) && err.code === "conflict") {
@@ -721,7 +831,7 @@ export function useRenameEntity(workspaceId: string) {
     onSuccess: (_data, { kind, id }) => {
       queryClient.invalidateQueries({ queryKey: keys.tree(workspaceId) });
       if (kind === "list") queryClient.invalidateQueries({ queryKey: keys.list(id) });
-      toast.success("Nomi o'zgartirildi");
+      toast.success(MUTATIONS.renamed);
     },
     onError: (err) => toast.error(errorMessage(err)),
   });
@@ -735,7 +845,7 @@ export function useDeleteSpace(workspaceId: string) {
       api.delete(`spaces/${id}/`, { confirm_name: confirmName }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: keys.tree(workspaceId) });
-      toast.success("Bo'lim o'chirildi");
+      toast.success(MUTATIONS.spaceDeleted);
     },
     onError: (err) => toast.error(errorMessage(err)),
   });
@@ -749,7 +859,7 @@ export function useDeleteFolder(workspaceId: string) {
       api.delete(`folders/${id}/`, undefined, { query: { strategy } }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: keys.tree(workspaceId) });
-      toast.success("Jild o'chirildi");
+      toast.success(MUTATIONS.folderDeleted);
     },
     onError: (err) => toast.error(errorMessage(err)),
   });
@@ -764,7 +874,7 @@ export function useDeleteList(workspaceId: string) {
       queryClient.invalidateQueries({ queryKey: keys.tree(workspaceId) });
       queryClient.removeQueries({ queryKey: keys.list(id) });
       queryClient.removeQueries({ queryKey: keys.tasksRoot(id) });
-      toast.success("Ro'yxat o'chirildi");
+      toast.success(MUTATIONS.listDeleted);
     },
     onError: (err) => toast.error(errorMessage(err)),
   });
@@ -802,13 +912,12 @@ export function useCreateList(workspaceId: string) {
  * private space without a manager — otherwise nobody could ever add a member
  * back and the space would lock itself shut.
  */
-const LAST_MANAGER_MESSAGE =
-  "Bu yopiq bo'limning oxirgi menejeri — avval boshqa menejer tayinlang.";
+const LAST_MANAGER_MESSAGE = MUTATIONS.errLastManager;
 
 function spaceMemberError(err: unknown): string {
   if (isApiError(err)) {
     if (err.details?.reason === "last_manager") return LAST_MANAGER_MESSAGE;
-    if (err.code === "conflict") return "Bu foydalanuvchi allaqachon bo'lim a'zosi.";
+    if (err.code === "conflict") return MUTATIONS.errAlreadySpaceMember;
     const fieldError = err.fieldError("user_id") ?? err.fieldError("remove");
     if (fieldError) return fieldError;
   }
@@ -823,7 +932,7 @@ export function useAddSpaceMember(spaceId: string) {
       api.post<SpaceMember>(`spaces/${spaceId}/members/`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: keys.spaceMembers(spaceId) });
-      toast.success("Bo'limga qo'shildi");
+      toast.success(MUTATIONS.spaceMemberAdded);
     },
     onError: (err) => toast.error(spaceMemberError(err)),
   });
@@ -865,7 +974,7 @@ export function useRemoveSpaceMember(spaceId: string) {
               }
             : old,
       );
-      toast.success("Bo'limdan olib tashlandi");
+      toast.success(MUTATIONS.spaceMemberRemoved);
     },
     onError: (err) => toast.error(spaceMemberError(err)),
   });
@@ -889,9 +998,9 @@ export function useBulkSpaceMembers(spaceId: string) {
         results: data.results,
       });
       const parts: string[] = [];
-      if (data.added) parts.push(`${data.added} ta qo'shildi`);
-      if (data.removed) parts.push(`${data.removed} ta olib tashlandi`);
-      toast.success(parts.length ? parts.join(", ") : "O'zgarishlar saqlandi");
+      if (data.added) parts.push(MUTATIONS.bulkAdded(data.added));
+      if (data.removed) parts.push(MUTATIONS.bulkRemoved(data.removed));
+      toast.success(parts.length ? parts.join(", ") : MUTATIONS.changesSaved);
     },
     onError: (err) => toast.error(spaceMemberError(err)),
   });
@@ -908,7 +1017,7 @@ export function useCreateChannel(workspaceId: string) {
       api.post<Conversation>(`workspaces/${workspaceId}/chat/channels/`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: keys.conversations(workspaceId) });
-      toast.success("Kanal yaratildi");
+      toast.success(MUTATIONS.channelCreated);
     },
     onError: (err) => toast.error(errorMessage(err)),
   });
@@ -934,7 +1043,7 @@ export function useJoinConversation(workspaceId: string) {
       api.post(`chat/conversations/${conversationId}/join/`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: keys.conversations(workspaceId) });
-      toast.success("Kanalga qo'shildingiz");
+      toast.success(MUTATIONS.channelJoined);
     },
     onError: (err) => toast.error(errorMessage(err)),
   });

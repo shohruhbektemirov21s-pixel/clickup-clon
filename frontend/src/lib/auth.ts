@@ -1,5 +1,3 @@
-"use client";
-
 import { api } from "@/lib/api";
 import { getRefreshToken, useAuthStore } from "@/stores/auth-store";
 import type { AuthResponse, LoginRequest, RegisterRequest } from "@/types/api";

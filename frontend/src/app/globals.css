@@ -52,20 +52,42 @@
   /* Clickish design tokens (docs/UI_SPEC.md §2) — identical in both themes */
   --color-priority-urgent: #f50000;
   --color-priority-high: #ffcc00;
-  --color-priority-normal: #6fddff;
+  --color-priority-medium: #6fddff;
   --color-priority-low: #d8d8d8;
   --color-priority-none: #a0a0a0;
-  --color-status-open: #87909e;
-  --color-status-active: #4194f6;
-  --color-status-closed: #6bc950;
+
+  /* Vazifa holati — kontrakt §9 dagi to'rtta kod. Hex qiymatlar
+     `src/i18n/uz.ts` dagi `STATUS_COLOR` bilan AYNAN bir xil bo'lishi shart:
+     inline `style` ishlatadigan joylar o'sha lug'atdan o'qiydi. */
+  --color-status-todo: #87909e;
+  --color-status-in-progress: #4194f6;
+  --color-status-review: #7b68ee;
+  --color-status-done: #6bc950;
   --color-brand-pink: #fd71af;
   --color-brand-blue: #49ccf9;
   --color-brand-yellow: #ffc800;
   --color-brand-green: #2ecd6f;
   --color-danger: #e5484d;
+
+  /* Chap navigatsiya reyki. ClickUp'dagi kabi HAR IKKALA mavzuda ham to'q:
+     u ilovaning doimiy "ramkasi" bo'lib, mavzu bilan birga oqarib ketsa
+     yon panel bilan qo'shilib, ikki daraja bir tekislikda ko'rinardi. */
+  --color-rail: #12121a;
+  --color-rail-foreground: #9ca0ab;
+  --color-rail-active: #ffffff;
+  --color-rail-hover: #22232e;
+  --color-rail-border: #262735;
 }
 
 :root {
+  /* Shrift oilalari. Ilgari `next/font/google` bu ikki o'zgaruvchini
+     generatsiya qilingan sinf orqali `<html>` ga qo'yardi; endi shriftlar
+     `@fontsource-variable/*` bilan o'zimizda (CSP: `font-src 'self' data:`),
+     va o'zgaruvchilar shu yerda e'lon qilinadi. `@theme inline` ularni
+     `--font-sans` / `--font-mono` tokenlariga uzatadi. */
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-geist-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, monospace;
+
   --background: oklch(1 0 0);
   --foreground: #1f2937;
   --card: oklch(1 0 0);

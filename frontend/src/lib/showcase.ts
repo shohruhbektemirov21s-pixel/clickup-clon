@@ -1,37 +1,31 @@
+import { API_BASE_URL } from "@/lib/env";
 import type { ShowcaseResponse } from "@/types/api";
 
 /**
- * Landing sahifasi uchun ma'lumotni **serverda** o'qiydi.
+ * Landing sahifasi uchun ma'lumot (`GET public/showcase/`) — sahifada qo'lda
+ * yozilgan namunaviy qator yo'q.
  *
- * Nega client emas: `/` marketing daraxti ataylab server komponenti bo'lib
- * qoladi (`app/page.tsx` dagi izohga qarang) — birinchi bo'yoq, JS'siz
- * ko'rinish va SEO shunga bog'liq. Ma'lumotni TanStack Query bilan olish
- * butun daraxtni client tomonga sudrab o'tardi.
+ * NEGA ENDI BRAUZERDAN O'QIYDI: ilgari bu Next server komponenti ichida
+ * chaqirilardi va `API_BASE_URL_INTERNAL` orqali konteyner ichidagi manzilga
+ * (`backend:8000`) borardi. SPA'da server bosqichi yo'q — so'rov brauzerdan
+ * ketadi, ya'ni bitta manzil (`VITE_API_BASE_URL`) yetarli va CSP'dagi
+ * `connect-src` ham aynan shu origin'ga ochilgan.
  *
- * Server ichidan API'ga murojaat brauzerdagi manzil bilan bir xil bo'lmasligi
- * mumkin (Docker'da `backend:8000`, brauzerda `localhost:8000`), shuning uchun
- * `API_BASE_URL_INTERNAL` alohida o'qiladi va `NEXT_PUBLIC_API_BASE_URL` ga
- * qaytadi.
+ * Keshni endi TanStack Query ushlaydi (`landing.tsx` dagi `staleTime`),
+ * ilgarigi `next: { revalidate: 60 }` o'rniga.
  */
-const SERVER_API_BASE_URL = (
-  process.env.API_BASE_URL_INTERNAL ??
-  process.env.NEXT_PUBLIC_API_BASE_URL ??
-  "http://localhost:8000/api/v1"
-).replace(/\/+$/, "");
 
-/** Landing statik bo'lib qolishi uchun javob shu qadar soniya keshlanadi. */
-const REVALIDATE_SECONDS = 60;
+/** Landing ma'lumoti shu qadar millisekund yangi hisoblanadi. */
+export const SHOWCASE_STALE_MS = 60_000;
 
 /**
  * Backend o'chiq bo'lsa `null` qaytaradi — landing baribir to'liq
  * render bo'ladi, faqat bazadan keladigan bloklar tushib qoladi. Marketing
- * sahifasi API tushgani uchun 500 bermasligi kerak.
+ * sahifasi API tushgani uchun buzilmasligi kerak.
  */
 export async function fetchShowcase(): Promise<ShowcaseResponse | null> {
   try {
-    const res = await fetch(`${SERVER_API_BASE_URL}/public/showcase/`, {
-      next: { revalidate: REVALIDATE_SECONDS },
-    });
+    const res = await fetch(`${API_BASE_URL}/public/showcase/`);
     if (!res.ok) return null;
     return (await res.json()) as ShowcaseResponse;
   } catch {

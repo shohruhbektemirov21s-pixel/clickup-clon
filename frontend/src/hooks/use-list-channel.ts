@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { API_BASE_URL, WS_BASE_URL } from "@/lib/env";
@@ -26,6 +24,12 @@ export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "offline
 export const WS_CLOSE_ACCESS_REVOKED = 4403;
 
 /** Chipta olinmadi, lekin endpoint bor — bu ulanish xatosi, downgrade emas. */
+/**
+ * DIQQAT: quyidagi `RealtimeTicketError` matnlari LUG'ATGA KO'CHIRILMAYDI.
+ * Ular foydalanuvchiga ko'rsatilmaydi — istisno faqat qayta ulanish mantiqi
+ * ichida ushlanadi va hech qanday toast yoki ekranga chiqmaydi. Ularni i18n
+ * ga olib chiqish lug'atni ishlatilmaydigan kalitlar bilan to'ldirardi.
+ */
 export class RealtimeTicketError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);

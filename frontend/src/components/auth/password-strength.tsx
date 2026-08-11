@@ -1,15 +1,14 @@
-"use client";
-
 import * as React from "react";
+import { AUTH } from "@/i18n/uz";
 import { cn } from "@/lib/utils";
 
 export type PasswordScore = 0 | 1 | 2 | 3;
 
 const LEVELS: { label: string; bar: string }[] = [
-  { label: "juda zaif", bar: "bg-danger" },
-  { label: "zaif", bar: "bg-danger" },
-  { label: "o'rtacha", bar: "bg-brand-yellow" },
-  { label: "kuchli", bar: "bg-brand-green" },
+  { label: AUTH.strengthVeryWeak, bar: "bg-danger" },
+  { label: AUTH.strengthWeak, bar: "bg-danger" },
+  { label: AUTH.strengthMedium, bar: "bg-brand-yellow" },
+  { label: AUTH.strengthStrong, bar: "bg-brand-green" },
 ];
 
 /**

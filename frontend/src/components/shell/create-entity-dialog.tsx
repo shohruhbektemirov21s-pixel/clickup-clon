@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import {
   Dialog,
@@ -13,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useCreateList, useCreateSpace } from "@/hooks/mutations";
+import { COMMON, CREATE_ENTITY } from "@/i18n/uz";
 
 type CreateTarget =
   | { kind: "space" }
@@ -60,16 +59,16 @@ export function CreateEntityDialog({
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <DialogHeader>
             <DialogTitle>
-              {target.kind === "space" ? "Bo'lim yaratish" : "Ro'yxat yaratish"}
+              {target.kind === "space" ? COMMON.createSpace : COMMON.createList}
             </DialogTitle>
             <DialogDescription>
               {target.kind === "space"
-                ? "Bo'limlar jildlar va ro'yxatlarni jamlaydi."
-                : "Ro'yxatlarda vazifalaringiz saqlanadi."}
+                ? CREATE_ENTITY.spaceDescription
+                : CREATE_ENTITY.listDescription}
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="entity-name">Nomi</Label>
+            <Label htmlFor="entity-name">{COMMON.name}</Label>
             <Input
               id="entity-name"
               autoFocus

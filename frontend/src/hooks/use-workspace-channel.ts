@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { WS_BASE_URL } from "@/lib/env";
@@ -60,10 +58,20 @@ export function useWorkspaceChannel(
     let hadConnection = false;
     const clientId = getClientId();
     const seen = seenEvents.current;
-    const pending = { tasks: false, tree: false, permissions: false };
+    const pending = {
+      tasks: false,
+      tree: false,
+      permissions: false,
+      notifications: false,
+    };
 
     const flush = () => {
       flushTimer = null;
+      if (pending.notifications) {
+        // Prefiks kalit: ro'yxat ham, o'qilmaganlar soni ham, barcha ish
+        // maydoni filtrlari bilan birga.
+        void queryClient.invalidateQueries({ queryKey: keys.notificationsRoot });
+      }
       if (pending.tasks) {
         // Prefix key — both dashboard scopes ("mine" and "all") at once.
         void queryClient.invalidateQueries({
@@ -94,6 +102,7 @@ export function useWorkspaceChannel(
       pending.tasks = false;
       pending.tree = false;
       pending.permissions = false;
+      pending.notifications = false;
     };
 
     const schedule = (what: Partial<typeof pending>) => {
@@ -121,7 +130,7 @@ export function useWorkspaceChannel(
           attempt = 0;
           setStatus("live");
           // No server-side replay: after a gap the refetch is authoritative.
-          if (hadConnection) schedule({ tasks: true, tree: true });
+          if (hadConnection) schedule({ tasks: true, tree: true, notifications: true });
           hadConnection = true;
           break;
         }
@@ -139,6 +148,14 @@ export function useWorkspaceChannel(
         }
         case "permission.updated": {
           schedule({ permissions: true });
+          break;
+        }
+        case "notification.created": {
+          // §19 — shaxsiy `user.<id>` guruhidan keladi, ya'ni freym faqat
+          // qabul qiluvchining o'z soketiga tushadi. Ro'yxat serverda
+          // filtrlanadi va sahifalanadi, shuning uchun freym joyiga
+          // yozilmaydi: u faqat "yangilanish bor" signali.
+          schedule({ notifications: true });
           break;
         }
         case "access.revoked": {

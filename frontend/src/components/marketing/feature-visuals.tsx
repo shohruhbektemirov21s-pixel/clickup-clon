@@ -66,7 +66,7 @@ export function PermissionMatrixVisual({
                       {allowed ? (
                         <Check
                           className={`mx-auto size-3.5 ${
-                            i === 0 ? "text-muted-foreground" : "text-status-closed"
+                            i === 0 ? "text-muted-foreground" : "text-status-done"
                           }`}
                         />
                       ) : (
@@ -91,9 +91,9 @@ export function PermissionMatrixVisual({
 
 /** Faoliyat nuqtasining rangi — backend qaytargan ohang kaliti bo'yicha. */
 const TONE_CLASS: Record<ShowcaseActivity["tone"], string> = {
-  open: "bg-status-open",
-  active: "bg-status-active",
-  closed: "bg-status-closed",
+  todo: "bg-status-todo",
+  in_progress: "bg-status-in-progress",
+  done: "bg-status-done",
   accent: "bg-primary",
   muted: "bg-muted-foreground/40",
 };
@@ -106,8 +106,8 @@ export function ActivityFeedVisual({ items }: { items: ShowcaseActivity[] }) {
     >
       <div className="flex items-center gap-2 border-b bg-muted/40 px-4 py-2.5">
         <span className="relative flex size-2">
-          <span className="absolute inline-flex size-full animate-ping rounded-full bg-status-closed opacity-70" />
-          <span className="relative inline-flex size-2 rounded-full bg-status-closed" />
+          <span className="absolute inline-flex size-full animate-ping rounded-full bg-status-done opacity-70" />
+          <span className="relative inline-flex size-2 rounded-full bg-status-done" />
         </span>
         <span className="text-xs font-medium">Faoliyat tasmasi</span>
         <span className="ml-auto font-mono text-[10px] text-muted-foreground">ws://…/ws/list/</span>

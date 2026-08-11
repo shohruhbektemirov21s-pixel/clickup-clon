@@ -1,7 +1,5 @@
-"use client";
-
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router";
 import { getRefreshToken, useAuthStore } from "@/stores/auth-store";
 import { useWorkspaces } from "@/hooks/queries";
 import { FullPageSpinner } from "@/components/shared/full-page-spinner";
@@ -29,7 +27,7 @@ const getServerHasStoredSession = () => false;
  * it is pure static markup.
  */
 export function HomeRedirect({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const status = useAuthStore((s) => s.status);
   const workspaces = useWorkspaces();
   const hasStoredSession = React.useSyncExternalStore(
@@ -41,9 +39,9 @@ export function HomeRedirect({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     if (status === "authenticated" && workspaces.data) {
       const first = workspaces.data.results[0];
-      if (first) router.replace(`/w/${first.id}`);
+      if (first) navigate(`/w/${first.id}`, { replace: true });
     }
-  }, [status, workspaces.data, router]);
+  }, [status, workspaces.data, navigate]);
 
   if (status === "authenticated") {
     if (workspaces.data && workspaces.data.results.length === 0) {

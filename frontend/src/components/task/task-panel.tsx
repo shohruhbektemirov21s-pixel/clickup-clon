@@ -1,7 +1,5 @@
-"use client";
-
 import * as React from "react";
-import Link from "next/link";
+import { Link } from "@/components/ui/link";
 import { Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -21,6 +19,7 @@ import { can } from "@/lib/permissions";
 import { useUpdateTask } from "@/hooks/mutations";
 import { api, isApiError } from "@/lib/api";
 import { keys } from "@/lib/keys";
+import { TASK } from "@/i18n/uz";
 import { richBodyToText, textToRichBody, timeAgo } from "@/lib/format";
 import {
   AssigneePicker,
@@ -35,20 +34,18 @@ import { TaskAttachments } from "@/components/task/attachments";
 import { TaskActionsMenu } from "@/components/task/task-actions-menu";
 import type { ListPermissions } from "@/components/list/use-list-permissions";
 import { resolveAssignees, resolveTags } from "@/lib/resolve-embedded";
-import type { Status, Task } from "@/types/api";
+import type { Task } from "@/types/api";
 
 export function TaskPanel({
   workspaceId,
   listId,
   taskId,
-  statuses,
   perms,
   onClose,
 }: {
   workspaceId: string;
   listId: string;
   taskId: string | null;
-  statuses: Status[];
   /**
    * Ro'yxat qatoriga qanday qaror qo'llanilgan bo'lsa, panelda ham xuddi
    * shu. Ilgari panel `!isGuest || isAssignee` degan **rol** tekshiruvini
@@ -71,7 +68,6 @@ export function TaskPanel({
             workspaceId={workspaceId}
             listId={listId}
             taskId={taskId}
-            statuses={statuses}
             perms={perms}
             onClose={onClose}
           />
@@ -85,14 +81,12 @@ function TaskPanelBody({
   workspaceId,
   listId,
   taskId,
-  statuses,
   perms,
   onClose,
 }: {
   workspaceId: string;
   listId: string;
   taskId: string;
-  statuses: Status[];
   perms: ListPermissions;
   onClose: () => void;
 }) {
@@ -141,7 +135,6 @@ function TaskPanelBody({
           workspaceId={workspaceId}
           listId={listId}
           task={task}
-          statuses={statuses}
           perms={perms}
           canEdit={canEdit}
           meId={me?.id}
@@ -221,7 +214,6 @@ function FieldGrid({
   workspaceId,
   listId,
   task,
-  statuses,
   perms,
   canEdit,
   meId,
@@ -229,7 +221,6 @@ function FieldGrid({
   workspaceId: string;
   listId: string;
   task: Task;
-  statuses: Status[];
   perms: ListPermissions;
   canEdit: boolean;
   meId?: string;
@@ -271,10 +262,9 @@ function FieldGrid({
       <dt className="text-muted-foreground">Holat</dt>
       <dd title={editHint}>
         <StatusPicker
-          value={task.status_id}
-          statuses={statuses}
+          value={task.status}
           disabled={!canEdit}
-          onChange={(statusId) => patch({ status_id: statusId })}
+          onChange={(status) => patch({ status })}
         />
       </dd>
 
@@ -356,11 +346,11 @@ function FieldGrid({
         >
           {watching ? (
             <>
-              <EyeOff className="size-3.5" /> Kuzatishni to&apos;xtatish
+              <EyeOff className="size-3.5" /> {TASK.unwatch}
             </>
           ) : (
             <>
-              <Eye className="size-3.5" /> Kuzatish
+              <Eye className="size-3.5" /> {TASK.watch}
             </>
           )}
         </Button>

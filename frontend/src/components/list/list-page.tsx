@@ -1,11 +1,9 @@
-"use client";
-
 import * as React from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useLocation, useNavigate, useSearchParams } from "react-router";
 import { Columns3, Rows3 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { useList, useStatusSet } from "@/hooks/queries";
+import { useList } from "@/hooks/queries";
 import { useListChannel } from "@/hooks/use-list-channel";
 import { ListView } from "@/components/list/list-view";
 import { useListPermissions } from "@/components/list/use-list-permissions";
@@ -13,6 +11,7 @@ import { BoardView } from "@/components/board/board-view";
 import { TaskPanel } from "@/components/task/task-panel";
 import { SpaceTeamStrip } from "@/components/workspace/space-team-strip";
 import type { ViewKind } from "@/types/api";
+import { COMMON } from "@/i18n/uz";
 import { cn } from "@/lib/utils";
 
 export function ListPage({
@@ -22,12 +21,11 @@ export function ListPage({
   workspaceId: string;
   listId: string;
 }) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const [searchParams] = useSearchParams();
 
   const { data: list } = useList(listId);
-  const { data: statusSet } = useStatusSet(listId);
   const connection = useListChannel(listId);
 
   // Yagona qaror manbai: ro'yxat, doska va vazifa paneli bir xil fasaddan
@@ -50,9 +48,9 @@ export function ListPage({
       if (value === null) next.delete(key);
       else next.set(key, value);
       const qs = next.toString();
-      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+      navigate(qs ? `${pathname}?${qs}` : pathname, { replace: true });
     },
-    [router, pathname, searchParams],
+    [navigate, pathname, searchParams],
   );
 
   const openTask = React.useCallback(
@@ -60,8 +58,6 @@ export function ListPage({
     [setParam],
   );
   const closeTask = React.useCallback(() => setParam("task", null), [setParam]);
-
-  const statuses = statusSet?.statuses ?? [];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -78,10 +74,10 @@ export function ListPage({
         >
           <TabsList>
             <TabsTrigger value="list" className="gap-1.5">
-              <Rows3 className="size-3.5" /> Ro&apos;yxat
+              <Rows3 className="size-3.5" /> {COMMON.list}
             </TabsTrigger>
             <TabsTrigger value="board" className="gap-1.5">
-              <Columns3 className="size-3.5" /> Doska
+              <Columns3 className="size-3.5" /> {COMMON.board}
             </TabsTrigger>
           </TabsList>
         </Tabs>
@@ -115,14 +111,12 @@ export function ListPage({
           workspaceId={workspaceId}
           listId={listId}
           spaceId={list?.space_id}
-          statuses={statuses}
           onOpenTask={openTask}
         />
       ) : (
         <ListView
           workspaceId={workspaceId}
           listId={listId}
-          statuses={statuses}
           onOpenTask={openTask}
           perms={perms}
         />
@@ -132,7 +126,6 @@ export function ListPage({
         workspaceId={workspaceId}
         listId={listId}
         taskId={openTaskId}
-        statuses={statuses}
         perms={perms}
         onClose={closeTask}
       />

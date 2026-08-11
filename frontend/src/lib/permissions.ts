@@ -1,3 +1,4 @@
+import { COMMON } from "@/i18n/uz";
 import type { MyPermissions, PermissionCode, SpaceAccess } from "@/types/api";
 
 /**
@@ -14,13 +15,13 @@ import type { MyPermissions, PermissionCode, SpaceAccess } from "@/types/api";
  * Local grants a space `manager` (PM) gains inside their own space.
  * Mirrors `SPACE_MANAGER_GRANTS` on the server (DESIGN_PERMISSIONS §B.5,
  * `apps/core/access.py`). `space.delete`, `member.*`, `workspace.*` and
- * `tag.*` are never included.
+ * `tag.*` are never included. `*.manage_statuses` was dropped in catalog v6
+ * — status is a fixed code set now, so there is nothing left to manage.
  */
 const SPACE_MANAGER_GRANTS: ReadonlySet<PermissionCode> = new Set<PermissionCode>([
   "space.read",
   "space.update",
   "space.manage_members",
-  "space.manage_statuses",
   "folder.create",
   "folder.update",
   "folder.delete",
@@ -29,7 +30,6 @@ const SPACE_MANAGER_GRANTS: ReadonlySet<PermissionCode> = new Set<PermissionCode
   "list.update",
   "list.delete",
   "list.move",
-  "list.manage_statuses",
   "task.read",
   "task.create",
   "task.update",
@@ -123,7 +123,7 @@ export function canInSpace(
 /** Ruxsat hali yuklanmagan boshqaruv uchun sabab. */
 export const PERMISSION_LOADING_HINT = "Ruxsatlar tekshirilmoqda…";
 /** Ruxsat yo'qligi aniq bo'lgan boshqaruv uchun sabab. */
-export const PERMISSION_DENIED_HINT = "Sizda bu amal uchun ruxsat yo'q.";
+export const PERMISSION_DENIED_HINT = COMMON.errPermissionDenied;
 
 /**
  * Bitta kod bo'yicha uch holatli javob: **ha / yo'q / hali bilmayman**.

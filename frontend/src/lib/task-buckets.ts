@@ -1,4 +1,5 @@
 import { endOfWeek, isToday } from "date-fns";
+import { DUE_BUCKET_LABEL } from "@/i18n/uz";
 import type { Task } from "@/types/api";
 
 /**
@@ -13,13 +14,8 @@ export type BucketKey = "overdue" | "today" | "week" | "later" | "none";
 
 export const BUCKET_ORDER: BucketKey[] = ["overdue", "today", "week", "later", "none"];
 
-export const BUCKET_LABEL: Record<BucketKey, string> = {
-  overdue: "Muddati o'tgan",
-  today: "Bugun",
-  week: "Shu hafta",
-  later: "Keyinroq",
-  none: "Muddatsiz",
-};
+/** Matn `src/i18n/uz.ts` da; bu yerda faqat qayta eksport. */
+export const BUCKET_LABEL: Record<BucketKey, string> = DUE_BUCKET_LABEL;
 
 export function bucketOf(task: Task, now: Date, weekEnd: Date): BucketKey {
   if (!task.due_date) return "none";
@@ -44,10 +40,19 @@ export function groupByDue(tasks: Task[]): Record<BucketKey, Task[]> {
   return groups;
 }
 
-/** Due date ascending, undated last — the order every task list here uses. */
+/**
+ * Due date ascending, undated last — the order every task list here uses.
+ *
+ * Solishtirish INSTANT bo'yicha, satr bo'yicha emas. Vaqt tamg'alari
+ * v1.4.0 dan `+05:00` ofseti bilan keladi (§1.2); leksikografik solishtiruv
+ * faqat ofset hamma qatorda bir xil bo'lgunicha to'g'ri ishlaydi va aynan
+ * shunday jim taxminlar migratsiyada sinadi.
+ */
 export function byDueDate(a: Task, b: Task): number {
-  if (!a.due_date && !b.due_date) return a.created_at < b.created_at ? -1 : 1;
-  if (!a.due_date) return 1;
-  if (!b.due_date) return -1;
-  return a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : 0;
+  const at = a.due_date ? Date.parse(a.due_date) : null;
+  const bt = b.due_date ? Date.parse(b.due_date) : null;
+  if (at === null && bt === null) return Date.parse(a.created_at) - Date.parse(b.created_at);
+  if (at === null) return 1;
+  if (bt === null) return -1;
+  return at - bt;
 }

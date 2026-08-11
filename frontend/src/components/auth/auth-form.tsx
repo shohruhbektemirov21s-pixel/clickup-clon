@@ -1,8 +1,6 @@
-"use client";
-
 import * as React from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { Link } from "@/components/ui/link";
+import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -10,10 +8,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PasswordInput } from "@/components/auth/password-input";
 import { PasswordStrength, scorePassword } from "@/components/auth/password-strength";
+import { AUTH, COMMON, PROFESSION_OPTIONS } from "@/i18n/uz";
 import { isApiError } from "@/lib/api";
 import { login, register } from "@/lib/auth";
 import { keys } from "@/lib/keys";
-import { PROFESSION_OPTIONS } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 import type { InvitableRole, Paginated, Profession, Workspace } from "@/types/api";
 import { api } from "@/lib/api";
@@ -40,10 +38,7 @@ export interface InviteContext {
 
 function extractErrors(err: unknown, fields: string[]): { banner?: string; fields: FieldErrors } {
   if (!isApiError(err)) {
-    return {
-      banner: "Nimadir xato ketdi. Internet aloqasini tekshirib, qayta urinib ko'ring.",
-      fields: {},
-    };
+    return { banner: AUTH.bannerNetwork, fields: {} };
   }
   const fieldErrors: FieldErrors = {};
   for (const f of fields) {
@@ -52,16 +47,16 @@ function extractErrors(err: unknown, fields: string[]): { banner?: string; field
   }
   if (Object.keys(fieldErrors).length > 0) return { fields: fieldErrors };
   if (err.code === "authentication_failed") {
-    return { banner: "Bunday email va parolga ega faol hisob topilmadi.", fields: {} };
+    return { banner: AUTH.bannerInvalidCredentials, fields: {} };
   }
   if (err.code === "throttled") {
-    return { banner: "Urinishlar juda ko'p. Biroz kutib, qayta urinib ko'ring.", fields: {} };
+    return { banner: AUTH.bannerThrottled, fields: {} };
   }
   if (err.status === 404) {
-    return { banner: "Taklif muddati tugagan yoki bekor qilingan.", fields: {} };
+    return { banner: AUTH.bannerInviteExpired, fields: {} };
   }
   if (err.status === 409) {
-    return { banner: "Bu taklif allaqachon ishlatilgan.", fields: {} };
+    return { banner: AUTH.bannerInviteUsed, fields: {} };
   }
   return { banner: err.message, fields: {} };
 }
@@ -94,7 +89,7 @@ async function firstWorkspaceRoute(): Promise<string> {
 }
 
 export function LoginForm() {
-  const router = useRouter();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
@@ -110,7 +105,7 @@ export function LoginForm() {
     try {
       const res = await login({ email: email.trim().toLowerCase(), password });
       queryClient.setQueryData(keys.me, res.user);
-      router.replace(getSafeNext() ?? (await firstWorkspaceRoute()));
+      navigate(getSafeNext() ?? (await firstWorkspaceRoute()), { replace: true });
     } catch (err) {
       const parsed = extractErrors(err, ["email", "password"]);
       setBanner(parsed.banner);
@@ -123,13 +118,13 @@ export function LoginForm() {
   return (
     <form onSubmit={onSubmit} className="flex w-full flex-col gap-4" noValidate>
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="email">Email</Label>
+        <Label htmlFor="email">{COMMON.email}</Label>
         <Input
           id="email"
           type="email"
           autoFocus
           autoComplete="email"
-          placeholder="siz@kompaniya.uz"
+          placeholder={AUTH.emailPlaceholder}
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
@@ -139,7 +134,7 @@ export function LoginForm() {
         <FieldError message={errors.email} />
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="password">Parol</Label>
+        <Label htmlFor="password">{COMMON.password}</Label>
         <PasswordInput
           id="password"
           autoComplete="current-password"
@@ -157,12 +152,12 @@ export function LoginForm() {
         </p>
       ) : null}
       <Button type="submit" disabled={pending} aria-busy={pending}>
-        {pending ? "Kirilmoqda…" : "Kirish"}
+        {pending ? AUTH.signingIn : COMMON.login}
       </Button>
       <p className="text-center text-sm text-muted-foreground">
-        Hisobingiz yo&apos;qmi?{" "}
+        {AUTH.noAccountQuestion}{" "}
         <Link href="/register" className="font-medium text-primary hover:underline">
-          Ro&apos;yxatdan o&apos;ting
+          {AUTH.registerCta}
         </Link>
       </p>
     </form>
@@ -196,29 +191,29 @@ function validateRegister(v: RegisterValues, inviteMode: boolean): FieldErrors {
   const errors: FieldErrors = {};
   const name = v.fullName.trim();
   if (inviteMode ? name.length < 2 : name.length > 0 && name.length < 2) {
-    errors.full_name = "To'liq ismni kiriting (kamida 2 ta belgi).";
+    errors.full_name = AUTH.errFullNameTooShort;
   }
   if (!EMAIL_RE.test(v.email.trim())) {
-    errors.email = "To'g'ri email manzilini kiriting.";
+    errors.email = AUTH.errEmailInvalid;
   }
   if (v.password.length < 8) {
-    errors.password = "Parol kamida 8 ta belgidan iborat bo'lsin.";
+    errors.password = AUTH.errPasswordTooShort;
   } else if (/^\d+$/.test(v.password)) {
-    errors.password = "Parol faqat raqamlardan iborat bo'lmasin.";
+    errors.password = AUTH.errPasswordAllDigits;
   }
   if (!v.passwordConfirm) {
-    errors.password_confirm = "Parolni tasdiqlang.";
+    errors.password_confirm = AUTH.errPasswordConfirmRequired;
   } else if (v.password !== v.passwordConfirm) {
-    errors.password_confirm = "Parollar mos kelmadi.";
+    errors.password_confirm = AUTH.errPasswordMismatch;
   }
   if (!v.terms) {
-    errors.terms = "Davom etish uchun shartlarga rozilik bildiring.";
+    errors.terms = AUTH.errTermsRequired;
   }
   return errors;
 }
 
 export function RegisterForm({ invite }: { invite?: InviteContext } = {}) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const inviteMode = !!invite;
 
@@ -273,7 +268,7 @@ export function RegisterForm({ invite }: { invite?: InviteContext } = {}) {
           : { workspace_name: workspaceName.trim() || undefined }),
       });
       queryClient.setQueryData(keys.me, res.user);
-      router.replace(res.workspace_id ? `/w/${res.workspace_id}` : await firstWorkspaceRoute());
+      navigate(res.workspace_id ? `/w/${res.workspace_id}` : await firstWorkspaceRoute(), { replace: true });
     } catch (err) {
       const parsed = extractErrors(err, [
         "email",
@@ -293,14 +288,16 @@ export function RegisterForm({ invite }: { invite?: InviteContext } = {}) {
     <form onSubmit={onSubmit} className="flex w-full flex-col gap-4" noValidate>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="full_name">
-          To&apos;liq ism
-          {inviteMode ? null : <span className="text-muted-foreground"> (ixtiyoriy)</span>}
+          {AUTH.fullNameLabel}
+          {inviteMode ? null : (
+            <span className="text-muted-foreground"> {COMMON.optional}</span>
+          )}
         </Label>
         <Input
           id="full_name"
           autoFocus
           autoComplete="name"
-          placeholder="Alisher Navoiy"
+          placeholder={AUTH.fullNamePlaceholder}
           value={fullName}
           onChange={(e) => setFullName(e.target.value)}
           onBlur={() => markTouched("full_name")}
@@ -312,12 +309,12 @@ export function RegisterForm({ invite }: { invite?: InviteContext } = {}) {
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="reg_email">Email</Label>
+        <Label htmlFor="reg_email">{COMMON.email}</Label>
         <Input
           id="reg_email"
           type="email"
           autoComplete="email"
-          placeholder="siz@kompaniya.uz"
+          placeholder={AUTH.emailPlaceholder}
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           onBlur={() => markTouched("email")}
@@ -328,15 +325,13 @@ export function RegisterForm({ invite }: { invite?: InviteContext } = {}) {
           className={inviteMode ? "bg-muted/60" : undefined}
         />
         {inviteMode ? (
-          <p className="text-xs text-muted-foreground">
-            Taklif shu manzilga yuborilgan, uni o&apos;zgartirib bo&apos;lmaydi.
-          </p>
+          <p className="text-xs text-muted-foreground">{AUTH.inviteEmailLocked}</p>
         ) : null}
         <FieldError message={errorFor("email")} />
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="reg_password">Parol</Label>
+        <Label htmlFor="reg_password">{COMMON.password}</Label>
         <PasswordInput
           id="reg_password"
           autoComplete="new-password"
@@ -350,15 +345,13 @@ export function RegisterForm({ invite }: { invite?: InviteContext } = {}) {
         />
         <PasswordStrength password={password} />
         {!password || scorePassword(password) >= 2 ? (
-          <p className="text-xs text-muted-foreground">
-            Kamida 8 ta belgi, faqat raqamlardan iborat bo&apos;lmasin.
-          </p>
+          <p className="text-xs text-muted-foreground">{AUTH.passwordHint}</p>
         ) : null}
         <FieldError message={errorFor("password")} />
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="reg_password_confirm">Parolni tasdiqlash</Label>
+        <Label htmlFor="reg_password_confirm">{AUTH.passwordConfirmLabel}</Label>
         <PasswordInput
           id="reg_password_confirm"
           autoComplete="new-password"
@@ -374,7 +367,8 @@ export function RegisterForm({ invite }: { invite?: InviteContext } = {}) {
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="reg_profession">
-          Kasb roli <span className="text-muted-foreground">(ixtiyoriy)</span>
+          {AUTH.professionLabel}{" "}
+          <span className="text-muted-foreground">{COMMON.optional}</span>
         </Label>
         <select
           id="reg_profession"
@@ -389,28 +383,26 @@ export function RegisterForm({ invite }: { invite?: InviteContext } = {}) {
             "dark:bg-input/30",
           )}
         >
-          <option value="">Tanlanmagan</option>
+          <option value="">{COMMON.notSelected}</option>
           {PROFESSION_OPTIONS.map(([value, label]) => (
             <option key={value} value={value}>
               {label}
             </option>
           ))}
         </select>
-        <p className="text-xs text-muted-foreground">
-          Bu ish maydonidagi ruxsatlarga ta&apos;sir qilmaydi — jamoadagi
-          o&apos;rningizni ko&apos;rsatadi.
-        </p>
+        <p className="text-xs text-muted-foreground">{AUTH.professionHint}</p>
         <FieldError message={serverErrors.profession} />
       </div>
 
       {inviteMode ? null : (
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="workspace_name">
-            Ish maydoni nomi <span className="text-muted-foreground">(ixtiyoriy)</span>
+            {AUTH.workspaceNameLabel}{" "}
+            <span className="text-muted-foreground">{COMMON.optional}</span>
           </Label>
           <Input
             id="workspace_name"
-            placeholder="Acme MChJ"
+            placeholder={AUTH.workspaceNamePlaceholder}
             value={workspaceName}
             onChange={(e) => setWorkspaceName(e.target.value)}
             readOnly={pending}
@@ -434,8 +426,10 @@ export function RegisterForm({ invite }: { invite?: InviteContext } = {}) {
             className="mt-0.5"
           />
           <span className="text-muted-foreground">
-            <span className="text-foreground">Foydalanish shartlari</span> va{" "}
-            <span className="text-foreground">Maxfiylik siyosati</span>ga roziman
+            <span className="text-foreground">{AUTH.termsOfService}</span>
+            {AUTH.termsAnd}
+            <span className="text-foreground">{AUTH.privacyPolicy}</span>
+            {AUTH.termsAgreeSuffix}
           </span>
         </label>
         <FieldError message={errorFor("terms")} />
@@ -448,22 +442,16 @@ export function RegisterForm({ invite }: { invite?: InviteContext } = {}) {
       ) : null}
 
       <Button type="submit" disabled={pending} aria-busy={pending}>
-        {pending
-          ? "Hisob yaratilmoqda…"
-          : inviteMode
-            ? "Qo'shilish"
-            : "Hisob yaratish"}
+        {pending ? AUTH.creatingAccount : inviteMode ? COMMON.join : AUTH.createAccount}
       </Button>
 
-      
-
       <p className="text-center text-sm text-muted-foreground">
-        Hisobingiz bormi?{" "}
+        {AUTH.haveAccountQuestion}{" "}
         <Link
           href={inviteMode ? invite.loginHref : "/login"}
           className="font-medium text-primary hover:underline"
         >
-          Kirish
+          {COMMON.login}
         </Link>
       </p>
     </form>

@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * "Yaqinda ochilganlar" — command palette bo'sh bo'lganda ko'rsatiladigan
  * oxirgi ochilgan vazifa/ro'yxatlar. Zustand emas: bu server holati ham,

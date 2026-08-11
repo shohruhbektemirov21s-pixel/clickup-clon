@@ -1,14 +1,16 @@
 # syntax=docker/dockerfile:1
 #
-# ClickUp clone — Next.js 16 (App Router) frontend.
+# UzWork frontend — React 19 + Vite SPA (ADR 0011).
 # Build context: ./frontend  (see docker-compose.yml)
 #
-# Relies on `output: "standalone"` in next.config.ts, which emits
-# .next/standalone/server.js plus only the node_modules it actually traces.
+# Chiqish — statik `dist/`; uni nginx tarqatadi. Ilgari bu image Next'ning
+# `output: "standalone"` server.js ini ishga tushirardi; SPA'da Node runtime
+# umuman kerak emas.
 
-# Debian-slim, not Alpine: Next.js' prebuilt native binaries are glibc-linked,
-# so glibc images need no shim package at all. Alpine would need libc6-compat,
-# and installing it fails outright on networks that MITM TLS to the apk CDN.
+# Debian-slim, not Alpine: prebuilt native binaries in the toolchain are
+# glibc-linked, so glibc images need no shim package at all. Alpine would need
+# libc6-compat, and installing it fails outright on networks that MITM TLS to
+# the apk CDN.
 FROM node:22-slim AS base
 
 # Networks that inspect TLS re-sign registry.npmjs.org with a private root, and
@@ -41,53 +43,65 @@ RUN npm ci
 
 
 # ---------------------------------------------------------------------------
-# Stage 2 — builder: next build
+# Stage 2 — builder: vite build → /app/dist
 # ---------------------------------------------------------------------------
 FROM base AS builder
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
-# .dockerignore keeps host node_modules/ and .next/ out of the context, so this
+# .dockerignore keeps host node_modules/ and dist/ out of the context, so this
 # does not clobber the layer above.
 COPY . .
 
-# NEXT_PUBLIC_* is inlined into the client bundle at BUILD time — it cannot be
+# VITE_* is inlined into the client bundle at BUILD time — it cannot be
 # supplied later via `docker run -e`. Values mirror frontend/src/lib/env.ts.
-ARG NEXT_PUBLIC_API_BASE_URL="http://localhost:8000/api/v1"
-ARG NEXT_PUBLIC_WS_BASE_URL="ws://localhost:8000"
-ARG NEXT_PUBLIC_API_MODE="real"
+ARG VITE_API_BASE_URL="http://localhost:8000/api/v1"
+ARG VITE_WS_BASE_URL="ws://localhost:8000"
+ARG VITE_API_MODE="real"
 
-ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL} \
-    NEXT_PUBLIC_WS_BASE_URL=${NEXT_PUBLIC_WS_BASE_URL} \
-    NEXT_PUBLIC_API_MODE=${NEXT_PUBLIC_API_MODE} \
-    NEXT_TELEMETRY_DISABLED=1 \
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL} \
+    VITE_WS_BASE_URL=${VITE_WS_BASE_URL} \
+    VITE_API_MODE=${VITE_API_MODE} \
     NODE_ENV=production
 
 RUN npm run build
 
 
 # ---------------------------------------------------------------------------
-# Stage 3 — runner: minimal standalone server, non-root
+# Stage 3 — runner: nginx serves the static build, non-root
 # ---------------------------------------------------------------------------
-FROM base AS runner
-WORKDIR /app
+#
+# `nginxinc/nginx-unprivileged` — rasmiy nginx image'ining root'siz varianti
+# (uid 101). 3000 > 1024, shuning uchun imtiyozsiz jarayon uni bemalol
+# tinglaydi.
+FROM nginxinc/nginx-unprivileged:1.29-alpine AS runner
 
-ENV NODE_ENV=production \
-    NEXT_TELEMETRY_DISABLED=1 \
-    PORT=3000 \
-    HOSTNAME=0.0.0.0
+# CSP'dagi origin'lar bundle ichidagi manzillar bilan bir xil bo'lishi kerak,
+# ya'ni ular ham build vaqtida aniqlanadi.
+ARG VITE_API_BASE_URL="http://localhost:8000/api/v1"
+ARG VITE_WS_BASE_URL="ws://localhost:8000"
 
-# The standalone server does NOT bundle public/ or .next/static — copy them in.
-COPY --from=builder --chown=node:node /app/public ./public
-COPY --from=builder --chown=node:node /app/.next/standalone ./
-COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+USER root
 
-# node:22-slim ships an unprivileged `node` user (uid 1000).
-USER node
+COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
+
+# Manzildan faqat `scheme://host[:port]` qismi olinadi — CSP manba sifatida
+# yo'l (`/api/v1`) qabul qilinmaydi.
+RUN set -eu; \
+    origin_of() { printf '%s' "$1" | sed -E 's#^([a-zA-Z][a-zA-Z0-9+.-]*://[^/]+).*#\1#'; }; \
+    api_origin="$(origin_of "$VITE_API_BASE_URL")"; \
+    ws_origin="$(origin_of "$VITE_WS_BASE_URL")"; \
+    sed -e "s|\${API_ORIGIN}|${api_origin}|g" -e "s|\${WS_ORIGIN}|${ws_origin}|g" \
+        /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf; \
+    rm -f /etc/nginx/templates/default.conf.template
+
+COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html
+
+USER 101
 
 EXPOSE 3000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD node -e "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1
 
-CMD ["node", "server.js"]
+CMD ["nginx", "-g", "daemon off;"]

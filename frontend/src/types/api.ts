@@ -1,7 +1,12 @@
 /**
- * API payload types — mirrors docs/API_CONTRACT.md v1.2.0 field-for-field.
- * All timestamps are ISO-8601 UTC strings with a trailing "Z".
- * All ids are UUIDv4 strings.
+ * API payload types — mirrors docs/API_CONTRACT.md v1.4.0 field-for-field.
+ *
+ * **Vaqt tamg'alari** — ISO-8601, ANIQ OFSET bilan. Server `Asia/Tashkent`
+ * da render qiladi, ya'ni sim ustidagi shakl `"2026-08-07T14:15:00+05:00"`,
+ * `…Z` EMAS (§1.2). `new Date(...)` ikkalasini ham tushunadi; `Z` bo'yicha
+ * satr solishtirish yoki ofsetni qo'lda kesish TAQIQLANADI.
+ *
+ * Barcha id'lar — UUIDv4 satrlari.
  */
 
 // ---------------------------------------------------------------------------
@@ -24,8 +29,14 @@ export type Profession =
   | "analyst"
   | "marketing"
   | "other";
-export type Priority = "urgent" | "high" | "normal" | "low" | "none";
-export type StatusType = "open" | "active" | "closed";
+export type Priority = "urgent" | "high" | "medium" | "low" | "none";
+
+/**
+ * Vazifa holati — §9 dagi YOPIQ kod to'plami. Boshqa qiymat yo'q, sozlanmaydi
+ * va bazada nomi/rangi saqlanmaydi: o'zbekcha yorliq va rang `src/i18n/uz.ts`
+ * da yashaydi. `done` — yagona "yopiq" holat (`completed_at` shunda to'ladi).
+ */
+export type TaskStatus = "todo" | "in_progress" | "review" | "done";
 export type ViewKind = "list" | "board";
 
 /** §1.5 pagination envelope for every collection endpoint. */
@@ -40,7 +51,6 @@ export interface Paginated<T> {
 export type ApiErrorCode =
   | "validation_error"
   | "bad_request"
-  | "invalid_status_for_list"
   | "authentication_failed"
   | "token_not_valid"
   | "permission_denied"
@@ -223,6 +233,29 @@ export interface Member {
   updated_at: string;
 }
 
+/**
+ * `POST workspaces/{id}/members/` — ro'yxatdan o'tgan foydalanuvchini
+ * to'g'ridan-to'g'ri qo'shish (taklif emaili yuborilmaydi). `role` da `owner`
+ * yo'q: egalik faqat `PATCH members/{user_id}/` orqali o'tadi.
+ */
+export interface AddMemberRequest {
+  user_id: string;
+  role: InvitableRole;
+}
+
+/** `GET workspaces/{id}/user-search/?q=` bitta qatori. */
+export interface UserSearchResult {
+  user: UserSummary;
+  is_member: boolean;
+  /** Ish maydonidagi roli — `is_member` bo'lmasa `null`. */
+  role: Role | null;
+  has_pending_invitation: boolean;
+}
+
+export interface UserSearchResponse {
+  results: UserSearchResult[];
+}
+
 /** §4.1 — counters on a member profile, all inside the CALLER's visibility. */
 export interface MemberProfileStats {
   open_tasks: number;
@@ -356,28 +389,12 @@ export interface MoveListRequest {
 }
 
 // ---------------------------------------------------------------------------
-// §9 Status sets & statuses
+// §9 Vazifa holati
 // ---------------------------------------------------------------------------
-
-export interface Status {
-  id: string;
-  name: string;
-  color: string;
-  type: StatusType;
-  /** Integer, 0-based, contiguous — NOT the fractional position scheme. */
-  order: number;
-  is_default: boolean;
-}
-
-export interface StatusSet {
-  id: string;
-  name: string;
-  space_id: string | null;
-  list_id: string | null;
-  statuses: Status[];
-  created_at: string;
-  updated_at: string;
-}
+//
+// Sozlanadigan holat to'plami resurslari v1.4.0 da BUTUNLAY olib tashlandi
+// (endpointlar 42–46 → 404). Holat — `TaskStatus` kodi; yorliq va rang
+// `src/i18n/uz.ts` da.
 
 // ---------------------------------------------------------------------------
 // §10 Tasks
@@ -389,7 +406,7 @@ export interface Task {
   title: string;
   description_html: string | null;
   description_json: unknown | null;
-  status_id: string;
+  status: TaskStatus;
   priority: Priority;
   /** Server-computed fractional base-62 key; never written by clients. */
   position: string;
@@ -424,7 +441,7 @@ export interface TaskWriteRequest {
   title?: string;
   description_html?: string | null;
   description_json?: unknown | null;
-  status_id?: string;
+  status?: TaskStatus;
   priority?: Priority;
   due_date?: string | null;
   start_date?: string | null;
@@ -437,13 +454,14 @@ export interface TaskWriteRequest {
 /** §10.3 — client never sends a raw position. */
 export interface MoveTaskRequest {
   list_id: string;
-  status_id: string;
+  /** MAJBURIY — tushib qolsa server `400 validation_error` beradi (§10.3). */
+  status: TaskStatus;
   before_id: string | null;
   after_id: string | null;
 }
 
 export interface MoveTaskResponse extends Task {
-  /** true → the (list_id, status_id) scope was renumbered; refetch, don't patch. */
+  /** true → the (list_id, status) scope was renumbered; refetch, don't patch. */
   rebalanced: boolean;
 }
 
@@ -537,16 +555,25 @@ export const ATTACHMENT_ALLOWED_EXTENSIONS = [
 /** Server limit (`MAX_ATTACHMENT_MB`); the server re-checks it regardless. */
 export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 
-/** §10.4 grouped Board payload — NOT the standard envelope. */
+/**
+ * §10.4 grouped Board payload — standart konvert EMAS.
+ *
+ * **BINDING:** `groups` DOIM aynan to'rtta va DOIM `STATUS_ORDER` tartibida
+ * keladi, ustun bo'sh bo'lsa ham. Doska ustunlari shu javobdan chiziladi —
+ * klient ularni ma'lumotdagi kodlardan yasamaydi.
+ */
 export interface GroupedTasksResponse {
   group_by: "status";
   groups: TaskGroup[];
 }
 
 export interface TaskGroup {
-  status_id: string;
+  status: TaskStatus;
+  /** Serverning o'zbekcha yorlig'i — qulaylik; klient o'z lug'atini ishlatadi. */
+  label: string;
+  /** Guruhning TO'LIQ soni; `tasks` esa `min(page_size, 50)` bilan kesilgan. */
   count: number;
-  results: Task[];
+  tasks: Task[];
 }
 
 // ---------------------------------------------------------------------------
@@ -603,6 +630,38 @@ export type SearchResultItem =
 export type SearchResponse = Paginated<SearchResultItem>;
 
 // ---------------------------------------------------------------------------
+// §19 Bildirishnomalar
+// ---------------------------------------------------------------------------
+
+/**
+ * Yopiq lug'at — `backend/apps/notifications/models.py::NotificationKind`
+ * bilan bir xil. Klient noma'lum turni ham chiza olishi kerak (`title`/`body`
+ * doim to'ldirilgan), shuning uchun UI `kind` ni faqat ikonka tanlashda
+ * ishlatadi.
+ */
+export type NotificationKind =
+  | "member_added"
+  | "member_joined"
+  | "member_removed"
+  | "role_changed"
+  | "invitation_accepted"
+  | "task_assigned";
+
+export interface AppNotification {
+  id: string;
+  workspace_id: string | null;
+  actor: UserSummary | null;
+  kind: NotificationKind;
+  title: string;
+  body: string;
+  /** Ilova ichidagi ILDIZGA NISBATAN yo'l ("/w/<id>/settings/members"). */
+  url: string;
+  is_read: boolean;
+  read_at: string | null;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
 // §15 WebSocket contract
 // ---------------------------------------------------------------------------
 
@@ -623,6 +682,7 @@ export type WsEventType =
   | "presence.join"
   | "presence.leave"
   | "presence.sync"
+  | "notification.created"
   | "error";
 
 export interface WsActor {
@@ -705,6 +765,13 @@ export interface WsAccessRevokedData {
  *
  * This union is hand-maintained and is the client's only copy of the catalog,
  * so it can drift silently. Keep it in step with the backend on every add.
+ *
+ * ⚠️ `space.manage_statuses` va `list.manage_statuses` — v6 dan boshlab
+ * ESKIRGAN (hech qanday endpointni qo'riqlamaydi, `GET permissions/` va
+ * `my-permissions/` da chiqmaydi). Ular baribir SHU YERDA QOLADI: katalog
+ * kodlari hech qachon o'chirilmaydi va backend testi
+ * (`test_typescript_permission_union_matches_the_catalog`) bu union'ni to'liq
+ * katalog bilan solishtiradi. UI'da ularga tayanmang.
  */
 export type PermissionCode =
   | "workspace.read"
@@ -920,7 +987,7 @@ export interface ShowcaseSpace {
 
 export interface ShowcaseTask {
   title: string;
-  status: StatusType;
+  status: TaskStatus;
   priority: Priority;
   /** `DD-MM` yoki muddat qo'yilmagan bo'lsa `null`. */
   due: string | null;
@@ -932,7 +999,7 @@ export interface ShowcaseActivity {
   who: string;
   what: string;
   when: string;
-  tone: "open" | "active" | "closed" | "accent" | "muted";
+  tone: "todo" | "in_progress" | "done" | "accent" | "muted";
 }
 
 export interface ShowcaseOrderingRow {

@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import {
   Dialog,
@@ -12,6 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { COMMON, CONFIRM_DELETE } from "@/i18n/uz";
 
 /**
  * Shared destructive-confirmation dialog. Nothing in the app deletes without
@@ -25,7 +24,7 @@ export function ConfirmDeleteDialog({
   warning,
   requireNameMatch = false,
   pending = false,
-  confirmLabel = "O'chirish",
+  confirmLabel = COMMON.delete,
   children,
   onConfirm,
 }: {
@@ -54,10 +53,10 @@ export function ConfirmDeleteDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Rostdan ham o&apos;chirasizmi?</DialogTitle>
+          <DialogTitle>{CONFIRM_DELETE.title}</DialogTitle>
           <DialogDescription>
             <span className="font-medium text-foreground">{entityName}</span> —{" "}
-            {warning} Bu amalni ortga qaytarib bo&apos;lmaydi.
+            {warning} {CONFIRM_DELETE.irreversible}
           </DialogDescription>
         </DialogHeader>
 
@@ -66,7 +65,7 @@ export function ConfirmDeleteDialog({
         {requireNameMatch ? (
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="confirm-name">
-              Tasdiqlash uchun nomini kiriting: <b>{entityName}</b>
+              {CONFIRM_DELETE.confirmNameLabel} <b>{entityName}</b>
             </Label>
             <Input
               id="confirm-name"
@@ -81,7 +80,7 @@ export function ConfirmDeleteDialog({
 
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-            Bekor qilish
+            {COMMON.cancel}
           </Button>
           <Button
             type="button"
@@ -89,7 +88,7 @@ export function ConfirmDeleteDialog({
             disabled={pending || !nameOk}
             onClick={onConfirm}
           >
-            {pending ? "O'chirilmoqda…" : confirmLabel}
+            {pending ? CONFIRM_DELETE.deleting : confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

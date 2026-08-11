@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import { MoreHorizontal, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,6 +9,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ConfirmDeleteDialog } from "@/components/shared/confirm-delete-dialog";
 import { useDeleteTask } from "@/hooks/mutations";
+import { COMMON, TASK } from "@/i18n/uz";
 import { cn } from "@/lib/utils";
 
 /**
@@ -77,7 +76,7 @@ export function TaskActionsMenu({
         <DropdownMenuContent align="end" className="w-44">
           <DropdownMenuItem variant="destructive" onClick={() => setConfirmOpen(true)}>
             <Trash2 className="size-4" />
-            O&apos;chirish
+            {COMMON.delete}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -86,7 +85,7 @@ export function TaskActionsMenu({
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         entityName={taskTitle}
-        warning="vazifasi va uning kommentlari o'chiriladi."
+        warning={TASK.deleteWarning}
         pending={deleteTask.isPending}
         onConfirm={onConfirm}
       />

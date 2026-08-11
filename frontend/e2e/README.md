@@ -7,7 +7,7 @@ boshida yozilgan).
 
 CI'da bu to'plam har PR'da avtomatik ishlaydi: `.github/workflows/ci.yml` →
 `e2e` job (Postgres + Redis service'lari, `migrate`, `seed_demo`, Daphne,
-`next start`, so'ng `npx playwright test`). Yiqilganda HTML hisobot, trace
+`npm run build && npm run preview`, so'ng `npx playwright test`). Yiqilganda HTML hisobot, trace
 fayllari va ikkala server logi artefakt bo'lib yuklanadi.
 
 ## Oldindan shartlar (lokal)
@@ -34,6 +34,10 @@ fayllari va ikkala server logi artefakt bo'lib yuklanadi.
    cd frontend
    npm run dev
    ```
+
+   Vite dev serveri 3000-portda turadi (`vite.config.ts` → `server.port`).
+   Prod build'ga qarshi tekshirish uchun: `npm run build && npm run preview`
+   — u ham 3000-portda, lekin CSP prod holatida (`script-src 'self'`).
 
 3. **Demo ma'lumot** (`seed_demo`):
 
@@ -196,7 +200,7 @@ npx playwright show-trace test-results/<papka>/trace.zip
 ```
 
 Trace, skrinshot va video faqat **xato** bo'lganda saqlanadi. CI'da ular
-`playwright-report` artefaktida, Daphne va Next loglari bilan birga.
+`playwright-report` artefaktida, Daphne va frontend loglari bilan birga.
 
 Foydali maslahatlar:
 

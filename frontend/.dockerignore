@@ -1,11 +1,10 @@
 # Build context = ./frontend (see docker-compose.yml)
 
-# Node / Next.js — node_modules comes from the `deps` stage, never from the host
+# Node / Vite — node_modules comes from the `deps` stage, never from the host
 node_modules/
-.next/
+dist/
 out/
 build/
-.vercel/
 *.tsbuildinfo
 .npm/
 npm-debug.log*
@@ -18,8 +17,8 @@ yarn-error.log*
 !.env.example
 
 # Playwright — E2E specs are not part of the production build. Keeping them out
-# of the context also stops a type error in a test from failing `next build`
-# (tsconfig includes **/*.ts).
+# of the context also stops a type error in a test from failing `npm run build`
+# (`tsc -b` tsconfig `include` bo'yicha yuradi).
 e2e/
 playwright.config.ts
 test-results/

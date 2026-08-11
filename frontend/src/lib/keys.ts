@@ -38,7 +38,6 @@ export const keys = {
   search: (workspaceId: string, q: string) =>
     ["workspace", workspaceId, "search", q] as const,
   list: (listId: string) => ["list", listId] as const,
-  statusSet: (listId: string) => ["list", listId, "status-set"] as const,
   /** All task queries of a list share the ['tasks', listId] prefix. */
   tasksRoot: (listId: string) => ["tasks", listId] as const,
   tasksGrouped: (listId: string) =>
@@ -56,4 +55,22 @@ export const keys = {
   spaceMembers: (spaceId: string) => ["space", spaceId, "members"] as const,
   /** Public taklif ko'rinishi — `/invite/[token]`. */
   invitationLookup: (token: string) => ["invitation-lookup", token] as const,
+  /**
+   * Bildirishnomalar (§19). Kalit ish maydonidan BOSHLANMAYDI: ro'yxat
+   * foydalanuvchiga tegishli va ish maydoni faqat filtr, shuning uchun
+   * bitta prefiks (`notifications`) barcha filtrlarni qamrab oladi.
+   */
+  notifications: (workspaceId: string | null) =>
+    ["notifications", workspaceId ?? "all"] as const,
+  notificationsRoot: ["notifications"] as const,
+  notificationsUnread: (workspaceId: string | null) =>
+    ["notifications", "unread-count", workspaceId ?? "all"] as const,
+  /** `GET workspaces/{id}/user-search/?q=` — takliflar dialogidagi qidiruv. */
+  userSearch: (workspaceId: string, q: string) =>
+    ["workspace", workspaceId, "user-search", q] as const,
+  /**
+   * Landing ma'lumoti (`GET public/showcase/`) — autentifikatsiyasiz va ish
+   * maydonidan mustaqil, shuning uchun kalit ham prefiksisiz.
+   */
+  showcase: ["showcase"] as const,
 };

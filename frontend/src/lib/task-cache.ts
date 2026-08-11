@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { GroupedTasksResponse, Task } from "@/types/api";
+import type { GroupedTasksResponse, Task, TaskStatus } from "@/types/api";
 import { keys } from "@/lib/keys";
 
 /**
@@ -11,8 +11,11 @@ import { keys } from "@/lib/keys";
 
 function sortGroup(tasks: Task[]): Task[] {
   return [...tasks].sort((a, b) => {
+    // `position` — ATAYLAB satr sifatida: u base-62 kasr kalit va shartnoma
+    // uni oddiy satr sifatida solishtirishni talab qiladi (§10.3).
     if (a.position !== b.position) return a.position < b.position ? -1 : 1;
-    return a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0;
+    // `created_at` esa vaqt — instant bo'yicha (ofsetli ISO, §1.2).
+    return Date.parse(a.created_at) - Date.parse(b.created_at);
   });
 }
 
@@ -23,21 +26,21 @@ export function upsertTaskInGroups(
   if (!data) return data;
   let found = false;
   const groups = data.groups.map((group) => {
-    const without = group.results.filter((t) => t.id !== task.id);
-    const removed = without.length !== group.results.length;
-    if (group.status_id === task.status_id) {
+    const without = group.tasks.filter((t) => t.id !== task.id);
+    const removed = without.length !== group.tasks.length;
+    if (group.status === task.status) {
       found = true;
       return {
         ...group,
-        results: sortGroup([...without, task]),
+        tasks: sortGroup([...without, task]),
         count: group.count + (removed ? 0 : 1),
       };
     }
-    if (removed) return { ...group, results: without, count: Math.max(0, group.count - 1) };
+    if (removed) return { ...group, tasks: without, count: Math.max(0, group.count - 1) };
     return group;
   });
-  // Status not present (e.g. status set changed elsewhere) — leave untouched;
-  // the caller should invalidate instead.
+  // Kod noma'lum guruhga tushdi (server yangi holat qo'shgan bo'lsa) — tegmay
+  // qoldiramiz; chaqiruvchi invalidatsiya qilsin.
   if (!found) return data;
   return { ...data, groups };
 }
@@ -50,9 +53,9 @@ export function removeTaskFromGroups(
   return {
     ...data,
     groups: data.groups.map((group) => {
-      const without = group.results.filter((t) => t.id !== taskId);
-      if (without.length === group.results.length) return group;
-      return { ...group, results: without, count: Math.max(0, group.count - 1) };
+      const without = group.tasks.filter((t) => t.id !== taskId);
+      if (without.length === group.tasks.length) return group;
+      return { ...group, tasks: without, count: Math.max(0, group.count - 1) };
     }),
   };
 }
@@ -63,7 +66,7 @@ export function findTaskInGroups(
 ): Task | undefined {
   if (!data) return undefined;
   for (const group of data.groups) {
-    const task = group.results.find((t) => t.id === taskId);
+    const task = group.tasks.find((t) => t.id === taskId);
     if (task) return task;
   }
   return undefined;
@@ -72,29 +75,30 @@ export function findTaskInGroups(
 /**
  * Optimistic move: place the task at `toIndex` inside the destination status
  * group *by array order* (no position invented) — reconciled once the server
- * returns the authoritative `position`.
+ * returns the authoritative `position`. Guruhlar serverdan keladi va doim
+ * to'rttasi bor, shuning uchun maqsad ustuni topilmay qolmaydi.
  */
 export function applyLocalMove(
   data: GroupedTasksResponse | undefined,
   taskId: string,
-  toStatusId: string,
+  toStatus: TaskStatus,
   toIndex: number,
 ): GroupedTasksResponse | undefined {
   if (!data) return data;
   const task = findTaskInGroups(data, taskId);
   if (!task) return data;
-  const moved: Task = { ...task, status_id: toStatusId };
+  const moved: Task = { ...task, status: toStatus };
   return {
     ...data,
     groups: data.groups.map((group) => {
-      const without = group.results.filter((t) => t.id !== taskId);
-      const removed = without.length !== group.results.length;
-      if (group.status_id === toStatusId) {
-        const results = [...without];
-        results.splice(Math.min(toIndex, results.length), 0, moved);
-        return { ...group, results, count: group.count + (removed ? 0 : 1) };
+      const without = group.tasks.filter((t) => t.id !== taskId);
+      const removed = without.length !== group.tasks.length;
+      if (group.status === toStatus) {
+        const tasks = [...without];
+        tasks.splice(Math.min(toIndex, tasks.length), 0, moved);
+        return { ...group, tasks, count: group.count + (removed ? 0 : 1) };
       }
-      if (removed) return { ...group, results: without, count: Math.max(0, group.count - 1) };
+      if (removed) return { ...group, tasks: without, count: Math.max(0, group.count - 1) };
       return group;
     }),
   };

@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { WS_BASE_URL } from "@/lib/env";

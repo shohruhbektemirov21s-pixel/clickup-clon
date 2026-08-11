@@ -1,5 +1,3 @@
-"use client";
-
 import * as React from "react";
 import { CornerDownRight, Pencil, Send, Trash2 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";

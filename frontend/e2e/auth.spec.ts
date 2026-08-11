@@ -39,8 +39,8 @@ test.describe("authentication", () => {
     // `exact` bo'lmasa "Demo rejimda kirish" tugmasi ham mos keladi.
     await page.getByRole("button", { name: "Kirish", exact: true }).click();
 
-    // Next.js o'zining `__next-route-announcer__` elementiga ham role="alert"
-    // beradi — shuning uchun aynan formadagi banner tanlanadi.
+    // Sahifada boshqa `role="alert"` elementlari ham bo'lishi mumkin (masalan
+    // toast) — shuning uchun aynan formadagi banner tanlanadi.
     const alert = page.locator('form p[role="alert"]');
     await expect(alert).toBeVisible();
     await expect(alert).toContainText("Bunday email va parolga ega faol hisob topilmadi.");

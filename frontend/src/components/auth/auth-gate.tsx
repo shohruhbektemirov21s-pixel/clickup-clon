@@ -1,7 +1,5 @@
-"use client";
-
 import * as React from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useLocation, useNavigate } from "react-router";
 import { useAuthStore } from "@/stores/auth-store";
 import { FullPageSpinner } from "@/components/shared/full-page-spinner";
 
@@ -13,15 +11,15 @@ import { FullPageSpinner } from "@/components/shared/full-page-spinner";
  */
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const status = useAuthStore((s) => s.status);
-  const router = useRouter();
-  const pathname = usePathname();
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
 
   React.useEffect(() => {
     if (status === "unauthenticated") {
       const next = pathname && pathname !== "/" ? `?next=${encodeURIComponent(pathname)}` : "";
-      router.replace(`/login${next}`);
+      navigate(`/login${next}`, { replace: true });
     }
-  }, [status, router, pathname]);
+  }, [status, navigate, pathname]);
 
   if (status !== "authenticated") return <FullPageSpinner />;
   return <>{children}</>;

@@ -1,7 +1,5 @@
-"use client";
-
 import * as React from "react";
-import Link from "next/link";
+import { Link } from "@/components/ui/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ArrowLeft } from "lucide-react";
@@ -15,6 +13,7 @@ import { useLogout } from "@/hooks/use-logout";
 import { api, isApiError } from "@/lib/api";
 import { keys } from "@/lib/keys";
 import { initials } from "@/lib/format";
+import { AUTH, COMMON, PROFILE_SETTINGS } from "@/i18n/uz";
 import { useAuthStore } from "@/stores/auth-store";
 import type { User } from "@/types/api";
 
@@ -40,7 +39,7 @@ export function ProfileSettings() {
       setUser(updated);
       toast.success("Profil yangilandi");
     } catch (err) {
-      toast.error(isApiError(err) ? err.message : "Profilni saqlab bo'lmadi.");
+      toast.error(isApiError(err) ? err.message : PROFILE_SETTINGS.saveFailed);
     } finally {
       setSaving(false);
     }
@@ -54,9 +53,9 @@ export function ProfileSettings() {
         href="/"
         className="mb-6 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
       >
-        <ArrowLeft className="size-4" /> Ish maydoniga qaytish
+        <ArrowLeft className="size-4" /> {COMMON.backToWorkspace}
       </Link>
-      <h1 className="mb-6 text-xl font-semibold">Sizning sozlamalaringiz</h1>
+      <h1 className="mb-6 text-xl font-semibold">{PROFILE_SETTINGS.title}</h1>
 
       {isPending || !me ? (
         <div className="space-y-3" aria-hidden>
@@ -76,7 +75,7 @@ export function ProfileSettings() {
             </AvatarFallback>
           </Avatar>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="full-name">To&apos;liq ism</Label>
+            <Label htmlFor="full-name">{AUTH.fullNameLabel}</Label>
             <Input
               id="full-name"
               value={fullName}
@@ -84,18 +83,18 @@ export function ProfileSettings() {
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="profile-email">Email</Label>
+            <Label htmlFor="profile-email">{COMMON.email}</Label>
             <Input id="profile-email" value={me.email} readOnly disabled />
             <p className="text-xs text-muted-foreground">
-              Emailni o&apos;zgartirish MVP versiyasida qo&apos;llab-quvvatlanmaydi.
+              {PROFILE_SETTINGS.emailReadOnly}
             </p>
           </div>
           <div className="flex items-center justify-between pt-2">
             <Button type="submit" disabled={saving || !fullName.trim()}>
-              {saving ? "Saqlanmoqda…" : "Saqlash"}
+              {saving ? COMMON.saving : COMMON.save}
             </Button>
             <Button type="button" variant="destructive" onClick={onLogout}>
-              Chiqish
+              {PROFILE_SETTINGS.logout}
             </Button>
           </div>
         </form>
