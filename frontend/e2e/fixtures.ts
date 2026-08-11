@@ -37,6 +37,13 @@ export const USERS = {
   jasur: { email: "jasur@clickish.dev", password: DEMO_PASSWORD },
   malika: { email: "malika@clickish.dev", password: DEMO_PASSWORD },
   nodira: { email: "nodira@clickish.dev", password: DEMO_PASSWORD },
+  /**
+   * Faqat o'qish hisobi (`is_readonly=True`). Roli `member`, ya'ni ROL
+   * bo'yicha qaraganda yozish huquqi bor ko'rinadi — aynan shu sababdan
+   * u UI affordance'lari uchun eng qimmatli sinov sub'ekti: rolga qarab
+   * chizilgan interfeys unga yozish tugmalarini ko'rsatib qo'yadi.
+   */
+  mehmon: { email: "mehmon@clickish.dev", password: DEMO_PASSWORD },
 } as const satisfies Record<string, DemoUser>;
 
 // ---------------------------------------------------------------------------
@@ -395,6 +402,28 @@ export async function signedInContext(
 export async function signIn(page: Page, user: DemoUser): Promise<AuthSession> {
   watchThrottling(page);
   const session = await apiLogin(user.email, user.password);
+
+  // Token har qanday sahifa skriptidan OLDIN joyiga qo'yiladi.
+  //
+  // Ilgari bu yerda `page.goto("/login")` + `page.evaluate(setItem)` turardi
+  // va u poygaga olib kelardi: `goto` "load" da qaytadi, `SessionBootstrap`
+  // effekti esa hidratsiyadan KEYIN ishlaydi — ya'ni tokenni biz yozib
+  // bo'lganimizdan keyin. O'sha bootstrap uni ishlatib yuboradi, refresh
+  // token esa birinchi ishlatilishida rotatsiya qilinib eskisi blacklist'ga
+  // tushadi. Keyingi navigatsiya endi YAROQSIZ token bilan borib `401`
+  // olardi, sessiya tozalanardi va test login sahifasida tugardi.
+  //
+  // `addInitScript` skriptni har navigatsiyada hujjat skriptlaridan oldin
+  // bajaradi, shuning uchun "bor bo'lsa tegma" sharti SHART: aks holda u
+  // har yuklanishda allaqachon rotatsiya qilingan tokenni eskisi bilan
+  // qayta yozib, xuddi shu xatoni qaytarardi.
+  await page.context().addInitScript(
+    ([key, value]) => {
+      if (!window.localStorage.getItem(key)) window.localStorage.setItem(key, value);
+    },
+    [REFRESH_STORAGE_KEY, session.refresh] as const,
+  );
+
   const appOrigin = new URL(APP_BASE_URL).origin;
   let current: string | null = null;
   try {
@@ -402,12 +431,18 @@ export async function signIn(page: Page, user: DemoUser): Promise<AuthSession> {
   } catch {
     current = null; // about:blank
   }
-  if (current !== appOrigin) await page.goto("/login");
-
-  await page.evaluate(
-    ([key, value]) => window.localStorage.setItem(key, value),
-    [REFRESH_STORAGE_KEY, session.refresh] as const,
-  );
+  // Origin hali ochilmagan bo'lsa `addInitScript` ishlashi uchun bir marta
+  // yuklaymiz; ochiq bo'lsa `localStorage` ni to'g'ridan-to'g'ri urug'lantiramiz.
+  if (current !== appOrigin) {
+    await page.goto("/login");
+  } else {
+    await page.evaluate(
+      ([key, value]) => {
+        if (!window.localStorage.getItem(key)) window.localStorage.setItem(key, value);
+      },
+      [REFRESH_STORAGE_KEY, session.refresh] as const,
+    );
+  }
   return session;
 }
 

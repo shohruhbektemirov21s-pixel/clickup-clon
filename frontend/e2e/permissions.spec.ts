@@ -1,11 +1,12 @@
 import { expect, test } from "@playwright/test";
-import type { BrowserContext, Page } from "@playwright/test";
+import type { Browser, BrowserContext, Page } from "@playwright/test";
 
 import {
   USERS,
   apiRequest,
   collectPageErrors,
   firstWorkspace,
+  gotoFirstList,
   resetRolePermissions,
   signIn,
   signedInContext,
@@ -174,5 +175,75 @@ test.describe("permissions matrix", () => {
     await expect(page.getByLabel(MEMBER_SPACE_CREATE)).toHaveCount(0);
 
     expect(collected.errors).toEqual([]);
+  });
+});
+
+/**
+ * Faqat o'qish hisobi: yozish affordance'lari UMUMAN chizilmasligi kerak.
+ *
+ * Nega alohida `describe`: yuqoridagi blok matritsani o'zgartiradi va
+ * `beforeAll` da egasi bilan kontekst ochadi. Bu testlar esa matritsaga
+ * TEGMAYDI — ular standart holatni tekshiradi, shuning uchun aralashmasin.
+ *
+ * Regressiya konteksti (5abb0b7): list-view fasadi bir marta revert
+ * qilingan va o'shanda `mehmon` (roli `member`, `is_readonly=True`) list
+ * ko'rinishida "Vazifa qo'shish" ni ko'rardi, bosganda esa server `403`
+ * qaytarardi. Server hech qachon buzilmagan; yolg'on gapirgan narsa UI edi.
+ * Bu ikki test aynan shu holatning qaytmasligini ushlab turadi.
+ */
+test.describe("faqat o'qish hisobi — list view affordance'lari", () => {
+  const ADD_TASK = /Vazifa qo'shish/;
+
+  /**
+   * `signedInContext` — `signIn` EMAS, va bu ataylab.
+   *
+   * `signIn` tokenni allaqachon yuklangan `/login` sahifasiga yozadi. O'sha
+   * sahifaning `SessionBootstrap` effekti (hidratsiyadan keyin ishga tushadi)
+   * tokenni ko'rib qoladi va uni ishlatib yuboradi; refresh token esa birinchi
+   * ishlatilishida rotatsiya qilinib eskisi blacklist'ga tushadi. Keyingi
+   * navigatsiya o'sha eskisi bilan borsa `401` oladi va sessiya tozalanadi —
+   * test login sahifasida tugaydi.
+   *
+   * `signedInContext` `storageState` ni kontekst yaratilishida beradi, ya'ni
+   * token BIRINCHI sahifa yuklanishidan oldin joyida bo'ladi va bootstrap
+   * bir marta ishlaydi.
+   */
+  async function openFirstList(browser: Browser, user: (typeof USERS)[keyof typeof USERS]) {
+    const { context, page, session } = await signedInContext(browser, user);
+    const workspace = await firstWorkspace(session.access);
+    await gotoFirstList(page, workspace.id);
+    return { context, page };
+  }
+
+  test("readonly hisob 'Vazifa qo'shish' ni ko'rmaydi", async ({ browser }) => {
+    const { context, page } = await openFirstList(browser, USERS.mehmon);
+    try {
+      const collected = collectPageErrors(page);
+
+      // Ro'yxat MAZMUNI ko'rinadi — cheklov ko'rishga emas, yozishga.
+      await expect(page.locator("main")).toBeVisible();
+
+      // `toHaveCount(0)` ataylab `toBeDisabled()` emas: talab — affordance
+      // umuman render bo'lmasin, "bosib bo'lmaydigan tugma" bo'lib turmasin.
+      await expect(page.getByRole("button", { name: ADD_TASK })).toHaveCount(0);
+
+      expect(collected.errors).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("oddiy a'zo esa 'Vazifa qo'shish' ni ko'radi", async ({ browser }) => {
+    // Nazorat testi: yuqoridagi assertion faqat readonly tufayli o'tayotganini
+    // isbotlaydi. Usiz "tugma umuman yo'q" degan holat ham testni yashil
+    // qilardi va regressiya sezilmay qolardi.
+    const { context, page } = await openFirstList(browser, USERS.jasur);
+    try {
+      await expect(page.getByRole("button", { name: ADD_TASK }).first()).toBeVisible({
+        timeout: 20_000,
+      });
+    } finally {
+      await context.close();
+    }
   });
 });
