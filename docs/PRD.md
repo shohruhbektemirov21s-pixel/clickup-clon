@@ -1,5 +1,10 @@
 # Product Requirements Document — Clickish (ClickUp clone) MVP
 
+> **Brend eslatmasi.** Mahsulot nomi endi **UzWork**. Bu fayl tarixiy hujjat —
+> undagi "Clickish" / "ClickUp clone" iboralari yozilgan paytdagi holatni
+> aks ettiradi va o'zgartirilmagan. Amaldagi brend chegarasi:
+> `docs/adr/0014-mahsulot-nomi.md`.
+
 ## Doc control
 
 | Field | Value |

@@ -1,6 +1,6 @@
 # Docker bilan ishlash qo'llanmasi
 
-Bu hujjat ClickUp klonini Docker Compose orqali ishga tushirishni tushuntiradi.
+Bu hujjat UzWork'ni Docker Compose orqali ishga tushirishni tushuntiradi.
 
 > **Muhim:** Docker — bu *muqobil* yo'l. Kundalik ishlab chiqish uchun asosiy usul
 > hamon `.venv` + `npm run dev` bo'lib qoladi (`CLAUDE.md` ga qarang). Docker
@@ -15,7 +15,7 @@ Bu hujjat ClickUp klonini Docker Compose orqali ishga tushirishni tushuntiradi.
 | `db`       | `postgres:16-alpine` | `5432`    | Asosiy ma'lumotlar bazasi |
 | `redis`    | `redis:7-alpine`   | `6379`      | Channels layer (WebSocket broadcast) |
 | `backend`  | `backend/Dockerfile` | `8000`    | Django 5.2 + DRF + Channels, **Daphne** (ASGI) |
-| `frontend` | `frontend/Dockerfile` | `3000`   | Next.js 16, `standalone` build |
+| `frontend` | `frontend/Dockerfile` | `3000`   | Vite build, nginx tarqatadi (root'siz, uid 101) |
 
 Nomlangan volume'lar: `pgdata` (Postgres), `redisdata` (AOF), `static`
 (collectstatic natijasi), `media` (yuklangan fayllar).
@@ -159,8 +159,9 @@ kerak:
 docker compose up -d --build backend
 ```
 
-**Frontend.** Image `next build` natijasidan (`standalone`) yig'iladi, bind-mount
-yo'q. Har o'zgarishda:
+**Frontend.** ADR 0011 dan keyin image `vite build` chiqargan statik `dist/` ni
+nginx orqali tarqatadi — ichida Node jarayoni yo'q. Bind-mount ham yo'q, ya'ni
+har o'zgarishda qayta qurish kerak:
 
 ```bash
 docker compose up -d --build frontend
@@ -282,9 +283,11 @@ Shuning uchun `DATABASE_URL` va `REDIS_URL` `.env.docker.example` da **yo'q**:
 ularni compose `db`/`redis` servis nomlaridan yig'ib, `environment:` orqali
 beradi. Bu `backend/.env` dagi `sqlite:///db.sqlite3` ni ustidan yozadi.
 
-`NEXT_PUBLIC_*` alohida holat: bular `next build` paytida bundle ichiga
-**yozib qo'yiladi**. `docker run -e` bilan keyin o'zgartirib bo'lmaydi —
-faqat `--build` bilan.
+`VITE_*` alohida holat: bular `vite build` paytida bundle ichiga **yozib
+qo'yiladi**. Ishlab turgan konteyner — shunchaki nginx, u bu qiymatlarni
+umuman o'qimaydi; shu sababli ular compose'da `environment:` emas, `args:`
+sifatida turadi. `docker run -e` bilan keyin o'zgartirib bo'lmaydi — faqat
+`--build` bilan.
 
 ---
 
@@ -407,7 +410,7 @@ takrorlanaveradi. `docker compose logs db` ni ko'ring — odatda initdb xatosi
 yoki eski/buzilgan `pgdata`. Kutish limiti `.env` dagi `DB_WAIT_RETRIES` va
 `DB_WAIT_DELAY` bilan sozlanadi (default 60 × 2s = 2 daqiqa).
 
-### `next build` da TypeScript xatosi
+### `vite build` da TypeScript xatosi
 Build image ichida to'xtaydi. Avval lokal tekshiring:
 
 ```bash

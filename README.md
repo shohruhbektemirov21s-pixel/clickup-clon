@@ -1,9 +1,16 @@
-# Clickish — ClickUp kloni
+# UzWork
 
-Jamoaviy vazifa boshqaruvi ilovasi: ish maydonlari, bo'limlar, ro'yxatlar,
+Jamoaviy ish boshqaruvi platformasi: ish maydonlari, bo'limlar, ro'yxatlar,
 vazifalar, izohlar va real vaqtli hamkorlik. Interfeys to'liq **o'zbek tilida**.
 
-Monorepo: **Django REST** backend + **Next.js** frontend.
+UzWork ClickUp uslubidagi work-management workflow'laridan — ierarxiya, kanban,
+drag & drop tartiblash, real vaqtli hamkorlik — ilhomlangan, ammo **mustaqil
+implementatsiya**: kod, dizayn va brend loyihaning o'ziniki. ClickUp'ning kodi,
+assetlari, logotipi yoki yopiq dizayni ko'chirilmagan; ClickUp hujjatlarda faqat
+UX taqqoslash nuqtasi sifatida eslatiladi. Chegara —
+[`docs/adr/0014-mahsulot-nomi.md`](docs/adr/0014-mahsulot-nomi.md).
+
+Monorepo: **Django REST** backend + **React + Vite** frontend.
 
 ---
 
@@ -31,9 +38,14 @@ Monorepo: **Django REST** backend + **Next.js** frontend.
 **Backend** — Django 5.2 · DRF · SimpleJWT · Channels 4 + Daphne (ASGI) ·
 django-cors-headers · django-filter · drf-spectacular · WhiteNoise
 **Ma'lumotlar bazasi** — dev'da SQLite, prod'da PostgreSQL (`DATABASE_URL` orqali)
-**Frontend** — Next.js 16 (App Router) · React 19 · TypeScript · Tailwind ·
-shadcn/ui · TanStack Query · Zustand · native WebSocket
-**Testlar** — pytest + pytest-django (backend), Playwright (E2E)
+**Frontend** — React 19 · Vite · React Router · TypeScript · Tailwind v4
+(CSS-first) · shadcn/ui · TanStack Query · Zustand · @dnd-kit · native WebSocket
+**Testlar** — pytest + pytest-django (backend), vitest (frontend unit),
+Playwright (E2E)
+
+> Frontend Next.js 16 App Router'dan React + Vite SPA'ga ko'chirilmoqda
+> ([`docs/adr/0011-frontend-framework.md`](docs/adr/0011-frontend-framework.md)).
+> Ko'chish tugagunga qadar repoda ikkala iz ham uchrashi mumkin.
 
 Talab qilinadi: **Python 3.14**, **Node 22+**. Redis ixtiyoriy — bo'lmasa
 Channels xotiradagi qatlamga tushadi.
@@ -53,7 +65,7 @@ Ikki yo'l bor. Kundalik ish uchun birinchisi qulayroq.
 
 # frontend — frontend/ katalogidan
 npm install
-npm run dev                                          # http://localhost:3000
+npm run dev                                          # Vite dev server
 ```
 
 `backend/.env` faylini `backend/.env.example` dan nusxalang.
@@ -170,11 +182,13 @@ clickup/
       chat/            kanallar, shaxsiy yozishmalar, xabarlar
       emailcheck/      ommaviy email tekshiruvi (sintaksis/MX/SMTP/API)
   frontend/
-    src/app/           App Router sahifalari
+    src/               route'lar, komponentlar, hooklar (ADR 0011 bo'yicha
+                       App Router'dan React Router SPA'ga ko'chirilmoqda)
     src/components/    UI, shell, settings, task, auth
     src/hooks/         TanStack Query hooklari, WebSocket kanallari
     e2e/               Playwright testlari
-  docs/                PRD, DATA_MODEL, API_CONTRACT, UI_SPEC, DESIGN_PERMISSIONS, DOCKER
+  docs/                API_CONTRACT, DATA_MODEL, DESIGN_PERMISSIONS, DOCKER,
+                       adr/ (arxitektura qarorlari), prompts/ (faza promptlari)
   .github/workflows/   CI va xavfsizlik skanerlari
 ```
 
@@ -190,6 +204,10 @@ clickup/
 | [`docs/UI_SPEC.md`](docs/UI_SPEC.md) | Ekranlar spetsifikatsiyasi |
 | [`docs/DOCKER.md`](docs/DOCKER.md) | Konteynerlar, muhit o'zgaruvchilari, xatolar |
 | [`docs/PRD.md`](docs/PRD.md) | Mahsulot talablari |
+| [`docs/adr/`](docs/adr/README.md) | Arxitektura qarorlari (ADR) — indeks va shablon |
+| [`docs/prompts/`](docs/prompts/README.md) | Faza promptlari va ularning holati |
+| [`docs/MASTER_PLAN.md`](docs/MASTER_PLAN.md) | Loyihaning bog'lovchi rejasi — v2 `.docx` matni |
+| [`docs/MASTER_PLAN_COMPLIANCE.md`](docs/MASTER_PLAN_COMPLIANCE.md) | Reja bo'yicha holat kartasi (qaysi band bajarilgan, dalili bilan) |
 
 API hujjati dev rejimida: `http://127.0.0.1:8000/api/docs/`.
 

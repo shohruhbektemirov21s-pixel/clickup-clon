@@ -1,4 +1,4 @@
-# Data Model — Clickish (ClickUp clone) MVP
+# Data Model — UzWork MVP
 
 | | |
 |---|---|
@@ -33,7 +33,7 @@
   has **no models**. There is **no `spaces` app**; see §1.
 - **Every model uses a UUIDv4 primary key** so clients can generate ids for optimistic creation.
 - **Drag & drop ordering uses a lexicographic fractional index** (`position = CharField(max_length=64)`), not integers. See §7.
-- **Statuses are per-Space with an optional per-List override** (`StatusSet` owned by exactly one of `space` / `list`). See §5.6.
+- **Status is a fixed code set, not a table** — `todo | in_progress | review | done` (`apps.core.enums.TaskStatus`). `StatusSet`/`Status` were removed in v1.4.0; see §5.7.
 - **Only `Task` and `Comment` are soft-deleted** (`deleted_at`). Everything else hard-deletes via `CASCADE`.
 
 ---
@@ -48,15 +48,16 @@ backend/
                           #       exception handler, fractional-index helpers. NO concrete models.
     accounts/             # User
     workspaces/           # Workspace, WorkspaceMember, RolePermission, Invitation,
-                          #       Space, SpaceMember, Folder, TaskList, StatusSet, Status
+                          #       Space, SpaceMember, Folder, TaskList
     tasks/                # Task, TaskAssignee, TaskWatcher, TaskActivity, TaskAttachment,
                           #       Tag, TaskTag
     comments/             # Comment
+    notifications/        # Notification (§7.5)
     realtime/             # Channels consumers + broadcast helpers. NO models.
 ```
 
 > **There is no `apps.spaces` app, and there never was.** Earlier editions of this document put
-> `Space`, `Folder`, `TaskList`, `StatusSet` and `Status` in a separate `spaces` app. `CLAUDE.md`
+> `Space`, `Folder` and `TaskList` in a separate `spaces` app. `CLAUDE.md`
 > put them in `apps.workspaces`, the code followed `CLAUDE.md`, and `API_CONTRACT.md` **R1** ruled
 > for `CLAUDE.md` — but this file was never amended, so for three versions it instructed readers to
 > create an app that does not exist. **The whole hierarchy lives in `apps.workspaces`** (verified
@@ -112,7 +113,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"  # irrelevant: all PKs are 
 | Soft delete | Only `Task` and `Comment`: `deleted_at = DateTimeField(null=True, blank=True, db_index=True)`. `NULL` = live. Default managers filter it out. |
 | Blank vs null | Text fields: `blank=True, default=""`, **never** `null=True`. Nullable relations/dates use `null=True, blank=True`. |
 | `on_delete` default | `CASCADE` down the hierarchy; `PROTECT` for `Task.status` and `Workspace.owner`; `SET_NULL` for audit/authorship pointers. |
-| Ordering | Models with drag & drop use `position` (fractional index). `Status` uses an integer `order`. |
+| Ordering | Models with drag & drop use `position` (fractional index). Task status columns use the fixed `apps.core.enums.STATUS_ORDER` list. |
 | Managers | Soft-deleted models expose `objects` (live only) and `all_objects` (everything). |
 
 ### 2.1 Abstract bases (`apps/core/models.py`)
@@ -225,7 +226,7 @@ class StatusType(models.TextChoices):
 class Priority(models.TextChoices):
     URGENT = "urgent", "Urgent"
     HIGH   = "high",   "High"
-    NORMAL = "normal", "Normal"
+    MEDIUM = "medium", "Medium"        # was NORMAL/"normal" before v1.4.0
     LOW    = "low",    "Low"
     NONE   = "none",   "No priority"
 
@@ -294,13 +295,9 @@ User ──< WorkspaceMember >── Workspace
                                ├──< Tag ──────────────┐
                                │                      │
                                └──< Space             │
-                                     │  └── StatusSet (1:1, required)
-                                     │            └──< Status
                                      ├──< Folder                       (optional level)
                                      │      └──< TaskList              (folder_id NOT NULL)
                                      └──< TaskList                     (folder_id NULL)
-                                            │  └── StatusSet (1:1, OPTIONAL override)
-                                            │            └──< Status
                                             └──< Task
                                                    ├──< TaskAssignee >── User
                                                    ├──< TaskWatcher  >── User
@@ -633,7 +630,7 @@ class Space(UUIDModel, TimeStampedModel, PositionedModel):
 | `archived` | `BooleanField(default=False, db_index=True)` | Hidden from the sidebar by default; data retained. |
 | `position` | `CharField(max_length=64, db_index=True)` | Scope: `workspace_id`. |
 
-**Cascade:** deleting a `Space` deletes its `StatusSet`, `Folder`s, `TaskList`s, `Task`s and `Comment`s. Guarded by a confirmation body field in the API.
+**Cascade:** deleting a `Space` deletes its `Folder`s, `TaskList`s, `Task`s and `Comment`s. Guarded by a confirmation body field in the API.
 
 ### 5.5 `Folder` (`workspaces`)
 
@@ -687,7 +684,7 @@ class TaskList(UUIDModel, TimeStampedModel, PositionedModel):
     default_view = models.CharField(max_length=8, default="list",
                                     choices=[("list", "List"), ("board", "Board")])
     task_count = models.PositiveIntegerField(default=0)          # denormalised, live tasks
-    open_task_count = models.PositiveIntegerField(default=0)     # denormalised, status.type != closed
+    open_task_count = models.PositiveIntegerField(default=0)     # denormalised, status != "done"
 
     created_by = models.ForeignKey("accounts.User", on_delete=models.SET_NULL,
                                    null=True, blank=True, related_name="created_lists")
@@ -746,112 +743,67 @@ def clean(self):
 (`WHERE space_id = ?`) index-friendly and make the permission check a single join. A polymorphic
 parent would need `GenericForeignKey`, which cannot be joined or constrained.
 
-### 5.7 `StatusSet` (`workspaces`)
+### 5.7 Task status — a code set, not a model (v1.4.0)
 
-A named, ordered collection of `Status` rows. Owned by **exactly one** of a `Space` (the space
-default, always present) or a `TaskList` (an override).
-
-```python
-class StatusSet(UUIDModel, TimeStampedModel):
-    name = models.CharField(max_length=80, default="Default")
-
-    space = models.OneToOneField(Space, on_delete=models.CASCADE, null=True, blank=True,
-                                 related_name="status_set")
-    list = models.OneToOneField(TaskList, on_delete=models.CASCADE, null=True, blank=True,
-                                related_name="status_set")
-
-    class Meta:
-        db_table = "status_sets"
-        ordering = ["created_at"]
-        constraints = [
-            models.CheckConstraint(
-                condition=models.Q(space__isnull=False, list__isnull=True)
-                        | models.Q(space__isnull=True, list__isnull=False),
-                name="statusset_exactly_one_owner",
-            ),
-        ]
-```
-
-> Django 5.1+ renamed `CheckConstraint(check=...)` to `condition=...`. On Django 5.2 use `condition`.
-
-| Field | Type & constraints | Notes |
-|---|---|---|
-| `name` | `CharField(max_length=80, default="Default")` | e.g. `"Default"`, `"Bug workflow"`. |
-| `space` | `OneToOneField(Space, CASCADE, null=True, blank=True, related_name="status_set")` | Non-null ⇒ this is a space default. |
-| `list` | `OneToOneField(TaskList, CASCADE, null=True, blank=True, related_name="status_set")` | Non-null ⇒ this is a per-list override. |
-
-**Resolution rule (the core of ClickUp's status model):**
+`StatusSet` and `Status` **no longer exist**. There is no `status_sets` table, no `statuses`
+table, no per-space default and no per-list override. Task status is a closed set of four
+codes declared once, in code:
 
 ```python
-def effective_status_set(task_list: TaskList) -> StatusSet:
-    """The status set a list's tasks must use."""
-    return getattr(task_list, "status_set", None) or task_list.space.status_set
+# apps/core/enums.py
+class TaskStatus(models.TextChoices):
+    TODO = "todo", "Boshlanmagan"
+    IN_PROGRESS = "in_progress", "Jarayonda"
+    REVIEW = "review", "Tekshirilmoqda"
+    DONE = "done", "Bajarildi"
+
+CLOSED_STATUSES = frozenset({TaskStatus.DONE})
+STATUS_ORDER = [TaskStatus.TODO, TaskStatus.IN_PROGRESS, TaskStatus.REVIEW, TaskStatus.DONE]
 ```
 
-- Every `Space` gets a `StatusSet` **automatically on creation** (`post_save` signal / service),
-  seeded with `TO DO (open, #87909E, default)`, `IN PROGRESS (active, #4194F6)`, `COMPLETE (closed, #6BC950)`.
-- A `TaskList` has **no** `StatusSet` by default and inherits the space's.
-- `PUT /api/v1/lists/{id}/status-set/` creates the override; `DELETE` removes it and reverts to inheritance.
-- Both operations require a `status_mapping` for existing tasks (see §5.8 migration rule).
+- The Uzbek label is the `TextChoices` display value: it is used by Django admin and echoed in the
+  grouped board payload, and it is **never written to the database**. Only the code is stored.
+- `CLOSED_STATUSES` is the single definition of "finished". `Task.completed_at` is set on entering
+  it and cleared on leaving it (`apps/tasks/services.py::_apply_completed_at` — sole writer).
+  There is no `status_type` column and no `StatusType` enum any more.
+- `STATUS_ORDER` is the board column order and the default secondary sort of the flat task list;
+  ordering by the raw code would be alphabetical and therefore wrong.
 
-### 5.8 `Status` (`workspaces`)
+**Why a code set.** The configurable model cost a `PROTECT` FK on the hottest table, a join on
+every task read, a seeded `StatusSet` per space, a `status_mapping` re-pointing protocol on every
+edit, and a board whose column list had to be fetched separately. None of that bought a feature
+this product uses: every workspace ran the seeded three statuses.
 
-```python
-class Status(UUIDModel, TimeStampedModel):
-    status_set = models.ForeignKey(StatusSet, on_delete=models.CASCADE,
-                                   related_name="statuses")
-    name = models.CharField(max_length=60)
-    color = models.CharField(max_length=7, default="#87909E", validators=[HEX_COLOR])
-    type = models.CharField(max_length=8, choices=StatusType.choices,
-                            default=StatusType.OPEN, db_index=True)
-    order = models.PositiveSmallIntegerField(default=0, db_index=True)
-    is_default = models.BooleanField(default=False)
+**What was lost.** Per-workspace status **names, colours and `order`**. Colour and label now live
+in the frontend dictionary (`src/i18n/uz.ts`), which is also where they belong for a localised UI.
+The task→column relationship itself was preserved by the migration (§5.8).
 
-    class Meta:
-        db_table = "statuses"
-        ordering = ["order", "name"]
-        constraints = [
-            models.UniqueConstraint("status_set", Lower("name"),
-                                    name="uniq_status_name_per_set"),
-            models.UniqueConstraint(fields=["status_set", "order"],
-                                    name="uniq_status_order_per_set",
-                                    deferrable=models.Deferrable.DEFERRED),
-            models.UniqueConstraint(fields=["status_set"],
-                                    condition=models.Q(is_default=True),
-                                    name="uniq_default_status_per_set"),
-        ]
-        indexes = [
-            models.Index(fields=["status_set", "order"], name="idx_status_set_order"),
-        ]
-```
+### 5.8 Status migration (`tasks/0005_task_status_code`)
 
-| Field | Type & constraints | Notes |
-|---|---|---|
-| `status_set` | `FK(StatusSet, CASCADE, related_name="statuses")` | |
-| `name` | `CharField(max_length=60)`, CI-unique per set | Displayed uppercase in the UI by CSS, stored as typed. |
-| `color` | `CharField(max_length=7, default="#87909E")` | |
-| `type` | `CharField(max_length=8, choices=StatusType, default="open", db_index=True)` | `open` \| `active` \| `closed`. Drives board grouping colour, "completed" semantics and the `status_type` filter. |
-| `order` | `PositiveSmallIntegerField(default=0, db_index=True)` | 0-based, contiguous within a set. **Integer, not fractional** — status reordering is a whole-set `PUT`, so the whole array is rewritten atomically; there is no insert-between concurrency problem. |
-| `is_default` | `BooleanField(default=False)` | Exactly one per set. Used for new tasks when `status_id` is omitted. |
+One migration, three steps, no data loss of the task→column relationship:
 
-**Set-level invariants (validated in the `PUT` serializer, `400 validation_error` on failure):**
-1. `1 <= len(statuses) <= 30`.
-2. Exactly one status has `is_default = True`, and it must have `type != "closed"`.
-3. At least one status has `type = "closed"`.
-4. `order` values are `0..n-1` with no gaps and no duplicates (the API assigns them from array index; a client-supplied `order` is ignored).
-5. Names are unique case-insensitively within the set.
+1. `Task.status_code` (`CharField`, `null=True`) is added;
+2. a data migration maps each task through its old `Status.type`;
+3. the old FK is dropped, `status_code` is renamed to `status` and made non-null.
 
-> **Why `deferrable=DEFERRED` on `(status_set, order)`:** rewriting an ordered array inevitably passes
-> through transient duplicate `order` values mid-`UPDATE`. Deferring the check to `COMMIT` avoids a
-> two-phase "shift everything to negative numbers first" dance.
-> **SQLite caveat:** SQLite ignores deferrability. In dev, the service layer therefore performs the
-> rewrite in the safe order (`order = -1 - index` pass, then `order = index` pass) inside one
-> transaction, which is correct on both backends. Do not skip the two-pass write.
+| Old `statuses.type` | New code |
+|---|---|
+| `open` | `todo` |
+| `active` | `in_progress` |
+| `closed` | `done` |
+| task with no status | `todo` |
 
-**Deleting a status** (only via `PUT` on the set, by omitting it) requires
-`status_mapping: {"<removed_status_id>": "<target_status_id>"}` covering every removed status that
-still has tasks. Because `Task.status` is `PROTECT`, a missing mapping surfaces as
-`409 conflict` with `error.details.status_mapping`.
+Nothing maps to `review`: the old model had no matching type. Statuses literally *named* "review"
+were of type `active`, so they land in `in_progress` — the nearest correct column, not a loss.
+
+`workspaces/0006_drop_status_sets` then drops both tables. It **must** run after `tasks/0005`
+(declared as a dependency): while the FK exists, deleting a `Status` row that still has tasks is a
+`ProtectedError`. It uses `DeleteModel` rather than `RemoveField`, because on SQLite removing the
+`status_set` column rebuilds the table while `uniq_status_name_per_set` still references it.
+
+`tasks/0006_priority_medium` renames `Priority.NORMAL` (`"normal"`) to `MEDIUM` (`"medium"`) and
+updates existing rows. `NONE` (`"none"` — "not prioritised") is deliberately kept; `priority_order`
+is unchanged, so sort results are identical.
 
 ---
 
@@ -958,8 +910,8 @@ row exists. See `API_CONTRACT.md` R20 and `apps/core/access.py::space_is_visible
 class Task(UUIDModel, TimeStampedModel, SoftDeleteModel, PositionedModel):
     list = models.ForeignKey("workspaces.TaskList", on_delete=models.CASCADE,
                              related_name="tasks")
-    status = models.ForeignKey("workspaces.Status", on_delete=models.PROTECT,
-                               related_name="tasks")
+    status = models.CharField(max_length=16, choices=TaskStatus.choices,
+                              default=TaskStatus.TODO, db_index=True)
 
     title = models.CharField(max_length=500)
     description_html = models.TextField(blank=True, default="")
@@ -1028,13 +980,13 @@ class Task(UUIDModel, TimeStampedModel, SoftDeleteModel, PositionedModel):
 |---|---|---|---|
 | `id` | `UUIDField(pk)` | `id` | |
 | `list` | `FK(TaskList, CASCADE, related_name="tasks")` | `list_id` | Moving lists is allowed via `PATCH /tasks/{id}/move/` with a `list_id`. |
-| `status` | `FK(Status, PROTECT, related_name="tasks")` | `status_id` | `PROTECT` guarantees a status with tasks cannot vanish silently. Must belong to the list's **effective** status set. |
+| `status` | `CharField(max_length=16, choices=TaskStatus, default="todo", db_index=True)` | `status` | One of `todo`\|`in_progress`\|`review`\|`done` (§5.7). Not a FK — no join on the hot read path, no `PROTECT` cascade problem. Unknown code → `400 validation_error`. |
 | `title` | `CharField(max_length=500)` | `title` | Required, `strip()`-ed, must be non-empty after strip. |
 | `description_html` | `TextField(blank=True, default="")` | `description_html` | Sanitised server-side with `nh3` (allow-list: `p, br, strong, em, u, s, code, pre, a[href rel target], ul, ol, li, h1-h3, blockquote, hr`). |
 | `description_json` | `JSONField(null=True, blank=True, default=None)` | `description_json` | TipTap/ProseMirror document. Max 256 KB serialised. Source of truth for editing; `description_html` is the render/search projection. |
-| `priority` | `CharField(max_length=7, choices=Priority, default="none", db_index=True)` | `priority` | `urgent`\|`high`\|`normal`\|`low`\|`none`. |
+| `priority` | `CharField(max_length=7, choices=Priority, default="none", db_index=True)` | `priority` | `urgent`\|`high`\|`medium`\|`low`\|`none` (`normal` → `medium` in v1.4.0). |
 | `priority_order` | `PositiveSmallIntegerField(default=5, db_index=True, editable=False)` | *(not serialised)* | Derived in `save()`. Exists solely so `?ordering=priority_order` sorts urgent→none instead of alphabetically. |
-| `position` | `CharField(max_length=64, db_index=True)` | `position` | Fractional index. Scope: `(list_id, status_id)`. See §7. |
+| `position` | `CharField(max_length=64, db_index=True)` | `position` | Fractional index. Scope: `(list_id, status)`. See §7. |
 | `due_date` | `DateTimeField(null=True, blank=True, db_index=True)` | `due_date` | UTC instant. A "date only" due date is stored as `T23:59:59Z` **in the user's timezone converted to UTC**; the client sends the resolved instant. |
 | `start_date` | `DateTimeField(null=True, blank=True)` | `start_date` | Must be `<= due_date` (DB check constraint). |
 | `time_estimate_minutes` | `PositiveIntegerField(null=True, blank=True, 1..525600)` | `time_estimate_minutes` | Estimate only. Time **tracking** is out of scope. |
@@ -1052,14 +1004,14 @@ class Task(UUIDModel, TimeStampedModel, SoftDeleteModel, PositionedModel):
 
 ```python
 def clean(self):
-    effective = effective_status_set(self.list)
-    if self.status.status_set_id != effective.id:
-        raise ValidationError({"status_id": "Status does not belong to this list's status set."})
     if self.start_date and self.due_date and self.start_date > self.due_date:
         raise ValidationError({"start_date": "start_date must be on or before due_date."})
 ```
 
-The `status_id` failure is surfaced by the API as `400` with `error.code = "invalid_status_for_list"`.
+The old "status does not belong to this list's set" branch (and its
+`invalid_status_for_list` error code) is **gone**: status is a global code set, so the only
+possible failure is an unknown code, which `TaskInputSerializer.status`
+(`ChoiceField(TaskStatus.choices)`) rejects as an ordinary `400 validation_error`.
 
 **Auto-watch rules (service layer):** a `TaskWatcher` row is created with the matching `source` when
 a user (a) creates the task, (b) is added as an assignee, or (c) posts a comment — unless a row for
@@ -1301,6 +1253,55 @@ and edit/delete only their own.
 
 ---
 
+## 7.5 `notifications` app
+
+### 7.5.1 `Notification`
+
+```python
+class Notification(UUIDModel, TimeStampedModel):
+    user = models.ForeignKey("accounts.User", on_delete=models.CASCADE,
+                             related_name="notifications")
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="notifications", null=True, blank=True)
+    actor = models.ForeignKey("accounts.User", on_delete=models.SET_NULL,
+                              null=True, blank=True, related_name="+")
+
+    kind = models.CharField(max_length=32, choices=NotificationKind.choices)
+    title = models.CharField(max_length=200)
+    body = models.CharField(max_length=400, blank=True, default="")
+    url = models.CharField(max_length=300, blank=True, default="")
+    read_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    class Meta:
+        db_table = "notifications"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "-created_at"], name="idx_notif_user_created"),
+            models.Index(fields=["user", "read_at"], name="idx_notif_user_read"),
+        ]
+```
+
+| Field | Type & constraints | Notes |
+|---|---|---|
+| `user` | `FK(User, CASCADE, related_name="notifications")` | The single recipient. Every queryset in `apps.notifications.views` filters on it first, so a foreign row is a `404`. |
+| `workspace` | `FK(Workspace, CASCADE, null=True)` | Context and filter — **not** an authorisation check: a user removed from a workspace still has to read the "you were removed" message. `CASCADE` because deleting the workspace deletes the event's subject too. |
+| `actor` | `FK(User, SET_NULL, null=True, related_name="+")` | Who caused it; `NULL` after a hard user delete. A user is **never** notified of their own action — `services.notify()` drops `actor == user`. |
+| `kind` | `CharField(32, choices)` | `member_added`, `member_joined`, `member_removed`, `role_changed`, `invitation_accepted`, `task_assigned`. Closed set that grows; clients render an unknown value from `title`/`body`. |
+| `title` / `body` | `CharField(200)` / `CharField(400, blank)` | Rendered text, written at creation in Uzbek. |
+| `url` | `CharField(300, blank)` | Root-relative **frontend** path. |
+| `read_at` | `DateTimeField(null, db_index)` | `NULL` = unread. Marking read is idempotent. |
+
+**Why the row is flat (no `GenericForeignKey`, no target FK).** A notification is a copy of an
+event, not a live pointer at its subject. A task can be deleted and a membership can end; a
+notification that resolved its target through a relation would then either vanish or raise. Storing
+the rendered `title`/`body`/`url` also makes a page of notifications free of joins — the two indexes
+above answer both queries the bell makes ("last N for me", "how many unread for me").
+
+Rows are created **only** by `apps.notifications.services.notify()` / `notify_many()`, which emit the
+`notification.created` frame from `transaction.on_commit` — a rolled-back write is never announced.
+
+---
+
 ## 8. Ordering strategy for drag & drop (BINDING)
 
 ### 8.1 The choice
@@ -1335,13 +1336,12 @@ Additional benefits that matter for this product:
 
 | Model | Position scope | Enforcing constraint |
 |---|---|---|
-| `Task` | `(list_id, status_id)` where `deleted_at IS NULL` | `uniq_task_position_per_column` |
+| `Task` | `(list_id, status)` where `deleted_at IS NULL` | `uniq_task_position_per_column` |
 | `TaskList` | `(folder_id)` if folder set, else `(space_id)` | `uniq_list_position_per_folder`, `uniq_list_position_per_space_root` |
 | `Folder` | `(space_id)` | `uniq_folder_position_per_space` |
 | `Space` | `(workspace_id)` | `uniq_space_position_per_workspace` |
-| `Status` | *(none — uses integer `order`)* | `uniq_status_order_per_set` |
 
-> **Consequence of the `Task` scope:** a cross-column drag on the board changes **both** `status_id`
+> **Consequence of the `Task` scope:** a cross-column drag on the board changes **both** `status`
 > and `position`. A same-column reorder changes only `position`. A "sort by due date" view does not
 > touch `position` at all — sorting is a read concern; only explicit drags persist order.
 
@@ -1450,7 +1450,7 @@ The client **never** sends a raw `position`. It sends the neighbours it sees:
 
 ```
 PATCH /api/v1/tasks/{id}/move/
-{ "list_id": "...", "status_id": "...", "before_id": "<task above>", "after_id": "<task below>" }
+{ "list_id": "...", "status": "todo|in_progress|review|done", "before_id": "<task above>", "after_id": "<task below>" }
 ```
 
 `before_id` = the task that will end up **above** the moved task (`NULL` ⇒ move to top).
@@ -1460,10 +1460,9 @@ Server algorithm:
 
 ```python
 @transaction.atomic
-def move_task(task, *, list_id, status_id, before_id, after_id, actor):
+def move_task(task, *, list_id, status, before_id, after_id, actor):
     target_list = TaskList.objects.select_related("space").get(pk=list_id)
-    status = Status.objects.get(pk=status_id)
-    assert_status_belongs_to_list(status, target_list)          # -> invalid_status_for_list
+    status = resolve_status(status)                             # unknown code -> 400
 
     for attempt in range(3):
         prev_pos = _position_of(before_id, target_list, status)  # None if not given
@@ -1507,7 +1506,7 @@ differs per client.
 
 ```sql
 SELECT ... FROM tasks
-WHERE list_id = ? AND status_id = ? AND deleted_at IS NULL AND archived = false
+WHERE list_id = ? AND status = ? AND deleted_at IS NULL AND archived = false
 ORDER BY position ASC, created_at ASC;      -- created_at is the tiebreaker of last resort
 ```
 
@@ -1583,7 +1582,7 @@ There is a test for this: `test_position_ordering_matches_python_sort`.
 2. **Depth test**: insert 1 000 times into the same gap → assert a rebalance happened and final order is correct.
 3. **Concurrency test**: 20 threads move 20 tasks into the same gap → all succeed, all positions distinct, final order deterministic.
 4. **Collation test**: write 5 000 random keys, assert `ORDER BY position` from the DB equals Python's `sorted()`.
-5. **Cross-column test**: moving between statuses updates `status_id`, keeps the source column contiguous, and emits exactly one `task.moved`.
+5. **Cross-column test**: moving between statuses updates `status`, keeps the source column contiguous, and emits exactly one `task.moved`.
 
 ---
 
@@ -1597,12 +1596,11 @@ There is a test for this: `test_position_ordering_matches_python_sort`.
 | `Task.comment_count` | int | live comments incl. replies | signals on `Comment` | `manage.py recount --model task` |
 | `Task.attachment_count` | int | `COUNT(TaskAttachment)` | `apps/tasks/services.py` on upload/delete | `manage.py recount --model task` |
 | `Task.priority_order` | small int | `PRIORITY_ORDER[priority]` | `Task.save()` | n/a (always consistent) |
-| `Task.completed_at` | datetime | first transition into a `closed` status | task update service | `manage.py recount --model task` |
+| `Task.completed_at` | datetime | transition into `done` (cleared on the way out) | task update service | `manage.py recount --model task` |
 | `Comment.reply_count` | int | live child comments | signals on `Comment` | `manage.py recount --model comment` |
 | `Tag.usage_count` | int | `COUNT(TaskTag)` | signals on `TaskTag` | `manage.py recount --model tag` |
 | `User.initials` | property | `full_name`/`email` | computed at read | n/a |
 | `Task.is_deleted` | property | `deleted_at IS NOT NULL` | computed at read | n/a |
-| `TaskList.effective_status_set` | property | own set or space's | computed at read | n/a |
 
 **Consistency policy:** all counters are updated inside the same transaction as their trigger, using
 `F()` expressions (`F("task_count") + 1`) to avoid read-modify-write races. They are *display* values
@@ -1617,12 +1615,11 @@ in prod.
 |---|---|
 | Delete `User` (hard) | Blocked by `PROTECT` if they own a workspace. Otherwise: memberships/assignments/watches `CASCADE` away; `Task.created_by`/`updated_by`, `Comment.author`, `Invitation.invited_by` become `NULL`. **Preferred path is `is_active=False`, not deletion.** |
 | Delete `Workspace` | Hard cascade: members, invitations, tags, spaces → folders/lists → tasks → comments. `owner` only. Requires `{"confirm_name": "<exact workspace name>"}`. |
-| Delete `Space` | Hard cascade: its `StatusSet`+`Status`es, folders, lists, tasks, comments. `admin`+. |
+| Delete `Space` | Hard cascade: folders, lists, tasks, comments. `admin`+. |
 | Delete `Folder` | `?strategy=cascade` (default) deletes lists+tasks; `?strategy=detach` sets `folder_id = NULL` on its lists (assigning fresh space-root positions) then deletes the folder. |
-| Delete `TaskList` | Hard cascade: its optional `StatusSet`, its tasks (hard, since the parent row is gone) and their comments. |
+| Delete `TaskList` | Hard cascade: its tasks (hard, since the parent row is gone) and their comments. |
 | Delete `Task` | **Soft** (`deleted_at`). Comments are retained. Purged after 30 days by `manage.py purge_deleted`. Restorable in that window via `PATCH /tasks/{id}/` with `{"deleted_at": null}` (`admin`+). |
 | Delete `Comment` | **Soft**. Replies remain visible under a tombstone. |
-| Delete `Status` | Only via `PUT` on the set; `PROTECT` forces a `status_mapping` for tasks. |
 | Delete `Tag` | Hard; `TaskTag` rows cascade, tasks are untouched. |
 | Remove `WorkspaceMember` | Their `TaskAssignee`/`TaskWatcher` rows **within that workspace** are deleted. Authored comments and `created_by` pointers are kept. Cannot remove the last `owner`. |
 | Archive `Space`/`Folder`/`TaskList`/`Task` | Non-destructive `archived=True`. Excluded from default listings, still reachable by direct id and by `?archived=true`. |
@@ -1636,16 +1633,10 @@ When `POST /api/v1/workspaces/` succeeds, the service creates, in **one transact
 1. `Workspace(name, slug, owner=request.user, created_by=request.user)`
 2. `WorkspaceMember(workspace, user=request.user, role="owner")`
 3. `Space(name="Team Space", workspace, position="n", created_by=request.user)`
-4. `StatusSet(space=space, name="Default")` with:
+4. `TaskList(name="Boshlash", space=space, folder=None, position="n")` — **empty on purpose**;
+   a brand-new account starts from zero rather than from placeholder tasks it has to clean up.
 
-| order | name | type | color | is_default |
-|---|---|---|---|---|
-| 0 | `TO DO` | `open` | `#87909E` | `true` |
-| 1 | `IN PROGRESS` | `active` | `#4194F6` | `false` |
-| 2 | `COMPLETE` | `closed` | `#6BC950` | `false` |
-
-5. `TaskList(name="Getting Started", space=space, folder=None, position="n")`
-6. Three sample `Task`s (`positions` from `evenly_spaced(3)`), one per status, `created_by=request.user`.
+No status rows are created: every task starts on `todo` (§5.7).
 
 The same seed data is produced by `manage.py seed_demo --email <user>` for local development.
 
@@ -1656,7 +1647,7 @@ The same seed data is produced by `manage.py seed_demo --email <user>` for local
 | Query (hot path) | Index used |
 |---|---|
 | Board column fetch: tasks by `(list, status)` ordered | `idx_task_column_pos` |
-| List view fetch: all live tasks in a list | `idx_task_list_live` + `idx_status_set_order` |
+| List view fetch: all live tasks in a list | `idx_task_list_live` |
 | "My tasks" / `?assignee=me` across a workspace | `idx_assignee_user_task` → `idx_task_list_live` |
 | Overdue / due-date filters | `idx_task_due` |
 | Priority sort | `idx_task_priority_order` |
@@ -1695,7 +1686,7 @@ Migrations must be created in this order (dependency order):
 
 1. `accounts.0001_initial` — `User` (must be first; `AUTH_USER_MODEL`).
 2. `workspaces.0001_initial` — `Workspace`, `WorkspaceMember`, `Invitation`.
-3. `spaces.0001_initial` — `Space`, `Folder`, `TaskList`, `StatusSet`, `Status`.
+3. `workspaces.0001_initial` — `Space`, `Folder`, `TaskList` (its `StatusSet`/`Status` models were dropped again in `workspaces.0006_drop_status_sets`; see §5.8).
 4. `tasks.0001_initial` — `Tag`, `Task`, `TaskAssignee`, `TaskWatcher`, `TaskTag`.
 5. `comments.0001_initial` — `Comment`.
 6. `tasks.0002_position_collation` — `db_collation="C"` on all `position` columns (no-op on SQLite).

@@ -28,6 +28,15 @@
 
 ## A. Ruxsat katalogi
 
+> **Katalog v6 (2026-08-11).** `space.manage_statuses` va `list.manage_statuses`
+> `deprecated=True` qilindi: status to'plami modeli olib tashlandi
+> (`API_CONTRACT.md` §9), ya'ni bu ikki kod endi hech qanday endpointni
+> qo'riqlamaydi. **Kodlar hech qachon o'chirilmaydi** — ular
+> `PERMISSION_BY_CODE` da qoladi (eski `RolePermission` qatorlari
+> "noma'lum kod" bo'lib qolmasin), lekin `ALL_CODES`, `DEFAULT_MATRIX`,
+> `GET permissions/`, rol matritsasi va `my-permissions/` dan chiqadi:
+> faol kodlar 49 → **47**.
+
 Kod formati: `<resource>.<action>`, `[a-z_]+\.[a-z_]+`, max 64 belgi. Kodlar **o'chirilmaydi**, faqat `deprecated=True`.
 
 ```python
@@ -127,7 +136,7 @@ class PermissionDef:
 | `space.change_visibility` | **`is_private` ni o'zgartirish** (sensitive) | ✔ | ✔ | ✕ | ✕ |
 | `space.delete` | Bo'limni o'chirish | ✔ | ✔ | ✕ | ✕ |
 | `space.manage_members` | **PM huquqi:** bo'limga odam biriktirish | ✔ | ✔ | ✕ | ✕ |
-| `space.manage_statuses` | Status to'plamini almashtirish | ✔ | ✔ | ✕ | ✕ |
+| ~~`space.manage_statuses`~~ | **ESKIRGAN (katalog v6)** — status to'plami olib tashlandi, kod hech qanday endpointni qo'riqlamaydi | ✕ | ✕ | ✕ | ✕ |
 
 ### Guruh `folder` — Jildlar
 | Kod | O | A | M | G |
@@ -144,7 +153,7 @@ class PermissionDef:
 | `list.update` | ✔ | ✔ | ✕ | ✕ |
 | `list.delete` | ✔ | ✔ | ✕ | ✕ |
 | `list.move` | ✔ | ✔ | ✕ | ✕ |
-| `list.manage_statuses` | ✔ | ✔ | ✕ | ✕ |
+| ~~`list.manage_statuses`~~ **ESKIRGAN (v6)** | ✕ | ✕ | ✕ | ✕ |
 
 ### Guruh `task` — Vazifalar
 | Kod | Tavsif | O | A | M | G |
@@ -188,7 +197,7 @@ class PermissionDef:
 > lokal berilmaydi (`apps/core/access.py`).
 >
 > **Bajarilgan vazifaga ham fayl biriktiriladi** (kontrakt R24): biriktirma
-> endpointlari `completed_at` / `status.type` ni umuman tekshirmaydi.
+> endpointlari `completed_at` / `status` ni umuman tekshirmaydi.
 
 ### Guruh `tag` — Teglar
 | Kod | O | A | M | G |
@@ -326,7 +335,7 @@ Ko'rinmasa → **`404 not_found`** (mavjudlik oshkor qilinmaydi).
 Space ichidagi yozish:
 - `access == viewer` → space ichidagi barcha yozish `403` (**eng past huquq g'olib**).
 - `access == contributor` → workspace roli bo'yicha odatiy `has_perm`.
-- `access == manager` (PM) → contributor + shu space uchun `space.update`, `space.manage_members`, `space.manage_statuses`, `folder.*`, `list.*`, `task.*` lokal yoqiladi.
+- `access == manager` (PM) → contributor + shu space uchun `space.update`, `space.manage_members`, `folder.*`, `list.*`, `task.*` lokal yoqiladi. (`*.manage_statuses` v6 da eskirgani uchun `SPACE_MANAGER_GRANTS` dan ham chiqarildi.)
 - `space.delete` va `space.change_visibility` **hech qachon** manager orqali berilmaydi: PM bo'lim **ichida** hokim, bo'limning ish maydoniga nisbatan **chegarasini** o'zgartira olmaydi.
 
 ### B.6 Defaultlar qanday to'ldiriladi
@@ -377,8 +386,6 @@ Uch nuqta: (1) migratsiya `0003`, (2) `bootstrap_workspace()`, (3) resolver fall
 | `workspaces` `ListDetailView.patch` | `member` | `list.update` |
 | `workspaces` `ListDetailView.delete` | `member` | `list.delete` |
 | `workspaces` `ListMoveView.patch` | `member` | `list.move` |
-| `workspaces` `SpaceStatusSetView.put` | `admin` | `space.manage_statuses` |
-| `workspaces` `ListStatusSetView.put/delete` | `admin` | `list.manage_statuses` |
 | `tasks` `ListTasksView.post` | `member` | `task.create` |
 | `tasks` `require_task_editor` | rol | `task.update` → `task.update_assigned` |
 | `tasks` `TaskDetailView.delete` | `member` | `task.delete` |
@@ -660,9 +667,9 @@ export type PermissionCode =
   | "member.read" | "member.invite" | "member.remove" | "member.role_change"
   | "invitation.read" | "invitation.manage"
   | "space.read" | "space.read_private" | "space.create" | "space.update"
-  | "space.delete" | "space.manage_members" | "space.manage_statuses"
+  | "space.delete" | "space.manage_members" | "space.manage_statuses"  // eskirgan, lekin union'da qoladi
   | "folder.create" | "folder.update" | "folder.delete" | "folder.delete_cascade"
-  | "list.create" | "list.update" | "list.delete" | "list.move" | "list.manage_statuses"
+  | "list.create" | "list.update" | "list.delete" | "list.move" | "list.manage_statuses"  // eskirgan
   | "task.read" | "task.create" | "task.update" | "task.update_assigned"
   | "task.delete" | "task.move" | "task.assign" | "task.watch"
   | "task.restore" | "task.view_deleted"

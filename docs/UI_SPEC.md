@@ -1,5 +1,10 @@
 # Clickish — UI Specification (MVP)
 
+> **Brend eslatmasi.** Mahsulot nomi endi **UzWork**. Bu fayl tarixiy hujjat —
+> undagi "Clickish" / "ClickUp clone" iboralari yozilgan paytdagi holatni
+> aks ettiradi va o'zgartirilmagan. Amaldagi brend chegarasi:
+> `docs/adr/0014-mahsulot-nomi.md`.
+
 > # ⛔ SUPERSEDED — HISTORICAL, NOT BINDING
 >
 > **Do not implement from this document, and do not cite it in review.** It was written on

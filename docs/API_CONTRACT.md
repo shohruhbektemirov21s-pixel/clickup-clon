@@ -1,16 +1,31 @@
-# API Contract — Clickish (ClickUp clone) MVP
+# API Contract — UzWork MVP
 
 | | |
 |---|---|
 | **Document** | API_CONTRACT.md |
-| **Version** | 1.3.4 |
-| **Date** | 2026-08-10 |
+| **Version** | 1.4.0 |
+| **Date** | 2026-08-11 |
 | **Status** | **Binding** — backend and frontend implement against this document in parallel. Changes require a PR that updates this file in the same commit. |
 | **Authority** | This doc > PRD.md for API surface. `docs/DATA_MODEL.md` is authoritative for field names/types; this doc mirrors it field-for-field. |
 | **Upstream** | `docs/DATA_MODEL.md`, `docs/PRD.md`, `docs/DESIGN_PERMISSIONS.md`, `backend/config/{settings,pagination,exceptions}.py`, `backend/apps/realtime/middleware.py` |
 
-**Inventory: 84 REST endpoints + 2 WebSocket channels** (§16 — the authoritative count). Adding an endpoint requires amending this doc in the same commit.
+**Inventory: 93 REST endpoints + 3 WebSocket channels** (§16 — the authoritative count). Adding an endpoint requires amending this doc in the same commit.
 
+> **v1.4.0 changelog (status becomes a code — BREAKING inside v1).** `StatusSet`/`Status` are
+> deleted from the data model and the API. **(a)** `Task.status_id: uuid` → **`Task.status`**, one of
+> `todo | in_progress | review | done` (§9). `POST`/`PATCH` send `status`, not `status_id`.
+> **(b)** The five status-set endpoints (#42–46) are **removed** — every method now `404`s; inventory
+> 98 → **93**. `status_mapping` no longer exists. **(c)** `?group_by=status` returns **always exactly
+> four groups, always in `STATUS_ORDER`**, shaped `{"status","label","tasks","count"}` — the old
+> `status_id`/`results` keys are gone (§10.4). **(d)** The `?status_type=` filter and the
+> `invalid_status_for_list` error code are removed; `?status=` now takes codes and rejects anything
+> else with `400 validation_error`. **(e)** `Priority.normal` → **`medium`** (`none` unchanged),
+> migrated in place. **(f)** Pagination defaults `50/200` → **`25/100`** (§1.5). **(g)**
+> `TIME_ZONE = "Asia/Tashkent"`, so timestamps now render with a `+05:00` offset instead of `Z`
+> (§1.2) — storage stays UTC. **(h)** Permission codes `space.manage_statuses` /
+> `list.manage_statuses` are **deprecated** (catalog **v6**, 49 → 47 active codes); they are never
+> deleted, only dropped from the catalog, the matrix and `my-permissions/`.
+>
 > **v1.1.0 changelog.** Adds §18 (granular permission matrix, `docs/DESIGN_PERMISSIONS.md` §A–D.5) and rulings R18–R23. The role table in §1.7 now describes the **default** matrix, not a hard-coded one. The extended `invitations/lookup/` payload (§D.7) is specified there but **not yet implemented**; it will land with its own contract bump. (Space-member endpoints landed in v1.3.0 — see §6.1.)
 >
 > **v1.1.1 changelog (§2 only).** Register-with-invite (`DESIGN_PERMISSIONS.md` §D.8) is now **implemented**: `auth/register/` accepts `invite_token` and may answer with `workspace_id` (R21). The `User`/`UserSummary` objects gain `profession` — a **profile label, never a permission**. New dev-only endpoint `POST auth/demo/` (endpoint #70).
@@ -50,7 +65,7 @@
 - **Every primary key is a UUIDv4**, serialized as the canonical lowercase hex string.
 - **Client-generated ids:** any `POST` creating a resource MAY include `"id"` (a client-generated UUIDv4) to support optimistic creation. If the id is already in use the server responds `409 conflict` and creates nothing (this makes network retries safe to detect).
 - Every resource carries `created_at` and `updated_at`.
-- **All timestamps are ISO-8601 UTC with a trailing `Z`** (`"2026-08-07T09:15:00Z"`). The API never emits a non-`Z` offset. Clients render in the user's `timezone` (from `GET me/`); storage and transport are always UTC.
+- **All timestamps are ISO-8601 with an explicit offset.** Storage is always UTC (`USE_TZ = True`); the *rendered* offset follows `settings.TIME_ZONE`, which is **`Asia/Tashkent`** — so the wire form is `"2026-08-07T14:15:00+05:00"`, not a trailing `Z`. Any `Date`/`Temporal` parser handles both; clients must **not** string-match on `Z` or slice the offset off. Clients render in the user's `timezone` (from `GET me/`).
 - Soft-deleted resources (Task, Comment only) serialize a derived boolean `is_deleted`; the raw `deleted_at` column is not serialized. The only write of `deleted_at` is the admin restore (`PATCH tasks/{id}/` with `{"deleted_at": null}`, §9.6).
 
 ### 1.3 Authentication
@@ -81,8 +96,8 @@ Matches `config/pagination.py` (`StandardPagination`, DRF `PageNumberPagination`
 }
 ```
 
-- Query params: `?page=` (1-based) and `?page_size=` (default **50**, max **200**).
-- `page_size > 200` → `400 validation_error`. A `page` past the end → `404 not_found` (DRF default).
+- Query params: `?page=` (1-based) and `?page_size=` (default **25**, max **100**).
+- `page_size > 100` → `400 validation_error`. A `page` past the end → `404 not_found` (DRF default).
 - Every collection endpoint is paginated; no unbounded endpoint exists. Exceptions that return non-paginated bodies: `workspaces/{id}/tree/` (nested tree) and the `?group_by=status` grouped payload (§9.4).
 - Single resources are bare JSON objects (no envelope).
 
@@ -111,7 +126,6 @@ Matches `config/exceptions.py`. Every non-2xx response has exactly this shape:
 |---|---|---|
 | 400 | `validation_error` | Any serializer/field validation failure |
 | 400 | `bad_request` | Malformed request that is not field-mappable |
-| 400 | `invalid_status_for_list` | `status_id` not in the list's effective status set (task create/update/move) |
 | 401 | `authentication_failed` | Missing/invalid credentials; no or malformed `Authorization` header |
 | 401 | `token_not_valid` | Expired/blacklisted/invalid JWT (login again or refresh) |
 | 403 | `permission_denied` | Authenticated, in the workspace, but role forbids the action |
@@ -213,7 +227,7 @@ Default totals: owner 49 (locked), admin 45, member 14, guest 10.
 | `space.change_visibility` | space | ✓ |  |  | sensitive |
 | `space.delete` | space | ✓ |  |  | sensitive |
 | `space.manage_members` | space | ✓ |  |  | — |
-| `space.manage_statuses` | space | ✓ |  |  | — |
+| ~~`space.manage_statuses`~~ | space | — | — | — | **deprecated (v6)** — guards nothing (§9.1) |
 | `folder.create` | folder | ✓ |  |  | — |
 | `folder.update` | folder | ✓ |  |  | — |
 | `folder.delete` | folder | ✓ |  |  | — |
@@ -222,7 +236,7 @@ Default totals: owner 49 (locked), admin 45, member 14, guest 10.
 | `list.update` | list | ✓ |  |  | — |
 | `list.delete` | list | ✓ |  |  | sensitive |
 | `list.move` | list | ✓ |  |  | — |
-| `list.manage_statuses` | list | ✓ |  |  | — |
+| ~~`list.manage_statuses`~~ | list | — | — | — | **deprecated (v6)** — guards nothing (§9.1) |
 | `task.read` | task | ✓ | ✓ | ✓ | — |
 | `task.create` | task | ✓ | ✓ |  | — |
 | `task.update` | task | ✓ |  |  | — |
@@ -260,11 +274,9 @@ Default totals: owner 49 (locked), admin 45, member 14, guest 10.
 | `DELETE invitations/{id}/`, `…/resend/` | `invitation.manage` |
 | `POST spaces/`, `PATCH/DELETE spaces/{id}/` | `space.create` / `space.update` / `space.delete` |
 | `PATCH spaces/{id}/` with a **changed** `is_private` | `space.update` **and** `space.change_visibility` |
-| `PUT spaces/{id}/status-set/` | `space.manage_statuses` |
 | `POST/PATCH folders/` | `folder.create` / `folder.update` |
 | `DELETE folders/{id}/?strategy=` | `cascade` → `folder.delete_cascade`; `detach` → `folder.delete` |
 | `POST/PATCH/DELETE lists/`, `lists/{id}/move/` | `list.create` / `list.update` / `list.delete` / `list.move` |
-| `PUT/DELETE lists/{id}/status-set/` | `list.manage_statuses` |
 | `POST lists/{id}/tasks/` | `task.create`; **plus `task.assign` when `assignee_ids` names anyone other than the caller** |
 | `PATCH tasks/{id}/` | `task.update`, else `task.update_assigned` **and** caller is an assignee; **plus `task.assign` when the `assignee_ids` set changes for anyone other than the caller** |
 | `PATCH tasks/{id}/move/` | `task.move`, else `task.update_assigned` **and** caller is an assignee |
@@ -292,7 +304,7 @@ Default totals: owner 49 (locked), admin 45, member 14, guest 10.
 >
 > A handful of reads still resolve no code at all and are gated only by membership plus space
 > visibility: `GET spaces/{id}/`, `GET workspaces/{id}/spaces/`, the folder and list reads,
-> both `status-set` reads, `GET tasks/{id}/comments/`, `GET spaces/{id}/members/`,
+> `GET tasks/{id}/comments/`, `GET spaces/{id}/members/`,
 > `GET workspaces/{id}/tags/`, `POST members/leave/` and `GET my-permissions/`. Rows marked
 > "membership only — **no code**" in §2–§13 are exactly these. The rule they follow is
 > "if you can see the container, you can read this about it" — deliberate for `my-permissions/` and
@@ -449,6 +461,8 @@ The new member's role comes **only** from `Invitation.role`. A client-supplied `
 | 17 | DELETE | `workspaces/{id}/members/{user_id}/` | `member.remove` + the owner guards below | `204` empty |
 | 18 | POST | `workspaces/{id}/members/leave/` | membership only — **no code** (last-owner guard applies) | `204` empty |
 | 75 | GET | `workspaces/{id}/members/{user_id}/profile/` | `member.read` (every role by default, v1.3.2) | `200` MemberProfile |
+| 92 | POST | `workspaces/{id}/members/` | `member.invite` (same code as sending an invitation) | `201` Member |
+| 93 | GET | `workspaces/{id}/user-search/?q=<text>` | `member.invite` | `200` `{results: UserSearchResult[]}` |
 
 - `{user_id}` in the path is the **user's** id, not the membership row id.
 - `PATCH` body: `{"role": "owner"|"admin"|"member"|"guest"}`. Rules: only an owner may grant `owner` or touch an owner; admin may change roles among `admin`/`member`/`guest` for non-owners; member/guest → `403`.
@@ -497,6 +511,51 @@ The new member's role comes **only** from `Invitation.role`. A client-supplied `
 - Counter semantics (mirroring §10.5): "open" = not archived and status type ≠ `closed`; `overdue_tasks` = open **and** `due_date < now`; `due_today` = open **and** due between `now` and the end of the caller's local day — so `overdue_tasks` and `due_today` never overlap. `completed_tasks` counts assigned tasks with `completed_at != null`. `created_tasks` counts tasks the member created; `comments` counts their comments. Soft-deleted tasks are excluded everywhere.
 - `spaces[].open_tasks` is the **target member's** open task count in that space, ordered by the space `position`.
 - Every aggregate is computed with `annotate`/`aggregate`; the query count does not grow with the number of spaces, members or tasks.
+
+### 4.2 Adding an already-registered user (endpoints 92, 93)
+
+Sending an invitation is the right flow for someone who **has no account yet**. For a
+user who already registered, it is a detour: an email, a token, and a wait, to reach a
+membership the server could have created immediately. Endpoint 92 creates it directly.
+
+`POST workspaces/{id}/members/` body: `{"user_id": "<uuid>", "role": "admin"|"member"|"guest"}`
+(`role` defaults to `member`). Returns `201` with the same **Member** object as the roster.
+
+- **`owner` is not grantable here** → `400 validation_error`. Ownership moves only through
+  `PATCH members/{user_id}/`, which carries the rank guard (§4).
+- Unknown or inactive `user_id` → `400 validation_error` on `user_id`, **not** `404`: the
+  workspace in the path is visible to the caller, so the missing thing is the payload. The
+  answer is identical for "no such user" and "user exists but is inactive", so this is not
+  an existence oracle either.
+- Already a member → `409 conflict`. Re-adding never silently rewrites an existing role.
+- Any **pending** invitation for that user's email in this workspace is marked `accepted`
+  in the same transaction — otherwise it would hang forever and the
+  `uniq_pending_invite_per_email_per_ws` constraint would block the next invitation.
+- Side effects: `member_count` is refreshed, the added user gets a `member_added`
+  notification and workspace owners/admins get `member_joined` (§19).
+- Throttled under the `invite` scope, exactly like sending an invitation.
+
+`GET workspaces/{id}/user-search/?q=` is the picker behind it — the **only** endpoint that
+sees accounts outside the workspace, so it is fenced three ways: `member.invite` (admins by
+default), a 2-character minimum (`q` shorter than that returns an empty list, so there is no
+"give me everyone" query), and a hard cap of **10** results under the `invite` throttle. It
+is deliberately **not paginated**.
+
+```json
+{ "results": [ {
+  "user": { "id": "…", "email": "dan@acme.io", "full_name": "Dan Ortiz", "avatar": null,
+            "avatar_color": "#49CCF9", "profession": "developer" },
+  "is_member": false,
+  "role": null,
+  "has_pending_invitation": true
+} ] }
+```
+
+`is_member` / `role` / `has_pending_invitation` describe the user's standing **in this
+workspace**, so the UI can show "already in the team" instead of offering a button that
+would answer `409`. `user` is the standard `UserSummary` and is masked by the same rules
+(§1, AppSec O-1). Matching is case-insensitive substring over `email` and `full_name`,
+ordered by name then email.
 
 ---
 
@@ -548,7 +607,7 @@ The new member's role comes **only** from `Invitation.role`. A client-supplied `
 | 29 | PATCH | `spaces/{id}/` | `space.update`; a **changed** `is_private` also needs `space.change_visibility` | `200` Space |
 | 30 | DELETE | `spaces/{id}/` | `space.delete` | `204` empty |
 
-- `POST` body: `{"id"?, "name", "description"?, "color"?, "icon"?, "is_private"?}`. Creation auto-creates the space's default `StatusSet` (TO DO / IN PROGRESS / COMPLETE). Name is CI-unique per workspace (`409 conflict` on duplicate). Position auto-assigned at end of scope.
+- `POST` body: `{"id"?, "name", "description"?, "color"?, "icon"?, "is_private"?}`. Name is CI-unique per workspace (`409 conflict` on duplicate). Position auto-assigned at end of scope.
 - `PATCH`: same fields plus `"archived"`.
   - **`is_private` is gated separately (v1.3.3).** Changing it needs `space.change_visibility` *on top of* `space.update`; a `SpaceAccess.manager` (PM) holds `space.update` locally but **not** `space.change_visibility`, so a PM gets `403 permission_denied` when they try to open or close their space. The check fires **only when the value actually changes** — resending the current value (as a full-object PATCH does) is not a change and is allowed. Ordering follows §1.7: the permission is resolved before payload validation.
 - `DELETE` body: `{"confirm_name": "<exact space name>"}`; hard-cascades status set, folders, lists, tasks, comments.
@@ -673,54 +732,67 @@ The `last_manager` guard applies to private spaces only: an open space stays rea
 
 ---
 
-## 9. Status sets & statuses
+## 9. Task status (fixed code set — no endpoints)
 
-A `StatusSet` belongs to exactly one of a Space (default, always exists) or a List (optional override). A list's **effective** set = its own if present, else its space's. Statuses use an integer `order` (0-based, contiguous, assigned from array index), **not** the fractional `position` scheme.
+**Status is no longer configurable and no longer a resource.** There is no
+`StatusSet`, no `Status` row, no per-space default and no per-list override.
+Every task in every workspace uses the same four codes, defined once in
+`backend/apps/core/enums.py::TaskStatus`:
 
-| # | Method | Path | Authority — code enforced (§1.7.1) | Success |
-|---|---|---|---|---|
-| 42 | GET | `spaces/{id}/status-set/` | membership only — **no code** | `200` StatusSet |
-| 43 | PUT | `spaces/{id}/status-set/` | `space.manage_statuses` | `200` StatusSet |
-| 44 | GET | `lists/{id}/status-set/` | membership only — **no code** | `200` StatusSet (the **effective** set — the list's own if it exists, else the space's) |
-| 45 | PUT | `lists/{id}/status-set/` | `list.manage_statuses` | `200` StatusSet (creates/replaces the list override) |
-| 46 | DELETE | `lists/{id}/status-set/` | `list.manage_statuses` | `200` StatusSet (removes the override; returns the space set now in effect) |
+| Code | Uzbek label (`label`) | Closed? | Board column |
+|---|---|---|---|
+| `todo` | Boshlanmagan | no | 1 |
+| `in_progress` | Jarayonda | no | 2 |
+| `review` | Tekshirilmoqda | no | 3 |
+| `done` | Bajarildi | **yes** | 4 |
 
-**PUT body** (both scopes):
+- `Task.status` is a plain string field carrying one of those codes. The
+  default for a new task is `todo`.
+- **`done` is the only closed status.** `completed_at` is set by the server
+  the moment a task enters `done` and cleared the moment it leaves — there is
+  no separate `status_type` concept and no `Task.status_type` field.
+- **Labels are never stored in the database.** They live in code and are
+  echoed only in the grouped board payload (§10.4) so the client has a single
+  source; a client is equally free to use its own dictionary.
+- `STATUS_ORDER` (`todo → in_progress → review → done`) is the board column
+  order and the default secondary sort of the flat list payload.
 
-```json
-{
-  "name": "Bug workflow",
-  "statuses": [
-    { "id": "…keep-existing-uuid…", "name": "TO DO", "color": "#87909E", "type": "open",   "is_default": true },
-    {                                "name": "IN REVIEW", "color": "#4194F6", "type": "active", "is_default": false },
-    { "id": "…", "name": "SHIPPED", "color": "#6BC950", "type": "closed", "is_default": false }
-  ],
-  "status_mapping": { "<removed-or-old-status-id>": "<status-id-in-new-set>" }
-}
-```
+### 9.1 Removed endpoints (were 42–46)
 
-- Array order defines `order` (0..n-1); a client-sent `order` is ignored. Reusing an existing status `id` updates that row; omitting an existing id deletes it; entries without `id` are created.
-- Invariants (else `400 validation_error`): 1–30 statuses; exactly one `is_default: true` (and it must not be `closed`-type); ≥1 `closed`-type status; CI-unique names ≤60 chars.
-- `status_mapping` must cover **every** old status still referenced by any task (incl. archived and soft-deleted) that is not present in the new set. Missing mapping for an in-use status → `409 conflict` with `error.details.status_mapping` (Task.status is PROTECT). Re-pointing happens in one transaction; a `task.updated` event is emitted per re-pointed task. Re-pointed tasks keep their `position` (ties resolved by `position ASC, created_at ASC` — never renumbered).
-- `DELETE lists/{id}/status-set/` requires body `{"status_mapping": {...}}` mapping the list's statuses to the space's, same completeness rule.
-- Changing a space's set affects only lists **without** an override.
+| Method | Path | Now |
+|---|---|---|
+| GET | `spaces/{id}/status-set/` | `404 not_found` — route removed |
+| PUT | `spaces/{id}/status-set/` | `404 not_found` |
+| GET | `lists/{id}/status-set/` | `404 not_found` |
+| PUT | `lists/{id}/status-set/` | `404 not_found` |
+| DELETE | `lists/{id}/status-set/` | `404 not_found` |
 
-**StatusSet object** (worked example for this group):
+`status_mapping` no longer exists in any payload. The permission codes
+`space.manage_statuses` and `list.manage_statuses` are **deprecated** (catalog
+v6): still listed in `PERMISSION_BY_CODE` so historic `RolePermission` rows
+stay valid, but absent from `GET permissions/`, from the role matrix and from
+`my-permissions/`. Catalog codes are never deleted (§18).
 
-```json
-{
-  "id": "…", "name": "Default",
-  "space_id": "…uuid or null…", "list_id": null,
-  "statuses": [
-    { "id": "…", "name": "TO DO",       "color": "#87909E", "type": "open",   "order": 0, "is_default": true  },
-    { "id": "…", "name": "IN PROGRESS", "color": "#4194F6", "type": "active", "order": 1, "is_default": false },
-    { "id": "…", "name": "COMPLETE",    "color": "#6BC950", "type": "closed", "order": 2, "is_default": false }
-  ],
-  "created_at": "2026-08-07T09:20:00Z", "updated_at": "2026-08-07T09:20:00Z"
-}
-```
+The error code `invalid_status_for_list` is **gone** — a status can no longer
+"belong" to the wrong list. An unknown code is an ordinary
+`400 validation_error` with `details.status`.
 
-`type` ∈ `open | active | closed`. Exactly one of `space_id`/`list_id` is non-null.
+### 9.2 Migration mapping (historical)
+
+Existing rows were migrated by the old `Status.type`, without data loss of the
+task→column relationship:
+
+| Old `statuses.type` | New code |
+|---|---|
+| `open` | `todo` |
+| `active` | `in_progress` |
+| `closed` | `done` |
+| (task without a status) | `todo` |
+
+Nothing migrates to `review`: the old model had no matching type, and statuses
+literally named "review" were `active`, so they land in `in_progress`. What is
+lost is the per-workspace status **name, colour and order** — all three now
+live in code.
 
 ---
 
@@ -752,7 +824,7 @@ A `StatusSet` belongs to exactly one of a Space (default, always exists) or a Li
   "title": "Fix login redirect",
   "description_html": "<p>Repro steps…</p>",
   "description_json": { "type": "doc", "content": [ … ] },
-  "status_id": "…status uuid in the list's effective set…",
+  "status": "in_progress",
   "priority": "urgent",
   "position": "aV",
   "due_date": "2026-08-12T21:59:59Z",
@@ -773,15 +845,15 @@ A `StatusSet` belongs to exactly one of a Space (default, always exists) or a Li
 }
 ```
 
-Read-only fields: `position`, `comment_count`, `attachment_count` (server-maintained counters — see §12 and §10.7), `completed_at` (set/cleared by the server on transitions into/out of a `closed`-type status), `is_deleted`, `created_by`, `updated_by`, `watchers` (managed only via `watch/`), timestamps. `priority_order` is never serialized — it exists only as the `?ordering=priority_order` sort key.
+Read-only fields: `position`, `comment_count`, `attachment_count` (server-maintained counters — see §12 and §10.7), `completed_at` (set/cleared by the server on transitions into/out of `done`, the only closed status — §9), `is_deleted`, `created_by`, `updated_by`, `watchers` (managed only via `watch/`), timestamps. `priority_order` is never serialized — it exists only as the `?ordering=priority_order` sort key.
 
 ### 10.2 Create / update
 
-- `POST lists/{id}/tasks/` body: `{"id"?, "title"}` plus optionally `description_html` + `description_json` (both or neither — one without the other → `400 validation_error`), `status_id`, `priority`, `due_date`, `start_date`, `time_estimate_minutes`, `archived`, `assignee_ids`, `tag_ids`.
-  - Defaults: `status_id` → the effective set's `is_default` status; `priority` → `"none"`; `position` → end of the `(list_id, status_id)` column; empty arrays elsewhere. Creator is auto-added as a watcher.
+- `POST lists/{id}/tasks/` body: `{"id"?, "title"}` plus optionally `description_html` + `description_json` (both or neither — one without the other → `400 validation_error`), `status`, `priority`, `due_date`, `start_date`, `time_estimate_minutes`, `archived`, `assignee_ids`, `tag_ids`.
+  - Defaults: `status` → `"todo"`; `priority` → `"none"`; `position` → end of the `(list_id, status)` column; empty arrays elsewhere. Creator is auto-added as a watcher.
 - `archived` is a **writable boolean on both `POST` and `PATCH`** (`TaskInputSerializer.archived`); archiving a task is an ordinary update, not a separate endpoint, and it needs the same authority as any other edit (row 50). Collections default to `archived=false`, so archiving removes the task from the default list view without deleting it.
 - `PATCH tasks/{id}/` accepts the same writable fields. **Write field names:** `assignee_ids: [uuid]` and `tag_ids: [uuid]` (full-replace arrays); reads return the embedded `assignees`/`tags` arrays. `watcher_ids` is NOT patchable — use `watch/`. `list_id`/`position` are NOT patchable — use `move/`.
-- Validation: `title` required, trimmed, non-empty, ≤500 chars. `priority` ∈ `urgent|high|normal|low|none`. `status_id` outside the list's effective set → `400 invalid_status_for_list`. `start_date > due_date` → `400 validation_error` (DB check constraint). Non-member ids in `assignee_ids` → `400 validation_error`; tags from another workspace → `400 validation_error`. `description_json` ≤ 256 KB; HTML sanitized server-side (nh3 allow-list).
+- Validation: `title` required, trimmed, non-empty, ≤500 chars. `priority` ∈ `urgent|high|medium|low|none` (**`normal` was renamed to `medium`**; `none` = "not prioritised" and is unchanged). `status` ∈ `todo|in_progress|review|done`; anything else → `400 validation_error` with `details.status`. `start_date > due_date` → `400 validation_error` (DB check constraint). Non-member ids in `assignee_ids` → `400 validation_error`; tags from another workspace → `400 validation_error`. `description_json` ≤ 256 KB; HTML sanitized server-side (nh3 allow-list).
 - **`assignee_ids` is gated by `task.assign` (v1.3.3).** Required whenever the assignee set changes for **anyone other than the caller** — on `POST` when the list names someone else, on `PATCH` when the symmetric difference against the current set contains anyone but the caller. Two things are deliberately *not* a change: resending the identical set (a full-object PATCH does this), and self-assign / self-unassign ("I'll take it" / "I'm dropping it" must work without an admin). Neither can widen anyone's access — `_grant_assignee_space_access` never writes a `SpaceMember` row for someone who already sees the space, and the caller demonstrably does. Everything else needs the code: `PATCH tasks/{id}/` also passes for a caller holding only `task.update_assigned`, and without this gate that guest-level code would have let an assignee hand out assignments — or silently unassign every colleague.
 - **AD-7 auto-access is gated by `space.manage_members` (v1.3.3).** Assigning a user who cannot yet see the task's space normally auto-creates `SpaceMember(access=viewer, source=auto_assignee)` (§6.1). That row is now written **only if the caller also holds `space.manage_members` in that space**; otherwise the whole request fails with `400 validation_error`, `details.assignee_ids = ["Bu foydalanuvchi bo'limni ko'rmaydi; avval uni bo'limga qo'shing."]` and nothing is persisted. Without this, `space.manage_members` (admin-only) was reachable through `task.update_assigned` (guest-level).
 - Assigning a user auto-adds them as a watcher; commenting auto-adds the commenter (self-removal is remembered against re-add by comments, not against re-assignment).
@@ -792,33 +864,47 @@ Read-only fields: `position`, `comment_count`, `attachment_count` (server-mainta
 `PATCH tasks/{id}/move/`:
 
 ```json
-{ "list_id": "…destination list…", "status_id": "…status valid in destination's effective set…",
+{ "list_id": "…destination list…", "status": "todo|in_progress|review|done",
   "before_id": "…task that ends up ABOVE the moved task, or null…",
   "after_id":  "…task that ends up BELOW it, or null…" }
 ```
 
 - **The client never sends a raw `position`.** The server computes a base-62 lexicographic key strictly between the neighbours (`midstring`), compared as plain strings; first item in an empty column is `"n"`. Exactly one row is written — the server **never renumbers rows on a move**.
 - Both neighbours `null` → empty column (or explicit "only item"); one `null` → top/bottom of column.
-- `list_id` + `status_id` are always required; cross-list moves are supported (destination `status_id` must be valid for the destination's effective set, else `400 invalid_status_for_list`). Task position scope is `(list_id, status_id)`.
+- `list_id` + `status` are always required (a missing `status` → `400 validation_error`); cross-list moves are supported. Task position scope is `(list_id, status)`.
 - Stale/reordered neighbours → `409 position_conflict`; client refetches neighbours and retries once.
-- Response is the full Task plus a top-level `"rebalanced": boolean`. When a generated key would exceed 48 chars the server rebalances the whole `(list_id, status_id)` scope in one transaction and returns `"rebalanced": true`; clients (and WebSocket subscribers seeing it on `task.moved`) must refetch the column instead of patching locally.
+- Response is the full Task plus a top-level `"rebalanced": boolean`. When a generated key would exceed 48 chars the server rebalances the whole `(list_id, status)` scope in one transaction and returns `"rebalanced": true`; clients (and WebSocket subscribers seeing it on `task.moved`) must refetch the column instead of patching locally.
 - Guests may move only tasks where they are an assignee (`403` otherwise).
 
 ### 10.4 Reading tasks: flat and grouped
 
-- `GET lists/{id}/tasks/` — flat, paginated. Default ordering: `status.order ASC, position ASC, created_at ASC`.
+- `GET lists/{id}/tasks/` — flat, paginated. Default ordering: status rank
+  (`STATUS_ORDER`, §9) ASC, then `position` ASC, `created_at` ASC. The rank is a
+  server-side annotation, **not** an alphabetical sort of the code.
 - `GET lists/{id}/tasks/?group_by=status` — Board payload, **not** the standard envelope:
 
 ```json
 {
   "group_by": "status",
   "groups": [
-    { "status_id": "…", "count": 57, "results": [ /* first page_size Tasks, position ASC, created_at ASC */ ] }
+    { "status": "todo",        "label": "Boshlanmagan",   "count": 57, "tasks": [ /* Tasks, position ASC, created_at ASC */ ] },
+    { "status": "in_progress", "label": "Jarayonda",      "count": 12, "tasks": [ … ] },
+    { "status": "review",      "label": "Tekshirilmoqda", "count":  0, "tasks": [] },
+    { "status": "done",        "label": "Bajarildi",      "count":  9, "tasks": [ … ] }
   ]
 }
 ```
 
-Groups appear for **every** status in the effective set (empty ones included), ordered by `status.order`. Each group carries its total `count`; "load more" for a column = `GET lists/{id}/tasks/?status=<status_id>&page=2` (flat envelope). Filters/ordering apply identically inside each group, and the union of groups equals the flat result for the same filters.
+**BINDING:** `groups` is **always exactly four entries, always in `STATUS_ORDER`**, even when a
+column is empty — board columns come from the server, never from the codes that happen to appear
+in the data. Each group is exactly `{"status", "label", "tasks", "count"}` (the old
+`status_id`/`results` keys are gone). `label` is the Uzbek display string; it is a convenience,
+never persisted, and a client may use its own dictionary instead.
+
+Each group carries its total `count` while `tasks` is capped at
+`min(page_size, 50)` rows; "load more" for a column = `GET lists/{id}/tasks/?status=<code>&page=2`
+(flat envelope). Filters/ordering apply identically inside each group, and the union of groups
+equals the flat result for the same filters.
 
 ### 10.5 Filter & ordering vocabulary (exact, closed)
 
@@ -826,12 +912,11 @@ Applies to `lists/{id}/tasks/` and `workspaces/{id}/tasks/`. Different keys AND;
 
 | Param | Values |
 |---|---|
-| `status` | status uuid, repeatable |
-| `status_type` | `open` \| `active` \| `closed` |
+| `status` | `todo`\|`in_progress`\|`review`\|`done`, repeatable; unknown code → `400 validation_error` |
 | `assignee` | user uuid (repeatable) \| `me` \| `none` |
-| `priority` | `urgent`\|`high`\|`normal`\|`low`\|`none`, repeatable |
+| `priority` | `urgent`\|`high`\|`medium`\|`low`\|`none`, repeatable |
 | `tag` | tag uuid, repeatable |
-| `due` | `overdue` \| `today` \| `this_week` \| `none` (`today`/`this_week` computed in the **caller's** timezone; `overdue` excludes closed-type tasks) |
+| `due` | `overdue` \| `today` \| `this_week` \| `none` (`today`/`this_week` computed in the **caller's** timezone; `overdue` excludes `done` tasks) |
 | `due_before`, `due_after` | ISO-8601 UTC instant |
 | `created_by`, `watcher` | user uuid |
 | `q` | text search over `title` + description text; `q` < 2 chars → empty result set |
@@ -848,8 +933,8 @@ Applies to `lists/{id}/tasks/` and `workspaces/{id}/tasks/`. Different keys AND;
 {
   "id": "…", "verb": "status_changed",
   "actor": { "id": "…", "email": "dan@acme.io", "full_name": "Dan Ortiz", "avatar": null, "avatar_color": "#49CCF9", "profession": "developer" },
-  "from_value": "TO DO", "to_value": "IN PROGRESS",
-  "metadata": { "from_status_id": "…", "to_status_id": "…" },
+  "from_value": "todo", "to_value": "in_progress",
+  "metadata": { "from_status": "todo", "to_status": "in_progress" },
   "created_at": "2026-08-07T11:02:00Z"
 }
 ```
@@ -1063,7 +1148,9 @@ Workspace-scoped; the same tag may label tasks across spaces.
 |---|---|---|---|---|
 | 78 | GET | `health/` | **public** | `200` `{"status": "ok"}` |
 
-Unauthenticated and unthrottled; it touches no database. It is endpoint **#78** of the 84 in §16.
+Unauthenticated and unthrottled; it touches no database. It is endpoint **#78** of the 93 in §16.
+(The `#` column is a stable id, so `health/` keeps **#78** even though the inventory has grown
+past the 84 it stood at in v1.3.4 — R28.)
 
 ---
 
@@ -1253,7 +1340,7 @@ Every server→client message:
   - **`attachment.added` → `data.download_url`** is built without a request. REST returns an absolute URL (`request.build_absolute_uri`); the broadcast prepends `PUBLIC_BASE_URL`, falling back to `CSRF_TRUSTED_ORIGINS[0]`. **When neither is configured — which is the case in dev and in the test suite today — the broadcast URL stays root-relative (`/api/v1/attachments/{id}/download/`) while REST is absolute.** Clients must therefore resolve `download_url` against the API origin rather than assuming it is absolute. Set `PUBLIC_BASE_URL` in any deployment that wants the two byte-identical.
 - `event_id` is unique per event; clients apply events idempotently (same `event_id` twice = no-op).
 - Echo suppression: drop any frame where `payload.actor.client_id` equals this tab's own client id.
-- `rebalanced` appears only on `task.moved`; `true` means "positions in this `(list_id, status_id)` scope were renumbered — refetch, don't patch."
+- `rebalanced` appears only on `task.moved`; `true` means "positions in this `(list_id, status)` scope were renumbered — refetch, don't patch."
 - For `*.deleted` events, `data` is `{"id": "…", "list_id": "…"}` (task) / `{"id": "…", "task_id": "…"}` (comment). `attachment.removed` uses the same `{"id", "task_id"}` shape.
 
 ### 15.3 Event types (closed set; channels revised in v1.3.4)
@@ -1262,7 +1349,7 @@ Every server→client message:
 |---|---|---|
 | `connection.ack` | both | `{"channel", "user_id"}` |
 | `task.created` | list **+ space** | Task |
-| `task.updated` | list **+ space** | Task (also emitted per task re-pointed by a status-set replacement, and on soft-delete restore) |
+| `task.updated` | list **+ space** | Task (also emitted on soft-delete restore) |
 | `task.moved` | list **+ space** | Task (+ `rebalanced` flag in payload) |
 | `task.deleted` | list **+ space** | `{"id", "list_id"}` |
 | `comment.created` | list | Comment |
@@ -1273,6 +1360,7 @@ Every server→client message:
 | `list.updated` | **space** (was: workspace) | List (rename/recolor/archive/move/counts changed) |
 | `permission.updated` | workspace | `{"workspace_id", "version"}` (v1.1.0, R23 — see §18.6) |
 | `access.revoked` | `user.<id>` | `{"workspace_id", "space_id"\|null}` (v1.1.0, R23 — see §18.6) |
+| `notification.created` | `user.<id>` | Notification (§19) — private, single recipient |
 | `presence.join` / `presence.leave` | list | `{"user": PresenceUser}` |
 | `presence.sync` | list | `{"users": [PresenceUser]}` (sent to a client right after its own ack) |
 | `error` | both | `{"code", "message"}` (mirrors §1.6 codes, e.g. `permission_denied`), then the socket closes |
@@ -1293,14 +1381,17 @@ only for spaces it can actually see, which is the same set the sidebar is allowe
 
 Client→server messages (closed set): `{"type": "presence.ping"}`, `{"type": "presence.typing"}`. Presence liveness is ping-driven; a client that misses its ping window gets a `presence.leave` broadcast on its behalf. Anything else from the client is ignored, and more than 30 inbound frames per 10s closes the socket with `4029` (§15.1).
 
-A mutation that fails validation/permission emits **no** event. Every successful mutation emits exactly one event (except status-set replacement: one `task.updated` per re-pointed task).
+A mutation that fails validation/permission emits **no** event. Every successful mutation emits exactly one event.
 
 ---
 
-## 16. Endpoint inventory (91)
+## 16. Endpoint inventory (93)
 
-**91 method+path pairs under `/api/v1/`.** This table is the authoritative count; the header at the
+**93 method+path pairs under `/api/v1/`.** This table is the authoritative count; the header at the
 top of the file quotes it. Verified by walking Django's URL resolver, not by counting rows by hand.
+
+> **v1.4.0 removes the five status-set endpoints (#42–46).** Status is a fixed code set (§9),
+> so 98 → **93**. Numbers 42–46 are retired and never reused.
 
 > **v1.3.5 adds #85, `GET public/showcase/` (§14.1).** It is the second public
 > read endpoint after `health/` and the only one that reads the database
@@ -1320,13 +1411,12 @@ top of the file quotes it. Verified by walking Django's URL resolver, not by cou
 | Auth | 6 | register, login, refresh, logout, password/change, demo (dev-only, `DEMO_MODE`) |
 | Profile | 3 | me GET/PATCH, me/avatar POST |
 | Workspaces | 6 | list, create, retrieve, update, delete, tree |
-| Members | 5 | list, profile, role PATCH, remove, leave |
+| Members | 7 | list, profile, role PATCH, remove, leave, **add registered user**, **user search** (§4.2) |
 | Invitations | 7 | list, create, revoke, resend, lookup, accept, decline |
 | Spaces | 5 | list, create, retrieve, update, delete |
 | Space members | 5 | list, add, update access, remove, bulk |
 | Folders | 5 | list, create, retrieve, update, delete |
 | Lists | 6 | list, create, retrieve, update, delete, move |
-| Status sets | 5 | space GET/PUT, list GET/PUT/DELETE |
 | Tasks | 10 | list, create, retrieve, update, delete, move, watch POST/DELETE, task activity, workspace activity |
 | Attachments | 4 | list, upload, download, delete |
 | Tags | 4 | list, create, update, delete |
@@ -1334,9 +1424,15 @@ top of the file quotes it. Verified by walking Django's URL resolver, not by cou
 | Search | 2 | workspace tasks, workspace search |
 | Realtime | 1 | handshake ticket (`POST realtime/ticket/`, §15.1) |
 | Chat | 6 | conversations list/create, direct, join, messages list/post (§14.2) |
+| Notifications | 4 | list, unread count, mark one read, mark all read (§19) |
+| Email check | 1 | `workspaces/{id}/check-email/` — was missing from this table until v1.3.6 |
 | Misc | 2 | health, public showcase (§14.1) |
 
-Sum: 5+6+3+6+5+7+5+5+5+6+5+10+4+4+4+2+1+6+2 = **91**.
+Sum: 5+6+3+6+7+7+5+5+5+6+10+4+4+4+2+1+6+4+1+2 = **93**.
+
+> **v1.3.6.** +6 for §4.2 (add a registered user, user search) and §19 (four notification
+> endpoints), +1 for `check-email/`, which existed in code but appeared in no group — the
+> reason the previous total of 91 did not match a resolver walk.
 
 WebSocket: `/ws/list/{list_id}/`, `/ws/workspaces/{workspace_id}/`, `/ws/chat/{conversation_id}/` — 3 client-facing channels over 5 server-side groups (§15.1, plus `chat.<conversation_id>`).
 
@@ -1480,5 +1576,60 @@ For `owner`, `permissions` is the entire catalog. `spaces` lists the caller's `S
 |---|---|---|---|
 | `permission.updated` | workspace | `{"workspace_id", "version"}` | Invalidate `my-permissions/` and `role-permissions/` |
 | `access.revoked` | `user.<id>` | `{"workspace_id", "space_id"\|null}` | Invalidate; if viewing the resource, navigate to `/w/{id}` |
+
+---
+
+## 19. Notifications — `apps.notifications`
+
+| # | Method | Path | Authority | Success |
+|---|---|---|---|---|
+| 94 | GET | `notifications/?workspace=&unread=&page_size=` | authenticated — **own rows only** | `200` paginated Notification[] |
+| 95 | GET | `notifications/unread-count/?workspace=` | authenticated | `200` `{"count": 3}` |
+| 96 | POST | `notifications/{id}/read/` | authenticated — own row | `200` Notification |
+| 97 | POST | `notifications/read-all/` | authenticated | `200` `{"updated": 7}` |
+
+A notification is addressed to **one user**. Every queryset is built with `user=request.user`
+before anything else, so a foreign `id` is `404 not_found` — never `403`, which would confirm
+the row exists. There is no create endpoint: notifications are produced by the service layer
+of the app that caused them, never by a client.
+
+**Reading is not gated on workspace membership.** `workspace` is context and a filter, not an
+authorisation check — a user removed from a workspace still has to be able to read the
+"you were removed" message. `?workspace=` narrows both the list and the count; `?unread=true`
+narrows the list. `read-all/` takes `workspace` in the body or the query string and marks only
+that workspace's rows.
+
+```json
+{
+  "id": "…", "workspace_id": "…",
+  "actor": { "id": "…", "email": "maya@acme.io", "full_name": "Maya Chen", "avatar": null,
+             "avatar_color": "#7B68EE", "profession": "project_manager" },
+  "kind": "member_added",
+  "title": "«Acme Inc.» ish maydoniga qo'shildingiz",
+  "body": "Maya Chen sizni jamoaga qo'shdi.",
+  "url": "/w/…/settings/members",
+  "is_read": false,
+  "read_at": null,
+  "created_at": "2026-08-11T09:15:00Z"
+}
+```
+
+- `kind` ∈ `member_added | member_joined | member_removed | role_changed | invitation_accepted | task_assigned`.
+  The set is closed but **grows**; a client must render an unknown `kind` from `title`/`body`
+  rather than dropping the row, and use `kind` only to pick an icon.
+- `url` is a **root-relative frontend path** (`/w/{id}/l/{id}?task={id}`), never an absolute
+  URL. It is a *copy* of where the event pointed when it happened: the row deliberately holds
+  no foreign key to the task or membership, so it survives their deletion and rendering a page
+  of notifications costs no joins.
+- `actor` is the user who caused the event, or `null` if that account was deleted. **A user is
+  never notified about their own action** (`actor == user` is dropped at creation), so leaving a
+  workspace or self-assigning a task produces nothing.
+- Producers: `member_added` / `member_joined` (§4.2), `member_removed` and `role_changed` (§4),
+  `invitation_accepted` (§5, sent to `invited_by`), `task_assigned` (§10, sent to newly added
+  assignees only — un-assigning notifies nobody).
+- Delivery is live over the private `user.<id>` channel as `notification.created` (§15.3), with
+  the REST object as `data`. The frame is a signal, not a merge source: the list is filtered and
+  paginated server-side, so clients refetch.
+
 
 *End of contract — version 1.1.0, 2026-08-10.*

@@ -1,5 +1,10 @@
 # Clickish — MVP Sprint Plan (historical, INCOMPLETE)
 
+> **Brend eslatmasi.** Mahsulot nomi endi **UzWork**. Bu fayl tarixiy hujjat —
+> undagi "Clickish" / "ClickUp clone" iboralari yozilgan paytdagi holatni
+> aks ettiradi va o'zgartirilmagan. Amaldagi brend chegarasi:
+> `docs/adr/0014-mahsulot-nomi.md`.
+
 > ## ⚠️ Read this before citing anything below
 >
 > **This document is incomplete and is no longer binding.** It ends at the heading `## 5. Sprints`
